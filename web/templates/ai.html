@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>AI diagnostic analysis <span class="note" style="font-size:13px">(model: {{ ollama_model }} via local Ollama)</span></h2>
+<p class="note">The LLM receives structured evidence computed from your database. It cannot send anything to the vehicle. It interprets; the numbers come from the analysis engine.</p>
+
+<form method="post" action="/ai/ask">
+  <textarea name="question" placeholder="e.g. Have my battery cell voltage differences been getting worse?"></textarea>
+  <p>
+  {% for q in questions %}
+    <button type="submit" name="question" value="{{ q }}" style="background:#3a6ea5;font-size:12px;margin:2px">{{ q }}</button>
+  {% endfor %}
+  </p>
+  <button type="submit">Analyse</button>
+</form>
+
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+{% if warnings %}{% for w in warnings %}<div class="warn">{{ w }}</div>{% endfor %}{% endif %}
+{% if report %}<pre class="report">{{ report }}</pre>{% endif %}
+
+<h3>Previous reports</h3>
+{% for r in reports %}
+<details><summary><strong>{{ r.ts }}</strong> — {{ r.question or '(health report)' }} ({{ r.model }})</summary>
+  <pre class="report">{{ r.report_text }}</pre>
+</details>
+{% else %}<p>None yet.</p>{% endfor %}
+{% endblock %}

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>ID.3 Diagnostic System</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: #f4f6f8; color: #222; }
+    header { background: #0b2340; color: #fff; padding: 14px 24px; }
+    header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+    header .ro { color: #7fd18c; font-size: 12px; }
+    nav { background: #123a63; padding: 8px 24px; }
+    nav a { color: #cfe3f7; text-decoration: none; margin-right: 18px; font-size: 14px; }
+    nav a:hover { color: #fff; }
+    main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+    .card { background: #fff; border-radius: 8px; padding: 14px 18px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .card h3 { margin: 0 0 6px; font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: .04em; }
+    .card .big { font-size: 26px; font-weight: 600; }
+    .card .note { font-size: 12px; color: #777; }
+    table { width: 100%; border-collapse: collapse; background: #fff; font-size: 14px; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #e3e7ea; text-align: left; }
+    th { background: #eef2f5; font-size: 12px; text-transform: uppercase; color: #556; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #e2e8f0; margin: 1px; }
+    .tag.critical { background: #ffd2d2; color: #8a1c1c; }
+    .tag.communication { background: #fff3cd; color: #7a5d00; }
+    pre.report { background: #fff; padding: 16px; white-space: pre-wrap; border-left: 4px solid #0b2340; font-size: 14px; }
+    .warn { background: #fff8e1; border-left: 4px solid #e0a800; padding: 8px 12px; margin: 8px 0; font-size: 13px; }
+    .err { background: #fdecea; border-left: 4px solid #c0392b; padding: 8px 12px; margin: 8px 0; font-size: 13px; }
+    form textarea { width: 100%; min-height: 60px; font-family: inherit; }
+    button { background: #0b2340; color: #fff; border: 0; padding: 8px 18px; border-radius: 4px; cursor: pointer; }
+    .chartbox { background: #fff; padding: 14px; border-radius: 8px; margin: 14px 0; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+<header>
+  <h1>VW ID.3 Diagnostic System
+    {% if vehicle %}— {{ vehicle.model }} {{ vehicle.variant or '' }} ({{ vehicle.year }}){% endif %}
+  </h1>
+  <span class="ro">READ-ONLY SYSTEM — no vehicle writes are possible by design</span>
+  {% if vehicle %}<div style="font-size:12px;color:#9fb8d4;">VIN: {{ vehicle.vin }}</div>{% endif %}
+</header>
+<nav>
+  <a href="/">Overview</a>
+  <a href="/battery">Battery</a>
+  <a href="/dtcs">Faults</a>
+  <a href="/charging">Charging</a>
+  <a href="/ai">AI Analysis</a>
+</nav>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

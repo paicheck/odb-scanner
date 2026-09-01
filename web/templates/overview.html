@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Overview</h2>
+{% if not vehicle %}
+<p>No vehicle in database yet. Run <code>python main.py discover</code> (with the simulator: start it first with <code>python main.py simulate</code>) or load test data with <code>python main.py seed</code>.</p>
+{% endif %}
+<div class="cards">
+  <div class="card"><h3>State of charge</h3>
+    <div class="big">{{ "%.0f"|format(battery.soc_latest_pct or 0) }}%</div>
+    <div class="note">window: {{ days }} days, {{ battery.samples }} snapshots</div></div>
+  <div class="card"><h3>Pack voltage</h3>
+    <div class="big">{{ "%.1f"|format(battery.pack_voltage_latest_v or 0) }} V</div></div>
+  <div class="card"><h3>Cell delta trend</h3>
+    <div class="big">{{ battery.cell_delta.current_mv if battery.cell_delta.current_mv is defined else '—' }} mV</div>
+    <div class="note">{{ battery.cell_delta.get('trend', 'no data') if battery.cell_delta is mapping else 'no data' }}</div></div>
+  <div class="card"><h3>SOH (estimated)</h3>
+    <div class="big">{{ battery.soh_latest_pct if battery.soh_latest_pct else '—' }}%</div>
+    <div class="note">{{ battery.provenance_note or '' }}</div></div>
+  <div class="card"><h3>DTCs</h3>
+    <div class="big">{{ dtcs.get('total', 0) }}</div>
+    {% for cat, n in dtcs.get('by_category', {}).items() %}
+      <span class="tag {{ 'critical' if cat == 'potentially critical' else cat }}">{{ cat }}: {{ n }}</span>
+    {% endfor %}</div>
+  <div class="card"><h3>Charging (90 d)</h3>
+    <div class="big">{{ charging.get('count', 0) }} sessions</div></div>
+</div>
+
+<h3>Recent anomalies (z-score based)</h3>
+{% if anomalies %}
+<table><tr><th>Timestamp</th><th>Metric</th><th>Value</th><th>z</th><th>Description</th></tr>
+{% for a in anomalies %}
+<tr><td>{{ a.ts }}</td><td>{{ a.metric }}</td><td>{{ "%.2f"|format(a.value) }}</td>
+<td>{{ a.zscore }}</td><td>{{ a.description }}</td></tr>
+{% endfor %}</table>
+{% else %}<p>None detected in the last {{ days }} days.</p>{% endif %}
+{% endblock %}

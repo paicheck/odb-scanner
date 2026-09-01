@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------------------
+# odb_scanner configuration
+# SAFETY: this system is READ-ONLY by design. The UDS layer physically blocks
+# any write/security/routine service. See diagnostic/uds.py.
+# ---------------------------------------------------------------------------
+
+vehicle:
+  vin: "WVWZZZE1ZMP087053"
+  make: "Volkswagen"
+  model: "ID.3"
+  variant: "58 kWh (Pro)"
+  year: 2021
+
+adapter:
+  # elm327_serial  -> USB ELM327 / OBDLink (pyserial)
+  # elm327_tcp     -> simulator or TCP-serial bridge
+  type: elm327_tcp          # switch to elm327_serial when attaching the real car
+  port: auto                # e.g. "COM3" (auto = scan ports for ELM327)
+  baudrate: 38400           # OBDLink SX default 38400; try 115200 if unstable
+  timeout: 5.0
+  tcp_host: "127.0.0.1"
+  tcp_port: 35000
+
+collector:
+  poll_interval: 5.0        # fast poll (battery) seconds
+  slow_poll_interval: 60.0  # slow poll (charging, SOH, counters) seconds
+  read_cell_voltages: true  # per-cell DID sweep (slow, one DID per cell)
+  read_cell_temperatures: false
+
+database:
+  path: "data/odb_scanner.db"
+
+ollama:
+  host: "http://localhost:11434"
+  model: "qwen2.5:7b"       # change freely: ollama pull <model>, set here
+  temperature: 0.2
+  timeout: 300
+
+web:
+  host: "127.0.0.1"
+  port: 8000
+
+analysis:
+  trend_window_days: 30
+  anomaly_zscore: 3.0
+
+simulation:
+  host: "127.0.0.1"
+  port: 35000

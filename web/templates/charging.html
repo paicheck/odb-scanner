@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Charging</h2>
+{% if sessions %}
+<table>
+<tr><th>Started</th><th>Type</th><th>Duration</th><th>Start SOC</th><th>End SOC</th>
+    <th>Energy (est.)</th><th>Max power</th><th>Avg temp</th></tr>
+{% for s in sessions %}
+<tr><td>{{ s.started_at }}</td><td>{{ s.charge_type }}</td>
+  <td>{{ "%.0f"|format((s.duration_s or 0)/60) }} min</td>
+  <td>{{ s.start_soc if s.start_soc is not none else '—' }}%</td>
+  <td>{{ s.end_soc if s.end_soc is not none else '—' }}%</td>
+  <td>{{ "%.2f"|format(s.energy_estimate_kwh or 0) }} kWh</td>
+  <td>{{ "%.1f"|format(s.max_power_kw or 0) }} kW</td>
+  <td>{{ "%.1f"|format(s.avg_battery_temp_c or 0) }} °C</td></tr>
+{% endfor %}
+</table>
+<p class="note">Energy is ESTIMATED from power samples (P × duration), not reported by the vehicle.</p>
+{% else %}<p>No completed charging sessions recorded.</p>{% endif %}
+
+<h3>DTC ↔ charging correlation ({{ correlation.window_hours | default(4) }} h window after charge end)</h3>
+{% if correlation.links %}
+<table><tr><th>DTC</th><th>ECU</th><th>Occurred</th><th>Charge ended</th><th>Type</th><th>Gap (h)</th></tr>
+{% for l in correlation.links %}
+<tr><td>{{ l.code }}</td><td>{{ l.ecu }}</td><td>{{ l.occurrence_ts }}</td>
+<td>{{ l.session_ended }}</td><td>{{ l.charge_type }}</td><td>{{ l.gap_hours }}</td></tr>
+{% endfor %}</table>
+{% else %}<p>No DTCs correlated with charging sessions.</p>{% endif %}
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Battery</h2>
+<div class="cards">
+  <div class="card"><h3>Current delta</h3><div class="big">{{ trend.current_mv if trend.current_mv is defined else '—' }} mV</div></div>
+  <div class="card"><h3>30-day mean</h3><div class="big">{{ trend.mean_mv if trend.mean_mv is defined else '—' }} mV</div></div>
+  <div class="card"><h3>Std dev</h3><div class="big">{{ trend.std_mv if trend.std_mv is defined else '—' }} mV</div></div>
+  <div class="card"><h3>Trend</h3><div class="big" style="font-size:18px">{{ trend.trend if trend.trend is defined else 'insufficient data' }}</div>
+  <div class="note">{{ trend.slope_mv_per_day if trend.slope_mv_per_day is defined else '' }} mV/day</div></div>
+</div>
+<div class="chartbox"><canvas id="deltaChart" height="90"></canvas></div>
+<div class="chartbox"><canvas id="socChart" height="90"></canvas></div>
+<p class="note">Cell delta is CALCULATED (max − min cell voltage). SOH is ESTIMATED. All values labelled in the database.</p>
+<script>
+const chart = {{ chart | tojson }};
+const ts = chart.ts.map(t => t.replace('T', ' ').slice(0, 16));
+new Chart(document.getElementById('deltaChart'), {
+  type: 'line',
+  data: { labels: ts, datasets: [
+    { label: 'Cell delta (mV)', data: chart.delta_mv, borderColor: '#c0392b', tension: .2, pointRadius: 1 },
+    { label: 'Pack voltage (V)', data: chart.pack_v, borderColor: '#2471a3', tension: .2, pointRadius: 1, yAxisID: 'y2' }
+  ]},
+  options: { scales: { y2: { position: 'right', grid: { drawOnChartArea: false } } } }
+});
+new Chart(document.getElementById('socChart'), {
+  type: 'line',
+  data: { labels: ts, datasets: [
+    { label: 'SOC (%)', data: chart.soc, borderColor: '#1e8449', tension: .2, pointRadius: 1 },
+    { label: 'Battery temp (°C)', data: chart.temp, borderColor: '#e67e22', tension: .2, pointRadius: 1, yAxisID: 'y2' }
+  ]},
+  options: { scales: { y2: { position: 'right', grid: { drawOnChartArea: false } } } }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Diagnostic trouble codes</h2>
+{% if dtcs.codes %}
+<table>
+<tr><th>ECU</th><th>Code</th><th>Status / Description</th><th>Categories</th>
+    <th>First Seen</th><th>Last Seen</th><th>Count</th></tr>
+{% for d in dtcs.codes %}
+<tr>
+  <td>{{ d.ecu }}</td><td><strong>{{ d.code }}</strong></td>
+  <td>{{ d.description }}</td>
+  <td>{% for c in d.categories %}<span class="tag {{ 'critical' if c == 'potentially critical' else c }}">{{ c }}</span>{% endfor %}</td>
+  <td>{{ d.first_seen }}</td><td>{{ d.last_seen }}</td><td>{{ d.count }}</td>
+</tr>
+{% endfor %}
+</table>
+<p class="note">Classification basis: SAE J2012 system letters and ISO 14229
+status bytes; U-codes are communication-related and do not by themselves
+indicate hardware failure. Unknown codes are kept with raw data preserved.</p>
+{% else %}<p>No DTCs recorded.</p>{% endif %}
+{% endblock %}
