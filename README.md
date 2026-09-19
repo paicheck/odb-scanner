@@ -57,6 +57,20 @@ Install [Ollama](https://ollama.com) and pull a model, e.g.
 
 ## Testing without a car
 
+One command proves the whole pipeline works (simulator → collector → SQLite →
+statistics → web → read-only guard), no car and no Ollama required:
+
+```bat
+.venv\Scripts\python tools\smoke_test.py
+.venv\Scripts\python tools\smoke_test.py --cycles 5   :: more samples
+.venv\Scripts\python tools\smoke_test.py --with-llm   :: also test Ollama
+```
+
+It prints one `[PASS]/[FAIL]/[SKIP]` line per check, uses the scratch database
+`data/diag_smoke.db` (safe to delete), and exits non-zero if anything fails.
+
+Manual equivalent, in two terminals:
+
 ```bat
 :: terminal 1
 .venv\Scripts\python main.py simulate
@@ -99,6 +113,7 @@ Install [Ollama](https://ollama.com) and pull a model, e.g.
 | `python main.py analyze` | Statistical analysis + anomaly scan, persisted |
 | `python main.py serve` | Web dashboard at `localhost:8000` |
 | `python main.py report` | Print AI report to console (`--question "..."`) |
+| `python tools/smoke_test.py` | Offline end-to-end self-test (no car, no Ollama) |
 | `python main.py seed` | Load example 30-day dataset |
 | `python main.py guard-test` | Verify the read-only UDS guard |
 
