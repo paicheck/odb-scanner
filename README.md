@@ -86,6 +86,29 @@ Manual equivalent, in two terminals:
 .venv\Scripts\python main.py seed
 ```
 
+## Running the stack continuously
+
+For a live dashboard instead of a one-shot test, `tools/start_scanner.py`
+starts the simulator, collector and dashboard detached, writes logs to
+`data/logs/{simulator,collector,web}.log` and remembers the pids in
+`data/logs/stack.json`. Re-running it is safe: whatever is already up is
+reported and left alone, so nothing is started twice.
+
+```bat
+.venv\Scripts\python tools\start_scanner.py            :: simulator + collector + dashboard
+.venv\Scripts\python tools\start_scanner.py --cycles 1  :: single collection pass, then stop collecting
+.venv\Scripts\python tools\start_scanner.py --no-web    :: adapter + collector only
+.venv\Scripts\python tools\start_scanner.py --status    :: what is running right now
+.venv\Scripts\python tools\start_scanner.py --stop      :: stop everything it started
+
+start http://127.0.0.1:8000                             :: dashboard
+```
+
+The adapter link stays open between polls (`collector.poll_interval`), just like
+a real ELM327 session, so the simulator must not treat an idle read timeout as a
+disconnect — `tools/smoke_test.py` guards that behaviour with an explicit idle
+gap check.
+
 ## With the real car
 
 1. Ignition on (or vehicle awake), adapter plugged into the OBD port.
@@ -114,6 +137,7 @@ Manual equivalent, in two terminals:
 | `python main.py serve` | Web dashboard at `localhost:8000` |
 | `python main.py report` | Print AI report to console (`--question "..."`) |
 | `python tools/smoke_test.py` | Offline end-to-end self-test (no car, no Ollama) |
+| `python tools/start_scanner.py` | Start/stop the simulated stack (`--status`, `--stop`) |
 | `python main.py seed` | Load example 30-day dataset |
 | `python main.py guard-test` | Verify the read-only UDS guard |
 
