@@ -177,7 +177,13 @@ class SimHandler(socketserver.BaseRequestHandler):
             try:
                 chunk = self.request.recv(1024)
             except socket.timeout:
-                chunk = b""
+                # Idle keep-alive: a real ELM327 link stays open between polls
+                # (the collector only talks every collector.poll_interval), so a
+                # recv timeout must NOT be treated as a disconnect. Closing here
+                # would reset the link and leave the client stuck.
+                continue
+            except OSError:
+                return  # client went away
             if not chunk:
                 return
             buf += chunk

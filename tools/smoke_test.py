@@ -94,6 +94,18 @@ def run_adapter_checks(cfg: Config, cycles: int) -> None:
             value = merged.get(key)
             check(f"collect: {label} decoded", value is not None, f"{value}")
 
+        # Regression guard for the idle-link bug: the real collector polls every
+        # collector.poll_interval, so the adapter link must survive an idle gap
+        # longer than the socket read timeout. The simulator used to close the
+        # connection on recv timeout, after which every later cycle silently
+        # stored nothing (empty snapshots were logged as "cycle N: {}").
+        idle_s = 1.2
+        time.sleep(idle_s)
+        after_idle = col.collect_once()
+        check(f"link survives an idle gap of {idle_s:.1f}s between polls",
+              after_idle.get("pack_voltage") is not None,
+              f"pack_voltage={after_idle.get('pack_voltage')}")
+
         dtcs = col.read_and_store_dtcs()
         check("DTC read (OBD-II mode 03 + UDS 0x19 0x02)", True,
               f"{len(dtcs)} DTC(s): "
