@@ -118,6 +118,10 @@ gap check.
    which DIDs; NRC 0x31 answers are recorded, not errors.
 4. `python main.py collect` repeatedly / on a schedule (Task Scheduler) to
    build history. Phase-3 DIDs will be refined against your specific car.
+5. If commands answer `NO DATA`, the vehicle is asleep: the adapter powers
+   itself from the OBD port, but the gateway only answers with ignition on /
+   'ready' mode. Retry after switching ignition on. `python tools/elm_console.py`
+   opens a raw ELM327 console — send `0100` to check whether anything answers.
 
 ## Unit tests
 
@@ -137,6 +141,7 @@ gap check.
 | `python main.py serve` | Web dashboard at `localhost:8000` |
 | `python main.py report` | Print AI report to console (`--question "..."`) |
 | `python tools/smoke_test.py` | Offline end-to-end self-test (no car, no Ollama) |
+| `python tools/elm_console.py` | Raw ELM327 console for live debugging (`--tcp` for simulator) |
 | `python tools/start_scanner.py` | Start/stop the simulated stack (`--status`, `--stop`) |
 | `python main.py seed` | Load example 30-day dataset |
 | `python main.py guard-test` | Verify the read-only UDS guard |

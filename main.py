@@ -197,8 +197,11 @@ def main() -> int:
         return 1
     except CommunicationError as exc:
         print(f"\nCommunication error: {exc}")
-        print("The adapter answered but the vehicle did not — verify ignition is")
-        print("on and retry with 'python main.py discover'.")
+        print("The adapter works but the vehicle is not answering (NO DATA).")
+        print("On the ID.3: switch ignition ON — press the start button WITHOUT")
+        print("the brake (Zündung an), or go into 'ready' mode — wait ~10 s and")
+        print("retry 'python main.py discover'. For raw checks use")
+        print("'python tools/elm_console.py' (send 0100 to test the bus).")
         return 1
     return 0
 

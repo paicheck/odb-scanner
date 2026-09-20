@@ -179,6 +179,18 @@ class Elm327Transport(OBDInterface):
         self.identity = " ".join(resp) if resp else "unknown"
         for cmd in ("ATE0", "ATL0", "ATS0", "ATH1", "ATAT1", "ATSP6", "ATCAF1"):
             self.send_command(cmd)
+        # OBD-II warm-up: '0100' (supported-PID request) makes the ELM finish
+        # CAN bus init and shows whether anything is awake. On a silent bus
+        # (vehicle asleep, gateway off) it returns NO DATA — logged, not
+        # fatal: the caller surfaces a clear "vehicle did not answer" error.
+        warm = " ".join(self.send_command("0100")).upper()
+        if "NO DATA" in warm or "UNABLE" in warm or not warm:
+            log.warning(
+                "CAN bus silent after 0100 warm-up (%r) — vehicle likely "
+                "asleep (ignition off). Requests will return NO DATA until "
+                "the gateway wakes up.", warm or "no output")
+        else:
+            log.info("CAN bus alive after warm-up: %s", warm)
         log.info("Adapter initialized: %s", self.identity)
         return self.identity
 
