@@ -54,6 +54,11 @@ def _port_open(host: str, port: int) -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
+def _probe_host(host: str) -> str:
+    """A service bound to all interfaces is still probed on loopback."""
+    return "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+
+
 def _wait_port(host: str, port: int, timeout: float = 20.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -163,15 +168,16 @@ def cmd_start(cfg, cycles: int | None, with_web: bool) -> int:
         if not with_web:
             skipped.append("web dashboard disabled (--no-web)")
         elif (state.get("web") and _alive(state["web"])) \
-                or _port_open(web_host, web_port):
-            skipped.append(f"web dashboard already up on http://{web_host}:{web_port}")
+                or _port_open(_probe_host(web_host), web_port):
+            skipped.append(f"web dashboard already up on "
+                           f"http://{_probe_host(web_host)}:{web_port}")
         else:
             pid = _spawn("web", ["main.py", "serve"])
             state["web"] = pid
-            ok = _wait_port(web_host, web_port)
+            ok = _wait_port(_probe_host(web_host), web_port)
             started.append(
                 f"web pid {pid} "
-                + (f"-> http://{web_host}:{web_port}" if ok else
+                + (f"-> http://{_probe_host(web_host)}:{web_port}" if ok else
                    f"FAILED to listen on {web_host}:{web_port} "
                    "(see data/logs/web.log)"))
     finally:
@@ -198,7 +204,8 @@ def cmd_status(cfg) -> int:
          f"{sim_host}:{sim_port} listening={_port_open(sim_host, sim_port)}"),
         ("collector", state.get("collector"), f"db={cfg.get('database.path')}"),
         ("web", state.get("web"),
-         f"{web_host}:{web_port} listening={_port_open(web_host, web_port)}"),
+         f"{_probe_host(web_host)}:{web_port} "
+         f"listening={_port_open(_probe_host(web_host), web_port)}"),
     ]
     for name, pid, extra in rows:
         if pid is None:

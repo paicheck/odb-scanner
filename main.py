@@ -18,6 +18,7 @@ import sys
 
 from config import load_config
 from database.repository import Repository
+from diagnostic.interface import AdapterNotFoundError, CommunicationError
 
 
 def cmd_discover(cfg) -> int:
@@ -177,16 +178,28 @@ def main() -> int:
         return 0
 
     cfg = load_config(args.config)
-    if args.command == "discover":
-        return cmd_discover(cfg)
-    if args.command == "collect":
-        return cmd_collect(cfg, args.cycles)
-    if args.command == "analyze":
-        return cmd_analyze(cfg)
-    if args.command == "report":
-        return cmd_report(cfg, args.question)
-    if args.command == "serve":
-        return cmd_serve(cfg)
+    try:
+        if args.command == "discover":
+            return cmd_discover(cfg)
+        if args.command == "collect":
+            return cmd_collect(cfg, args.cycles)
+        if args.command == "analyze":
+            return cmd_analyze(cfg)
+        if args.command == "report":
+            return cmd_report(cfg, args.question)
+        if args.command == "serve":
+            return cmd_serve(cfg)
+    except AdapterNotFoundError as exc:
+        print(f"\nAdapter not reachable: {exc}")
+        print("Check: adapter plugged into the OBD port, ignition on / car awake,")
+        print("Bluetooth on, and adapter.port is the OUTGOING 'Serial over")
+        print("Bluetooth link' COM port (see README 'With the real car').")
+        return 1
+    except CommunicationError as exc:
+        print(f"\nCommunication error: {exc}")
+        print("The adapter answered but the vehicle did not — verify ignition is")
+        print("on and retry with 'python main.py discover'.")
+        return 1
     return 0
 
 

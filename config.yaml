@@ -13,10 +13,12 @@ vehicle:
 
 adapter:
   # elm327_serial  -> USB ELM327 / OBDLink (pyserial)
+  #                   also Bluetooth SPP: "Standard Serial over Bluetooth link"
   # elm327_tcp     -> simulator or TCP-serial bridge
-  type: elm327_tcp          # switch to elm327_serial when attaching the real car
-  port: auto                # e.g. "COM3" (auto = scan ports for ELM327)
-  baudrate: 38400           # OBDLink SX default 38400; try 115200 if unstable
+  type: elm327_serial       # real car via Veepeak OBDCheck BLE+ (Bluetooth SPP)
+  port: COM3                # outgoing "Serial over Bluetooth link" (COM4 is the
+                            # incoming one); set "auto" to scan ports instead
+  baudrate: 38400           # ignored over SPP; relevant for USB adapters
   timeout: 5.0
   tcp_host: "127.0.0.1"
   tcp_port: 35000
@@ -28,7 +30,9 @@ collector:
   read_cell_temperatures: false
 
 database:
-  path: "data/odb_scanner.db"
+  # Real-car sessions get their own file: vehicles are keyed by VIN, and this
+  # keeps simulator data (odb_scanner.db) separate from measured data.
+  path: "data/real_car.db"
 
 ollama:
   host: "http://localhost:11434"
@@ -37,8 +41,8 @@ ollama:
   timeout: 300
 
 web:
-  host: "127.0.0.1"
-  port: 8000
+  host: "0.0.0.0"           # all interfaces -> dashboard also reachable from
+  port: 8000                # the tablet: http://<PC-IP>:8000 (allow in firewall)
 
 analysis:
   trend_window_days: 30
