@@ -573,7 +573,7 @@ def test_charging_correlation(repo):
     assert corr["codes_linked_to_charging"] == ["U112300"]
     assert corr["links"][0]["gap_hours"] == 1.0
 # --- config / simulator end-to-end ----------------------------------------------
-from config import load_config, ConfigError  # noqa: E402
+from config import load_config, Config, ConfigError  # noqa: E402
 
 
 def test_config_defaults():
@@ -879,6 +879,104 @@ def test_prompt_structure():
 
 
 # --- web layer ------------------------------------------------------------------
+def test_collector_adopts_a_session_left_open_by_a_previous_run(repo, tmp_path):
+    """Restarting mid-charge must not orphan the open session.
+
+    open_session_id() existed but nothing called it, so a restarted collector
+    started with no active session and opened a second one while the first
+    stayed 'open' forever -- two concurrent sessions on the dashboard, and the
+    orphan never got a duration or energy figure.
+    """
+    from collector import Collector
+    cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
+                                "max_value_age_s": 900.0},
+                  "database": {"path": str(tmp_path / "c.db")}})
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    ts = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(
+        timespec="seconds")
+    existing = repo.open_session(vid, ts, "DC", 40.0)
+
+    col = Collector(cfg, repo)
+    col.vehicle_id = vid
+    col._adopt_open_session()
+    assert col._active_session_id == existing
+    # and it must not open a second one
+    col._charging_tracking(ts, {"charge_mode": 2, "soc_normal": 41.0})
+    assert col._active_session_id == existing
+    open_rows = repo.conn.execute(
+        "SELECT COUNT(*) FROM charging_sessions WHERE vehicle_id=? AND "
+        "status='open'", (vid,)).fetchone()[0]
+    assert open_rows == 1
+
+
+def test_unknown_charge_mode_does_not_close_a_live_session(repo, tmp_path):
+    """A missed read is not evidence that charging stopped."""
+    from collector import Collector
+    cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
+                                "max_value_age_s": 900.0},
+                  "database": {"path": str(tmp_path / "c.db")}})
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    sid = repo.open_session(vid, ts, "DC", 40.0)
+    col = Collector(cfg, repo)
+    col._active_session_id = sid
+
+    # charge_mode absent from the snapshot and absent from recent history
+    col._charging_tracking(ts, {"soc_normal": 42.0})
+    still_open = repo.conn.execute(
+        "SELECT status FROM charging_sessions WHERE id=?", (sid,)).fetchone()
+    assert still_open["status"] == "open", "session closed on an unknown mode"
+    assert col._active_session_id == sid
+
+
+def test_stale_charge_mode_is_not_used_to_close_a_session(repo, tmp_path):
+    """The charge_mode fallback must respect the same age bound as the snapshot."""
+    from collector import Collector
+    cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
+                                "max_value_age_s": 900.0},
+                  "database": {"path": str(tmp_path / "c.db")}})
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    stale = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(
+        timespec="seconds")
+    # a charge_mode of 1 from three days ago must not reopen a session
+    repo.record_measurement(vid, stale, "charge_mode", "bms", "UDS-0x22",
+                            "0x1E02", "", "reported", "builtin", "documented",
+                            "", 1.0)
+    col = Collector(cfg, repo)
+    col.vehicle_id = vid
+    col._charging_tracking(stale, {"soc_normal": 50.0})
+    assert col._active_session_id is None, "stale charge_mode opened a session"
+    open_rows = repo.conn.execute(
+        "SELECT COUNT(*) FROM charging_sessions WHERE vehicle_id=? AND "
+        "status='open'", (vid,)).fetchone()[0]
+    assert open_rows == 0
+
+
+def test_collector_cadence_matches_the_configured_period():
+    """The period must be the configured one, not the interval plus the work."""
+    import time as _time
+    from collector import Collector
+
+    class _FakeCollector(Collector):
+        def open_and_identify(self): return "ok"
+        def discover_ecus(self): return []
+        def collect_once(self):
+            _time.sleep(0.10)          # stand in for a real cycle
+            return {}
+        def read_and_store_dtcs(self): return []
+
+    cfg = Config({"collector": {"poll_interval": 0.25, "slow_poll_interval": 60.0,
+                                "max_value_age_s": 900.0},
+                  "database": {"path": ":memory:"}})
+    col = _FakeCollector(cfg, Repository(":memory:"))
+    start = _time.monotonic()
+    col.run(max_cycles=4)
+    elapsed = _time.monotonic() - start
+    # Three gaps at 0.25 s = 0.75 s. Sleeping the interval *after* each 0.10 s
+    # of work would give ~1.05 s instead.
+    assert 0.70 <= elapsed < 0.95, f"cadence drifted: {elapsed:.2f}s"
+
+
 @pytest.mark.parametrize("populate", [False, True],
                          ids=["empty-db", "with-vehicle"])
 def test_dashboard_pages_render(populate):

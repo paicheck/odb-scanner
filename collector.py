@@ -70,6 +70,25 @@ class Collector:
         self._last_slow = -self.slow_interval
         self._active_session_id: int | None = None
 
+    def _adopt_open_session(self) -> None:
+        """Continue a session a previous run left open.
+
+        Without this, a collector restarted mid-charge starts with no active
+        session, opens a second one, and leaves the first permanently 'open' --
+        so the dashboard shows two concurrent sessions and the orphan never
+        gets a duration or energy figure. open_session_id() existed for this
+        but nothing called it.
+
+        Runs once the vehicle is known, so it cannot be done in __init__.
+        """
+        if self._active_session_id is not None:
+            return
+        existing = self.repo.open_session_id(self.vehicle_id)
+        if existing is not None:
+            self._active_session_id = existing
+            log.info("Adopted charging session %s left open by a previous run",
+                     existing)
+
     # -- phase 1: connect & identify -----------------------------------------
     def open_and_identify(self) -> str:
         self.conn.open()
@@ -86,6 +105,7 @@ class Collector:
         self.repo.add_event(self.vehicle_id, utcnow(), "adapter",
                             f"Connected via {self.conn.t.description()}; "
                             f"VIN read = {vin}")
+        self._adopt_open_session()
         log.info("Identified vehicle VIN=%s year=%s", vin, year)
         return vin
 
@@ -304,10 +324,19 @@ class Collector:
         """Open/close charging sessions based on the charge-mode DID."""
         mode = snap.get("charge_mode")
         if mode is None:
-            latest = self.repo.latest_measurements(self.vehicle_id)
+            # Bounded, like the snapshot: charge_mode is a slow DID, so a
+            # missed read must not resurrect the mode from days ago and hold a
+            # charging session open (or close a live one) on stale evidence.
+            latest = self.repo.latest_measurements(
+                self.vehicle_id, max_age_s=self.max_value_age_s)
             m = latest.get("charge_mode")
             mode = m["value"] if m else None
         charging = mode in (1, 2, 3)
+        if mode is None:
+            # Unknown is not the same as "not charging". Treating a missed read
+            # as mode 0 closed a live session on no evidence, leaving it
+            # truncated at whatever SoC happened to be recorded.
+            return
         if charging and self._active_session_id is None:
             ctype = "DC" if mode == 2 else "AC"
             self._active_session_id = self.repo.open_session(
@@ -372,6 +401,10 @@ class Collector:
         self.open_and_identify()
         self.discover_ecus()
         cycles = 0
+        # Target the configured period rather than sleeping a whole interval
+        # after each cycle: the work itself takes about a second, so the old
+        # form ran every ~6.1 s against a 5 s setting.
+        next_due = time.monotonic()
         while max_cycles is None or cycles < max_cycles:
             snap = self.collect_once()
             self.read_and_store_dtcs()
@@ -379,7 +412,15 @@ class Collector:
                      {k: v for k, v in snap.items() if k != "cell_v"})
             cycles += 1
             if max_cycles is None or cycles < max_cycles:
-                time.sleep(interval)
+                next_due += interval
+                delay = next_due - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
+                else:
+                    # A cycle overran its slot. Resync rather than trying to
+                    # catch up with back-to-back cycles, which would only make
+                    # the adapter busier.
+                    next_due = time.monotonic()
 
 
 
