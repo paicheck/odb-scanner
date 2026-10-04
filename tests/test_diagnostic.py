@@ -340,6 +340,49 @@ def test_repository_roundtrip(repo):
     assert latest["pack_voltage"]["value"] == 355.2
 
 
+def test_cell_voltages_keep_their_physical_cell_number(repo):
+    """cell_index must be the DID's cell number, not the list position.
+
+    Cells outside the real pack answer NRC 0x31 and are dropped, so positions
+    shift: without the mapping, cell_index 6 meant cell 7 on one sweep and
+    cell 8 on the next, and any per-cell trend compared different cells.
+    """
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    ts = "2026-09-01T10:00:00+00:00"
+    # cells 7, 9 and 10 answered; 8 returned NRC 0x31
+    repo.record_cell_voltages(vid, ts, [1.078, 1.090, 1.102], [7, 9, 10])
+    rows = repo.conn.execute(
+        "SELECT cell_index, voltage_v FROM cell_voltages "
+        "ORDER BY cell_index").fetchall()
+    assert [(r["cell_index"], r["voltage_v"]) for r in rows] == \
+        [(7, 1.078), (9, 1.090), (10, 1.102)]
+
+
+def test_record_cell_voltages_rejects_misaligned_numbers(repo):
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    with pytest.raises(ValueError):
+        repo.record_cell_voltages(vid, "2026-09-01T10:00:00+00:00",
+                                  [1.0, 1.1], [1])
+
+
+def test_latest_measurements_respects_max_age(repo):
+    """A cached value older than max_age_s must not be offered as current."""
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    old = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(
+        timespec="seconds")
+    recent = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    repo.record_measurement(vid, old, "pack_voltage", "bat_mgmt", "UDS-0x22",
+                            "0x1E3B", "V", "reported", "builtin", "documented",
+                            "1A2B", 350.0)
+    assert "pack_voltage" in repo.latest_measurements(vid)
+    assert "pack_voltage" not in repo.latest_measurements(vid, max_age_s=60)
+    repo.record_measurement(vid, recent, "pack_voltage", "bat_mgmt", "UDS-0x22",
+                            "0x1E3B", "V", "reported", "builtin", "documented",
+                            "1A2B", 351.0)
+    got = repo.latest_measurements(vid, max_age_s=60)
+    assert got["pack_voltage"]["value"] == 351.0
+
+
 def test_raw_response_preserved(repo):
     vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
     repo.record_measurement(vid, "2026-09-01T10:00:00+00:00", "k", "ecu",

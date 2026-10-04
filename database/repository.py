@@ -122,13 +122,34 @@ class Repository:
         sql += " ORDER BY ts"
         return self.conn.execute(sql, args).fetchall()
 
-    def latest_measurements(self, vehicle_id: int) -> dict:
+    def latest_measurements(self, vehicle_id: int,
+                            max_age_s: float | None = None) -> dict:
+        """Most recent successful value per key.
+
+        `max_age_s` bounds how old a cached value may be and still be returned.
+        Without it the result is "the last value that ever succeeded", which
+        can be weeks old -- a caller that fills gaps from this will stamp a
+        stale reading with the current timestamp and mix epochs in one row.
+        Timestamps are all produced by utcnow() (fixed +00:00 offset, second
+        resolution), so the lexicographic comparison below is chronological.
+        """
+        params: list = [vehicle_id, vehicle_id]
+        age_clause = ""
+        if max_age_s is not None:
+            cutoff = (datetime.now(timezone.utc)
+                      - timedelta(seconds=max_age_s)).isoformat(
+                          timespec="seconds")
+            age_clause = "AND ts >= ?"
+            # SQL placeholder order: outer vehicle_id, outer cutoff,
+            # inner vehicle_id, inner cutoff.
+            params = [vehicle_id, cutoff, vehicle_id, cutoff]
         rows = self.conn.execute(
             "SELECT key, value, text_value, unit, provenance, ts, doc_status "
-            "FROM measurements m WHERE vehicle_id=? AND success=1 AND id IN "
+            "FROM measurements m WHERE vehicle_id=? AND success=1 "
+            f"{age_clause} AND id IN "
             "(SELECT MAX(id) FROM measurements WHERE vehicle_id=? AND success=1 "
-            "GROUP BY key)",
-            (vehicle_id, vehicle_id),
+            f"{age_clause} GROUP BY key)",
+            tuple(params),
         ).fetchall()
         return {r["key"]: dict(r) for r in rows}
 
@@ -156,12 +177,25 @@ class Repository:
         sql += " ORDER BY ts"
         return self.conn.execute(sql, args).fetchall()
 
-    def record_cell_voltages(self, vehicle_id: int, ts: str,
-                             voltages: list[float]) -> None:
+    def record_cell_voltages(self, vehicle_id: int, ts: str, voltages: list[float],
+                         cell_numbers: list[int] | None = None) -> None:
+        """Persist one row per cell.
+
+        `cell_numbers` maps each voltage to the physical cell it was read from.
+        It is required whenever any cell failed to answer: cells outside the
+        real pack return NRC 0x31 and are skipped, so without the mapping
+        cell_index would be the position in the surviving list and a given
+        cell_index would name a different physical cell on each sweep --
+        turning a per-cell trend into comparisons between different cells.
+        """
+        if cell_numbers is None:
+            cell_numbers = list(range(len(voltages)))
+        if len(cell_numbers) != len(voltages):
+            raise ValueError("cell_numbers must align with voltages")
         self.conn.executemany(
             "INSERT INTO cell_voltages(vehicle_id, ts, cell_index, voltage_v) "
             "VALUES (?,?,?,?)",
-            [(vehicle_id, ts, i, v) for i, v in enumerate(voltages)],
+            [(vehicle_id, ts, n, v) for n, v in zip(cell_numbers, voltages)],
         )
         self.conn.commit()
 

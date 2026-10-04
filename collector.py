@@ -60,6 +60,11 @@ class Collector:
         # source of truth in decoders/bms.py.
         self.nominal_cac_ah = float(
             self.cfg.get("battery.nominal_cac_ah", NOMINAL_CAC_AH_58KWH))
+        # Oldest a cached measurement may be and still be used to fill a gap in
+        # the current snapshot. Must exceed slow_interval, since slow DIDs are
+        # legitimately absent from most cycles.
+        self.max_value_age_s = float(
+            self.cfg.get("collector.max_value_age_s", 900.0))
         # negative offset so the first pass is always due, even on a host that
         # booted less than slow_interval seconds ago (monotonic starts at 0)
         self._last_slow = -self.slow_interval
@@ -213,7 +218,7 @@ class Collector:
     def _sweep_cells(self, ts: str) -> None:
         """Read per-cell DIDs. DIDs outside the real pack return NRC 0x31
         and are stored as unsuccessful measurements (raw data preserved)."""
-        voltages = []
+        cells = []          # (physical cell number, volts)
         for spec in self.registry.all():
             if not spec.key.startswith("cell_v_"):
                 continue
@@ -221,10 +226,14 @@ class Collector:
             if raw and spec.decode:
                 v = spec.decode_value(raw)
                 if isinstance(v, float) and 1.0 < v < 5.0:
-                    voltages.append(v)
-        if voltages:
-            self.repo.record_cell_voltages(self.vehicle_id, ts, voltages)
-            snapshot_note = f"{len(voltages)} cells"
+                    cells.append((int(spec.key.rsplit("_", 1)[1]), v))
+        if cells:
+            # The cell number comes from the DID key, not the list position:
+            # cells that did not answer are absent, so positions would shift.
+            self.repo.record_cell_voltages(
+                self.vehicle_id, ts, [v for _, v in cells],
+                [n for n, _ in cells])
+            snapshot_note = f"{len(cells)} cells"
             self.repo.add_event(self.vehicle_id, ts, "note",
                                 f"Cell sweep recorded {snapshot_note}")
 
@@ -237,7 +246,13 @@ class Collector:
             self.poll_did(spec, ts)
 
     def _battery_snapshot(self, ts: str, snap: dict) -> None:
-        latest = self.repo.latest_measurements(self.vehicle_id)
+        # Bound how old a carried-forward value may be. Without this the
+        # fallback below is "the last value that ever succeeded", so a DID that
+        # failed for days would be re-stamped with today's ts and the row would
+        # mix fresh and week-old readings -- which then becomes the baseline
+        # that anomaly.py compares against.
+        latest = self.repo.latest_measurements(self.vehicle_id,
+                                               max_age_s=self.max_value_age_s)
 
         def val(key, field=None):
             if key in snap:

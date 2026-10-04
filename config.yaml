@@ -27,6 +27,10 @@ collector:
   poll_interval: 5.0        # fast poll (battery) seconds
   slow_poll_interval: 60.0  # slow poll (charging, SOH, counters) seconds
   read_cell_voltages: true  # per-cell DID sweep (slow, one DID per cell)
+  # Oldest a cached measurement may be and still be used to fill a gap in the
+  # current battery snapshot. Must exceed slow_poll_interval; beyond this a
+  # missing value is recorded as unknown rather than carried forward.
+  max_value_age_s: 900.0
   read_cell_temperatures: false
 
 database:
