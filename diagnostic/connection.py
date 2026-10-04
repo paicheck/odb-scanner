@@ -22,7 +22,6 @@ class DiagnosticConnection:
     def __init__(self, transport: OBDInterface, tx_logger=None):
         self.t = transport
         self.tx_logger = tx_logger or (lambda **kw: None)
-        self._current_ecu: tuple[int, int | None] | None = None
 
     def open(self) -> None:
         self.t.open()
@@ -36,13 +35,6 @@ class DiagnosticConnection:
         except Exception:
             log.exception("Error closing adapter")
 
-    # -- addressing ----------------------------------------------------------
-    def _set_ecu(self, tx: int | None, rx: int | None) -> None:
-        if self._current_ecu != (tx, rx):
-            self.t.set_header(tx)
-            self.t.set_receive_address(rx)
-            self._current_ecu = (tx, rx)
-
     # -- core transmit -------------------------------------------------------
     def _transmit(self, hexcmd: str, ecu: ECUSpec | None, purpose: str) -> list[str]:
         # The single choke point for every request that reaches the vehicle.
@@ -50,14 +42,14 @@ class DiagnosticConnection:
         # read-only allow-list, so no caller -- including the ones that build
         # hex by hand -- can put a write service on the wire.
         uds.validate_request(hexcmd)
-        if ecu is not None:
-            self._set_ecu(ecu.tx, ecu.rx)
-        else:
-            # OBD-II modes (01/03/09) are functional requests addressed to
-            # whoever answers them. They must NOT inherit the ATSH/ATCRA of
-            # the previous DID read, or they go out with that request ID and
-            # the response filter drops the answer.
-            self._set_ecu(None, None)
+        # Every request goes out FUNCTIONALLY: no ATSH/ATCRA is ever sent.
+        # The field clones refuse 29-bit headers, silently mis-apply 11-bit
+        # ones under a 29-bit protocol (a poison id nothing answers), and
+        # refuse the plain ATSH that would clear a bad header -- see
+        # Elm327Transport.set_header. With ATH1 every response frame carries
+        # its sender's CAN id, so per-ECU attribution happens at parse time
+        # (uds.payloads_by_source) instead of at addressing time. The `ecu`
+        # argument identifies the intended ECU for the tx log only.
         self.tx_logger(direction="TX", ecu=ecu.key if ecu else None,
                        payload=hexcmd, purpose=purpose)
         lines = self.t.send_command(hexcmd)
@@ -68,26 +60,49 @@ class DiagnosticConnection:
                        purpose="response")
         return lines
 
+    def functional_probe(self, hexcmd: str,
+                         purpose: str) -> dict[int | None, bytes | None]:
+        """Send one functional request and reassemble answers per sender.
+
+        Returns reassembled payloads keyed by each responding ECU's CAN
+        header (uds.source_label renders them; None values mean a sender's
+        frames never formed a complete message).
+        """
+        return uds.payloads_by_source(self._transmit(hexcmd, None, purpose))
+
     # -- UDS read ------------------------------------------------------------
     def read_did(self, ecu: ECUSpec, did: int) -> bytes:
-        """UDS 0x22 ReadDataByIdentifier. Returns data bytes after the DID.
+        """UDS 0x22 ReadDataByIdentifier, sent functionally.
 
-        Raises NegativeResponseError on NRC (e.g. 0x31 out of range) and
-        ProtocolError on malformed responses.
+        Returns the data bytes after the DID from the first ECU that
+        answers positively with a matching DID echo. Raises
+        NegativeResponseError when only NRCs came back, ProtocolError on
+        malformed responses, CommunicationError when nothing decodable
+        arrived at all.
         """
-        payload = uds.parse_elm_lines(
-            self._transmit(
-                f"22{did:04X}", ecu,
-                f"UDS 0x22 ReadDataByIdentifier DID 0x{did:04X} from "
-                f"{ecu.name} (read-only diagnostic value)",
-            )
+        lines = self._transmit(
+            f"22{did:04X}", ecu,
+            f"UDS 0x22 ReadDataByIdentifier DID 0x{did:04X} from "
+            f"{ecu.name} (read-only diagnostic value)",
         )
-        if payload is None:
-            raise CommunicationError(f"No/undecodable response to DID 0x{did:04X}")
-        positive = uds.expect_positive(payload, 0x22)
-        if len(positive) < 3 or ((positive[1] << 8) | positive[2]) != did:
-            raise ProtocolError(f"DID echo mismatch for 0x{did:04X}: {positive.hex()}")
-        return positive[3:]
+        negatives: list[bytes] = []
+        mismatches: list[bytes] = []
+        for payload in uds.payloads_by_source(lines).values():
+            if not payload:
+                continue
+            if payload[0] == 0x62:
+                if len(payload) >= 3 and ((payload[1] << 8) | payload[2]) == did:
+                    return payload[3:]
+                mismatches.append(payload)
+            elif payload[0] == 0x7F:
+                negatives.append(payload)
+        if mismatches:
+            raise ProtocolError(
+                f"DID echo mismatch for 0x{did:04X}: {mismatches[0].hex()}")
+        if negatives:
+            nrc = negatives[0][2] if len(negatives[0]) > 2 else 0
+            raise NegativeResponseError(0x22, nrc)
+        raise CommunicationError(f"No/undecodable response to DID 0x{did:04X}")
 
     def try_read_did(self, ecu: ECUSpec, did: int) -> bytes | None:
         """Like read_did but returns None on NRC / no response."""
@@ -123,17 +138,26 @@ class DiagnosticConnection:
     def read_dtcs_uds(self, ecu: ECUSpec) -> list[dict]:
         """UDS 0x19 0x02 reportDTCByStatusMask (mask 0x08 = confirmed DTCs).
 
+        Sent functionally; the first positive response wins. For per-ECU
+        attribution of DTCs use functional_probe("190208", ...) directly.
+
         Read-only: 0x19 with sub-functions 0x01/0x02/0x04 are pure reads.
         Clearing (0x14) is blocked at the UDS layer.
         """
-        payload = uds.parse_elm_lines(
-            self._transmit(
-                "190208", ecu,
-                f"UDS 0x19 0x02 ReadDTCInformation (status mask 0x08, confirmed "
-                f"DTCs) from {ecu.name} - read-only",
-            )
+        lines = self._transmit(
+            "190208", ecu,
+            f"UDS 0x19 0x02 ReadDTCInformation (status mask 0x08, confirmed "
+            f"DTCs) from {ecu.name} - read-only",
         )
-        if payload is None:
-            raise CommunicationError(f"No response to DTC read from {ecu.key}")
-        positive = uds.expect_positive(payload, 0x19)
-        return obd2.parse_uds_dtc_response(positive)
+        negatives: list[bytes] = []
+        for payload in uds.payloads_by_source(lines).values():
+            if not payload:
+                continue
+            if payload[0] == 0x59:
+                return obd2.parse_uds_dtc_response(payload)
+            if payload[0] == 0x7F:
+                negatives.append(payload)
+        if negatives:
+            nrc = negatives[0][2] if len(negatives[0]) > 2 else 0
+            raise NegativeResponseError(0x19, nrc)
+        raise CommunicationError(f"No response to DTC read from {ecu.key}")

@@ -24,6 +24,7 @@ from diagnostic.interface import AdapterNotFoundError, CommunicationError
 
 def cmd_discover(cfg) -> int:
     from collector import Collector
+    from diagnostic import uds
     # `with` because Collector.close() only closes the transport, not the repo.
     with Repository(cfg.db_path) as repo:
         c = Collector(cfg, repo)
@@ -32,10 +33,15 @@ def cmd_discover(cfg) -> int:
             print(f"VIN: {vin}")
             results = c.discover_ecus()
             for key, status in results.items():
-                print(f"  {key:<10} {status}")
-            print("\nNOTE: 'no-response' may simply mean the ECU is not "
-                  "reachable with this adapter — see README 'What this can "
-                  "and cannot access'.")
+                addr = c.ecu_addresses.get(key)
+                where = (f"  (answered as ECU {uds.source_label(addr)})"
+                         if addr is not None else "")
+                print(f"  {key:<10} {status}{where}")
+            print("\nNOTE: probes are functional (see "
+                  "diagnostic/elm327.py set_header): 'no-response' means no "
+                  "ECU answered that DID functionally, which may simply mean "
+                  "it is not reachable with this adapter — see README 'What "
+                  "this can and cannot access'.")
             dtcs = c.read_and_store_dtcs()
             print(f"DTCs found: {dtcs or 'none'}")
         finally:

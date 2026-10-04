@@ -13,7 +13,7 @@ It walks the stack in order and stops reporting pass/fail per stage:
     4  adapter          does it identify as an ELM327
     5  protocol         which ATSP makes the bus answer, if any
     6  OBD-II bus       0100 / 0900 / 0902 - does anything on the car reply
-    7  UDS              can we reach individual ECUs by request ID
+    7  UDS              do ECUs answer functional UDS reads (1001 / 22F190)
     8  verdict          the most likely cause and what to try
 
 Safety: every request that reaches the vehicle is passed through
@@ -38,8 +38,11 @@ sys.path.insert(0, str(ROOT))
 
 from config import ConfigError, load_config  # noqa: E402
 from diagnostic import obd2, uds  # noqa: E402
-from diagnostic.ecus import ECUS  # noqa: E402
-from diagnostic.elm327 import Elm327Transport, TcpElm327  # noqa: E402
+from diagnostic.elm327 import (  # noqa: E402
+    PINNED_PROTOCOL,
+    Elm327Transport,
+    TcpElm327,
+)
 from diagnostic.interface import (  # noqa: E402
     AdapterNotFoundError,
     CommunicationError,
@@ -48,29 +51,19 @@ from diagnostic.interface import (  # noqa: E402
 
 OK, WARN, FAIL, SKIP = "OK", "WARN", "FAIL", "SKIP"
 
-# Protocols worth trying. A fixed ATSP6 is a common cause of a working adapter
-# showing NO DATA, so the doctor probes rather than trusting the config.
+# Protocols worth trying. A fixed ATSP that the car is not on is a common
+# cause of a working adapter showing NO DATA, so the doctor probes rather
+# than trusting the config. The collector pins elm327.PINNED_PROTOCOL.
 # (value, label, note)
 PROTOCOLS = [
-    ("6", "CAN 11-bit 500k", "standard for the ID.3 MEB CAN bus"),
-    ("7", "CAN 29-bit 500k", "needed if the gateway uses extended IDs"),
+    ("6", "CAN 11-bit 500k", "standard OBD CAN for many cars"),
+    ("7", "CAN 29-bit 500k", "the ID.3/MEB gateway uses extended IDs"),
     ("1", "CAN 11-bit 250k", "some body/ comfort CAN buses"),
     ("2", "CAN 29-bit 250k", "rare, but cheap adapters default to it"),
     ("0", "auto-detect", "let the adapter choose; slow but forgiving"),
     ("3", "ISO 9141-2", "K-line cars only"),
     ("4", "KWP2000", "K-line cars only"),
 ]
-
-# One DID per ECU that the registry documents as readable.
-_PROBE_DIDS = {
-    "bat_mgmt": 0xF190,   # VIN-ish / part number territory
-    "chg_mgmt": 0xF190,
-    "mot_elec": 0xF190,
-    "chg": 0xF190,
-    "eld": 0xF190,
-    "inf": 0xF190,
-    "brk": 0xF190,
-}
 
 
 class Stage:
@@ -305,7 +298,7 @@ class Doctor:
             s.fail("no open transport")
             return s
         t = self.transport
-        configured = "6"
+        configured = PINNED_PROTOCOL
         responders = []
         refused = []
         for value, label, _note in PROTOCOLS:
@@ -447,56 +440,60 @@ class Doctor:
 
     # -- stage 7: UDS --------------------------------------------------------
     def stage_uds(self) -> Stage:
-        s = Stage(7, "UDS by request ID")
+        s = Stage(7, "UDS (functional)")
         if self.transport is None:
             s.fail("no open transport")
             return s
         if self.working_protocol is None:
             s.fail("not attempted - the bus never answered a single request")
             return s
-        t = self.transport
-        hit, tried = [], 0
-        for key, spec in ECUS.items():
-            did = _PROBE_DIDS.get(key, 0xF190)
-            tried += 1
+        # Physical addressing (ATSH per ECU) is deliberately NOT attempted:
+        # the field clones refuse 8-digit 29-bit headers, silently mis-apply
+        # 3-digit ones under a 29-bit protocol (a poison id nothing answers),
+        # and refuse the plain ATSH that would clear a bad header. Functional
+        # requests + response-header attribution is what the collector does,
+        # so it is what the doctor must prove.
+        hit: list[str] = []
+        for cmd, name in (("1001", "default session"),
+                          ("22F190", "VIN by DID")):
             try:
-                t.set_header(spec.tx)
-                t.set_receive_address(spec.rx)
-                lines = self._vehicle(f"22{did:04X}")
+                lines = self._vehicle(cmd)
             except (CommunicationError, uds.ReadOnlyViolationError) as exc:
-                s.line(f"{key:<10} tx={spec.tx:03X} error: {exc}")
+                s.line(f"{cmd}  error: {exc}")
                 continue
             if self._is_silent(lines):
-                s.line(f"{key:<10} tx={spec.tx:03X} no answer")
+                s.line(f"{cmd}  {name:<16} no answer")
                 continue
-            payload = uds.parse_elm_lines(lines)
-            if not payload:
-                s.line(f"{key:<10} tx={spec.tx:03X} answered "
-                       f"{' '.join(lines)[:26]} (undecodable)")
-                hit.append(key)
-                continue
-            if payload[0] == 0x7F:
-                # An NRC still proves the ECU is alive and speaking UDS; only
-                # this DID is not supported. That distinction is the whole
-                # point of the stage, so it must not be reported as success.
-                nrc = payload[2] if len(payload) > 2 else 0
-                s.line(f"{key:<10} tx={spec.tx:03X} ALIVE, DID not "
-                       f"supported (NRC 0x{nrc:02X})")
-                hit.append(key)
-                continue
-            s.line(f"{key:<10} tx={spec.tx:03X} OK  "
-                   f"{payload.hex().upper()[:32]}")
-            hit.append(key)
-        s.data["uds_hits"] = hit
+            answered = False
+            for src, p in uds.payloads_by_source(lines).items():
+                label = uds.source_label(src)
+                if p and p[0] == 0x7F:
+                    # An NRC still proves the ECU is alive and speaking UDS;
+                    # only this service/DID is not supported.
+                    nrc = p[2] if len(p) > 2 else 0
+                    s.line(f"{cmd}  ECU {label:<6} ALIVE, refused "
+                           f"(NRC 0x{nrc:02X})")
+                elif p:
+                    s.line(f"{cmd}  ECU {label:<6} OK  {p.hex().upper()[:32]}")
+                else:
+                    continue
+                hit.append(label)
+                answered = True
+            if not answered:
+                s.line(f"{cmd}  {name:<16} answered but undecodable: "
+                       f"{' '.join(lines)[:26]}")
+                hit.append(cmd)
+        s.data["uds_hits"] = sorted(set(hit))
         if hit:
-            s.line(f"{len(hit)}/{tried} ECUs answered a UDS read")
+            s.line(f"{len(set(hit))} ECU(s) answered a functional UDS read")
         else:
-            s.fail("no ECU answered a UDS read")
-            s.note("OBD-II and UDS are different addressing. If 0100 worked "
-                   "but no 22 read did, the adapter is likely resetting the "
-                   "header between requests, or the ECU IDs differ from the "
-                   "registry (run tools/elm_console.py and try "
-                   "ATSH7E5 then 22F190 by hand).")
+            s.fail("no ECU answered a functional UDS read")
+            s.note("OBD-II works but nothing answers functional UDS "
+                   "(1001 / 22F190). Either the gateway only forwards the "
+                   "legislated OBD services on the OBD socket, or the "
+                   "adapter cannot transmit those frames at all (watch for "
+                   "CAN ERROR). A known-good adapter (OBDLink SX/MX, "
+                   "Veepeak) tells the two apart.")
         return s
 
     # -- stage 8: verdict ----------------------------------------------------
@@ -510,7 +507,7 @@ class Doctor:
         ident = by_title.get("Adapter identity")
         proto = by_title.get("Protocol negotiation")
         obd = by_title.get("OBD-II bus")
-        uds = by_title.get("UDS by request ID")
+        uds = by_title.get("UDS (functional)")
 
         if cfg and cfg.status == FAIL:
             causes.append("The adapter is not configured to anything usable.")
@@ -593,11 +590,12 @@ class Doctor:
             return causes, fixes
 
         if uds and uds.status == FAIL and obd and obd.status != FAIL:
-            causes.append("OBD-II works but UDS addressing does not.")
-            fixes.append("A functional 0100 answering while every 22xx read "
-                         "goes silent points at header handling: use "
-                         "tools/elm_console.py and try `ATSH7E5` then `22F190` "
-                         "by hand to see whether an ECU answers.")
+            causes.append("OBD-II works but no ECU answers functional UDS.")
+            fixes.append("The gateway may only forward the legislated OBD "
+                         "services (01/03/09) on the OBD socket, or the "
+                         "adapter cannot transmit UDS frames at all (cheap "
+                         "clones return CAN ERROR). Retest with a "
+                         "known-good adapter (OBDLink SX/MX, Veepeak).")
             fixes.append("Check whether another program is sharing the port "
                          "and interleaving commands.")
 
@@ -629,7 +627,7 @@ def run(cfg, tcp=None, port_override=None, all_ports=False, timeout=5.0,
             ("Adapter identity", d.stage_adapter),
             ("Protocol negotiation", d.stage_protocol),
             ("OBD-II bus", d.stage_obd),
-            ("UDS by request ID", d.stage_uds))
+            ("UDS (functional)", d.stage_uds))
     stages: list[Stage] = []
     opened = False
     adapter_broken = False
@@ -637,7 +635,7 @@ def run(cfg, tcp=None, port_override=None, all_ports=False, timeout=5.0,
     # exception is useless precisely when something is already broken.
     for number, (title, build) in enumerate(plan, 1):
         needs_adapter = title in ("Adapter identity", "Protocol negotiation",
-                                  "OBD-II bus", "UDS by request ID")
+                                  "OBD-II bus", "UDS (functional)")
         if needs_adapter and (not opened or adapter_broken):
             reason = ("no adapter was opened" if not opened else
                       "the adapter never identified itself, so probing the "

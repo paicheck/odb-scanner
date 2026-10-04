@@ -5,12 +5,18 @@ Initialization uses conservative, documented ELM327 AT commands:
 
     ATZ    reset            ATE0   echo off
     ATL0   linefeeds off    ATS0   spaces off
-    ATH1   headers ON (required to address specific ECUs via UDS)
-    ATAT1  adaptive timing  ATSP6  ISO 15765-4 CAN 500 kbit/s 11-bit
+    ATH1   headers ON (every response frame carries its sender's CAN id)
+    ATAT1  adaptive timing  ATSP7  ISO 15765-4 CAN 500 kbit/s 29-bit
     ATCAF1 CAN auto-formatting on
 
+Addressing is functional-only: no ATSH/ATCRA is ever sent (see
+set_header). Requests go out on the protocol's default functional id and
+each ECU's answer is attributed by its response header (18DAF1xx).
+
 Note: multi-frame (ISO-TP) responses are reassembled by the ELM327 for
-*requests it sends itself*; it automatically emits flow-control frames.
+*requests it sends itself* on good adapters; cheap clones emit the raw
+first/consecutive frames instead, so diagnostic/uds.py reassembles per
+sender either way.
 """
 from __future__ import annotations
 
@@ -28,6 +34,12 @@ from .interface import (
 log = logging.getLogger(__name__)
 
 _ADAPTER_HINTS = ("ELM327", "OBDLINK", "STN", "OBDII", "OBD-II")
+
+# Protocol the transport pins during initialize(). "7" = ISO 15765-4 CAN
+# 29-bit 500 kbit/s -- the ID.3/MEB diagnostic bus answers on 29-bit ids
+# (18DAF1xx / 18DB33F1) and is silent under ATSP6 (11-bit). Verified with
+# tools/doctor.py stage 5; change it there first if a vehicle disagrees.
+PINNED_PROTOCOL = "7"
 
 
 class Elm327Transport(OBDInterface):
@@ -49,6 +61,7 @@ class Elm327Transport(OBDInterface):
         self._dev = None
         self._opened = False
         self.identity = "unknown"
+        self._addressing_warned = False
 
     # -- lifecycle ----------------------------------------------------------
     @property
@@ -177,7 +190,8 @@ class Elm327Transport(OBDInterface):
         time.sleep(0.3)
         resp = self.send_command("ATI")
         self.identity = " ".join(resp) if resp else "unknown"
-        for cmd in ("ATE0", "ATL0", "ATS0", "ATH1", "ATAT1", "ATSP6", "ATCAF1"):
+        for cmd in ("ATE0", "ATL0", "ATS0", "ATH1", "ATAT1",
+                    f"ATSP{PINNED_PROTOCOL}", "ATCAF1"):
             self.send_command(cmd)
         # OBD-II warm-up: '0100' (supported-PID request) makes the ELM finish
         # CAN bus init and shows whether anything is awake. On a silent bus
@@ -200,21 +214,36 @@ class Elm327Transport(OBDInterface):
         return self.identity
 
     def set_header(self, tx_id: int | None) -> None:
-        # ATSh with no argument CLEARS the filter, which is what functional
-        # OBD-II requests (modes 01/03/09) need. Sending "ATSH000" instead
-        # would address request id 0x000 and silently drop the response.
-        if tx_id is None:
-            self.send_command("ATSH")
-        else:
-            self.send_command(f"ATSH{tx_id & 0x7FF:03X}")
+        """No-op: this transport stays on functional addressing.
+
+        Empirically established on the v1.5 clone in the field, running the
+        29-bit protocol (ATSP7):
+
+        1. ATSH with a 3-digit (11-bit) value is *accepted* but applied as
+           a 29-bit id (ATSH7E5 -> 0x000007E5), which nothing on the bus
+           listens to -- every later request dies with NO DATA.
+        2. The 8-digit ATSH a 29-bit id requires is refused ('?'), and so
+           is the plain ATSH that would clear a header -- once a bad
+           header is set, only ATZ recovers.
+
+        Functional requests (default header, 18DB33F1 under ATSP7) reach
+        every ECU, and with ATH1 each response carries its sender's id
+        (18DAF1xx), so higher layers attribute responses per ECU at parse
+        time (uds.payloads_by_source) instead of addressing them here.
+        """
+        if tx_id is not None and not self._addressing_warned:
+            self._addressing_warned = True
+            log.info("ATSH suppressed: functional addressing only; responses "
+                     "are attributed by their response header instead")
 
     def set_receive_address(self, rx_id: int | None) -> None:
-        if rx_id is None:
-            resp = self.send_command("ATCRA")
-            if any("?" in r for r in resp):
-                log.warning("Adapter refused 'ATCRA' (clear filter)")
-        else:
-            self.send_command(f"ATCRA{rx_id & 0x7FF:03X}")
+        """No-op: never program a CAN receive filter.
+
+        The clone refuses the plain ATCRA that would clear a filter, so a
+        once-set filter could deafen the adapter to every other response
+        until ATZ. Receive everything and select in software
+        (uds.payloads_by_source) instead.
+        """
 
     def description(self) -> str:
         return f"{self.name} ({self.identity})"

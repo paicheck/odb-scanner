@@ -75,9 +75,15 @@ def test_validate_request_fails_closed():
             uds.validate_request(bad)
 
 
-def test_functional_requests_clear_the_ecu_header():
-    """Mode 01/03/09 are functional: they must not inherit the ATSH/ATCRA of
-    the previous DID read, or the response filter discards the answer."""
+def test_no_header_or_filter_commands_are_ever_sent():
+    """Every request must go out functionally: never ATSH, never ATCRA.
+
+    Regression: the field clone accepted a 3-digit ATSH under the 29-bit
+    protocol and applied it as 0x000007E5 -- a poison id nothing answers
+    -- while refusing both the 8-digit ATSH a 29-bit id needs and the
+    plain ATSH that would clear it, so once any header was set every
+    later read (DID or OBD-II) died with NO DATA until ATZ.
+    """
     from diagnostic.connection import DiagnosticConnection
     from diagnostic.ecus import get_ecu
 
@@ -85,12 +91,10 @@ def test_functional_requests_clear_the_ecu_header():
     conn = DiagnosticConnection(t)
     bms = get_ecu("bat_mgmt")
     conn._transmit("221E3B", bms, "DID read")
-    assert "ATSH7E5" in t.written
-    t.written.clear()
     conn._transmit("03", None, "mode 03")
-    # bare ATSH clears the filter; an "ATSH000" would address request id 0
-    assert "ATSH" in t.written and "ATSH000" not in t.written, t.written
-    assert "ATCRA" in t.written, t.written
+    conn._transmit("0902", None, "VIN")
+    poisoned = [w for w in t.written if w.startswith(("ATSH", "ATCRA"))]
+    assert not poisoned, poisoned
 
 
 def test_truncated_multiframe_response_is_rejected():
@@ -130,6 +134,71 @@ def test_line_to_frame_multi():
 def test_parse_elm_lines_no_data():
     assert uds.parse_elm_lines(["NO DATA"]) is None
     assert uds.parse_elm_lines(["SEARCHING...", "UNABLE TO CONNECT"]) is None
+
+
+# --- 29-bit (MEB) addressing: functional requests, attribution by header ----
+# Real ID.3 bus capture: several ECUs answer ONE functional request, each
+# frame tagged with its sender's 29-bit id (18DAF1xx).
+CAR_0902_LINES = [
+    "18DAF1011014490201575657",   # FF from ECU 0x01: 49 02 01 "WVW"
+    "18DAF10A037F0911",           # NRC from ECU 0x0A: mode 09 unsupported
+    "18DAF101215A5A5A45315A4D",   # CF1 from 0x01: "ZZZE1ZM"
+    "18DAF1012250303837303533",   # CF2 from 0x01: "P087053"
+]
+
+
+def test_line_to_frame_29bit_header():
+    frame, header = uds.line_to_frame_header("18DAF10506410098180001")
+    assert frame == bytes.fromhex("06410098180001")
+    assert header == 0x18DAF105
+    assert uds.source_label(header) == "0x05"
+    # 11-bit lines keep working
+    frame, header = uds.line_to_frame_header("7ED04621E3B0FA0")
+    assert frame == bytes.fromhex("04621E3B0FA0")
+    assert header == 0x7ED
+    assert uds.source_label(header) == "0x7ED"
+
+
+def test_payloads_by_source_keeps_responders_apart():
+    payloads = uds.payloads_by_source(CAR_0902_LINES)
+    assert payloads[0x18DAF101] == bytes.fromhex(
+        "4902015756575A5A5A45315A4D50303837303533")
+    assert payloads[0x18DAF10A] == bytes.fromhex("7F0911")
+
+
+def test_vin_decode_29bit_multi_responder():
+    """Regression: with 29-bit header lines the old parser failed per-line
+    frame extraction, fell into the indexed-format path and concatenated
+    raw frame hex; ISO-TP sequence bytes 0x21/0x22 are printable ASCII and
+    leaked into the VIN as '!' and '"', yielding 'WVW!ZZZE1ZM"P0870'."""
+    assert obd2.parse_vin_response(CAR_0902_LINES) == "WVWZZZE1ZMP087053"
+
+
+def test_parse_elm_lines_prefers_positive_responder():
+    lines = ["18DAF10506410098180001",   # positive 41 00 ...
+             "18DAF10A037F0111"]         # negative 7F 01 11
+    assert uds.parse_elm_lines(lines) == bytes.fromhex("410098180001")
+    # only negatives -> the first NRC is surfaced, not None
+    assert uds.parse_elm_lines(["18DAF10A037F0111"]) == \
+        bytes.fromhex("7F0111")
+
+
+def test_read_did_accepts_any_functional_responder():
+    """read_did is sent functionally: the first positive answer with a
+    matching DID echo wins, whoever it came from; NRCs surface as such."""
+    from diagnostic.connection import DiagnosticConnection
+    from diagnostic.ecus import get_ecu
+
+    vin_frames = ["18DAF10A101462F190575657",
+                  "18DAF10A215A5A5A45315A4D",
+                  "18DAF10A2250303837303533"]
+    c = DiagnosticConnection(_RecordingTransport(vin_frames))
+    raw = c.read_did(get_ecu("bat_mgmt"), 0xF190)
+    assert raw == b"WVWZZZE1ZMP087053"
+
+    refused = DiagnosticConnection(
+        _RecordingTransport(["18DAF10A037F2231"]))  # requestOutOfRange
+    assert refused.try_read_did(get_ecu("bat_mgmt"), 0xFFFF) is None
 
 
 def test_negative_response():

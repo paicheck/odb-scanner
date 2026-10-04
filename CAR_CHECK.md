@@ -59,7 +59,7 @@ python main.py doctor --port COM7      # or name one specific port
 | 4 Adapter identity | an ELM327 answers and says what it is |
 | 5 Protocol negotiation | at least one bus speed/type gets a reply |
 | 6 OBD-II bus | the generic `0100` request is answered |
-| 7 UDS by request ID | individual ECUs answer a VIN read |
+| 7 UDS (functional) | ECUs answer a functional VIN / session read |
 
 **First `FAIL` is your answer.** Later stages get skipped — that's not extra
 information, just avoiding the same timeout again.
@@ -94,13 +94,18 @@ Adapter is fine, car is not talking.
 
 ### "OBD works but UDS does not"
 Different addressing, not a dead link.
-- Set the header to one ECU and read it by hand:
+- The tool probes UDS **functionally** (no `ATSH`): type these one at a
+  time in `tools/elm_console.py`:
   ```
-  ATSH7E5
+  1001
   22F190
   ```
-- If that returns a VIN but `doctor` did not, the adapter is resetting the
-  header between requests.
+- Answers arrive tagged with the answering ECU's id (`18DAF1xx` on this
+  car). A VIN coming back proves UDS works; the tool then attributes
+  every response by that id.
+- **Do not type `ATSH7E5` on this adapter**: under the 29-bit protocol it
+  is accepted but sent as a dead id, and this clone refuses the plain
+  `ATSH` that would undo it — only unplugging the adapter recovers.
 - `NE` / *no response* is fine on an ECU — it means alive but not addressed.
   An **NRC** like `7F 22 31` means alive but VIN not supported.
 

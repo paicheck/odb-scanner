@@ -175,25 +175,70 @@ def _valid_frame(raw: bytes) -> bool:
     return False
 
 
-def line_to_frame(line: str) -> bytes | None:
-    """Convert one ELM327 output line into an ISO-TP frame payload.
+def _strip_header(h: str) -> tuple[str, int | None]:
+    """Split cleaned ELM line hex into (frame hex, CAN header value).
 
-    Handles both header-on (e.g. '7ED04621E3B0FA0') and header-off
-    ('04621E3B0FA0') formats. Returns None if the line is not a frame
-    (e.g. 'NO DATA', 'SEARCHING...', 'OK').
+    With ATH1 the ELM327 prefixes every frame with the CAN id it arrived
+    on: 3 hex digits for 11-bit ids ('7ED...'), 8 digits for 29-bit ids
+    ('18DAF105...'). The formats are distinguishable without knowing the
+    protocol: frame hex is always an even number of characters, so an
+    11-bit-tagged line (3 + 2n) is odd and a 29-bit-tagged line (8 + 2n)
+    is even, and ISO 15765-4 29-bit diagnostic ids start with '18D'
+    (priority 6; 18DA physical / 18DB functional).
+    """
+    if len(h) % 2 == 1 and len(h) > 3:
+        return h[3:], int(h[:3], 16)                # 11-bit header + frame
+    if len(h) % 2 == 0 and len(h) > 8 and h[:3] == "18D":
+        return h[8:], int(h[:8], 16)                # 29-bit header + frame
+    return h, None                                  # header-off
+
+
+def line_to_frame_header(line: str) -> tuple[bytes | None, int | None]:
+    """Convert one ELM327 output line into (ISO-TP frame, CAN header).
+
+    Handles header-on 11-bit ('7ED04621E3B0FA0'), header-on 29-bit
+    ('18DAF10506410098180001') and header-off ('04621E3B0FA0') formats.
+    Returns (None, None) if the line is not a frame (e.g. 'NO DATA',
+    'SEARCHING...', 'OK', '?').
+
+    The header matters: a functional request can be answered by several
+    ECUs at once, and the header (18DAF1xx on 29-bit buses, the rx id on
+    11-bit buses) is the only way to tell whose frame is whose.
     """
     h = clean_hex(line)
     if len(h) < 4:
-        return None
-    candidates = (h[3:], h) if len(h) > 3 else (h,)
-    for cand in candidates:
-        try:
-            raw = bytes.fromhex(cand)
-        except ValueError:
-            continue
-        if _valid_frame(raw):
-            return raw
-    return None
+        return None, None
+    body, header = _strip_header(h)
+    try:
+        raw = bytes.fromhex(body)
+    except ValueError:
+        return None, None
+    if _valid_frame(raw):
+        return raw, header
+    return None, None
+
+
+def line_to_frame(line: str) -> bytes | None:
+    """Convert one ELM327 output line into an ISO-TP frame payload.
+
+    Handles header-on (11-bit and 29-bit) and header-off formats.
+    Returns None if the line is not a frame (e.g. 'NO DATA',
+    'SEARCHING...', 'OK').
+    """
+    return line_to_frame_header(line)[0]
+
+
+def source_label(header: int | None) -> str:
+    """Human-facing label for a responding ECU, given its response header.
+
+    29-bit OBD/UDS responses arrive as 18DAF1xx where xx is the ECU's
+    logical address; 11-bit responses carry the ECU's rx id directly.
+    """
+    if header is None:
+        return "no-header"
+    if header > 0x7FF:
+        return f"0x{header & 0xFF:02X}"
+    return f"0x{header:03X}"
 
 
 def reassemble(frames: list[bytes]) -> bytes | None:
@@ -226,10 +271,40 @@ def reassemble(frames: list[bytes]) -> bytes | None:
     return bytes(data[:total])
 
 
+def payloads_by_source(lines: list[str]) -> dict[int | None, bytes | None]:
+    """Reassemble cleaned ELM327 lines per responding ECU.
+
+    A functional request can be answered by several ECUs at once; with
+    ATH1 every frame carries its sender's CAN id, so frames must be
+    grouped per sender *before* ISO-TP reassembly -- interleaving frames
+    from two ECUs corrupts both messages. Keys are CAN header values
+    (11-bit rx id, 29-bit id, or None for header-off lines), in order of
+    first arrival; values are the reassembled payloads (None when a
+    sender's frames did not form a complete message).
+    """
+    groups: dict[int | None, list[bytes]] = {}
+    for ln in lines:
+        frame, header = line_to_frame_header(ln)
+        if frame is not None:
+            groups.setdefault(header, []).append(frame)
+    return {hdr: reassemble(fs) for hdr, fs in groups.items()}
+
+
 def parse_elm_lines(lines: list[str]) -> bytes | None:
-    """Parse cleaned ELM327 response lines into one UDS payload."""
-    frames = [f for f in (line_to_frame(ln) for ln in lines) if f]
-    return reassemble(frames)
+    """Parse cleaned ELM327 response lines into one UDS payload.
+
+    Frames are reassembled per responding ECU (payloads_by_source). When
+    several ECUs answered a functional request, the first positive
+    (non-7F) payload is returned; if there is no positive, the first
+    negative is returned so callers can surface its NRC.
+    """
+    payloads = [p for p in payloads_by_source(lines).values() if p]
+    if not payloads:
+        return None
+    for p in payloads:
+        if p[0] != 0x7F:
+            return p
+    return payloads[0]
 
 
 def expect_positive(payload: bytes, service: int) -> bytes:

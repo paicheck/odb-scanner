@@ -101,6 +101,8 @@ def _did_value(did: int) -> bytes | None:
             return _enc_u16(42)
         if did == 0x1DEC:
             return bytes([1])
+        if did == 0xF190:
+            return VIN    # VIN DID: real MEB ECUs answer this functionally
         return None
 
 
@@ -149,12 +151,13 @@ def _build_response(req: bytes, tx: int) -> list[bytes] | None:
         # TesterPresent positive response, single frame with PCI length.
         return [bytes([0x02, 0x7E, 0x00])]
     if sid == 0x19 and len(req) >= 3 and req[1] == 0x02:
-        # one confirmed DTC: U1123 00 (D1 23 00), status 0x2F (charge-mgmt only)
-        if tx == 0x765:
-            return _isotp_encode(
-                bytes([0x59, 0x02, 0xFF, 0xD1, 0x23, 0x00, 0x2F])
-            )
-        return _isotp_encode(bytes([0x59, 0x02, 0xFF]))
+        # one confirmed DTC: U1123 00 (D1 23 00), status 0x2F. Returned to
+        # any requester: the collector addresses functionally (no ATSH is
+        # ever sent), so the "current ECU" no longer distinguishes who is
+        # being asked -- the simulator answers as its single persona.
+        return _isotp_encode(
+            bytes([0x59, 0x02, 0xFF, 0xD1, 0x23, 0x00, 0x2F])
+        )
     if sid == 0x01 and len(req) >= 2:  # standard OBD-II via motor ECU
         pid = req[1]
         if pid == 0x00:

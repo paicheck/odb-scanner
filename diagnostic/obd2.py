@@ -7,7 +7,7 @@ mode 03 returns legislated emissions DTCs only (VW-specific DTCs need UDS).
 """
 from __future__ import annotations
 
-from .uds import ProtocolError, line_to_frame, reassemble
+from .uds import ProtocolError, payloads_by_source
 
 DTC_LETTERS = {0b00: "P", 0b01: "C", 0b10: "B", 0b11: "U"}
 
@@ -18,31 +18,45 @@ def decode_obd2_dtc(b1: int, b2: int) -> str:
 
 
 def _payload_after(lines: list[str], marker: bytes) -> bytes | None:
-    """Reassemble ELM lines, then return the bytes starting at `marker`."""
-    frames = [f for f in (line_to_frame(ln) for ln in lines) if f]
-    payload = reassemble(frames)
-    if payload is None:
-        return None
-    idx = payload.find(marker)
-    if idx < 0:
-        return None
-    return payload[idx:]
+    """Reassemble ELM lines per responding ECU, then return the bytes
+    starting at `marker` from the first payload that contains it.
+
+    Several ECUs may answer one functional request (and some of them
+    negatively); picking per sender is what keeps their frames apart.
+    """
+    for payload in payloads_by_source(lines).values():
+        if payload is None:
+            continue
+        idx = payload.find(marker)
+        if idx >= 0:
+            return payload[idx:]
+    return None
 
 
 def parse_vin_response(lines: list[str]) -> str:
     """Parse mode 09 02 output.
 
-    Handles (1) headers-on ISO-TP frames (ATH1) and (2) the header-off
-    ELM format with '014' line-count preamble and '0:'/'1:' index prefixes.
+    Handles (1) ISO-TP frames (headers-on 11-bit or 29-bit, or headers
+    off), reassembled per responding ECU so that several ECUs answering
+    one functional request cannot corrupt each other's frames, and (2)
+    the header-off ELM format with '014' line-count preamble and
+    '0:'/'1:' index prefixes.
     """
-    # 1) ISO-TP frame reconstruction (headers-on)
-    frames = [f for f in (line_to_frame(ln) for ln in lines) if f]
-    payload = reassemble(frames) if frames else None
-    if payload:
+    # 1) per-responder ISO-TP reassembly
+    payloads = payloads_by_source(lines)
+    for payload in payloads.values():
+        if not payload:
+            continue
         vin = _vin_from_payload(payload)
         if vin:
             return vin
-    # 2) header-off indexed format
+    # 2) header-off indexed format. Also the fallback when "frames" parsed
+    # but held no VIN: the indexed format's '0:' prefixes merge into the
+    # hex and can fake a short single frame, so path 1 alone must not be
+    # trusted to rule the format out. (The corrupt-VIN regression
+    # 'WVW!ZZZE1ZM"P0870' came from 29-bit header lines failing path 1
+    # entirely and being concatenated raw down here -- those now parse
+    # per responder above, so a real VIN never reaches this path.)
     from .uds import clean_hex
 
     hexcat = ""

@@ -69,6 +69,10 @@ class Collector:
         # booted less than slow_interval seconds ago (monotonic starts at 0)
         self._last_slow = -self.slow_interval
         self._active_session_id: int | None = None
+        # Learned during discover_ecus(): registry key -> CAN header of the
+        # ECU that actually answered that key's probe (functional addressing,
+        # so the answer's response header is the only identity we get).
+        self.ecu_addresses: dict[str, int] = {}
 
     def _adopt_open_session(self) -> None:
         """Continue a session a previous run left open.
@@ -113,29 +117,82 @@ class Collector:
         self.conn.close()
 
     # -- phase 2: ECU discovery ----------------------------------------------
-    def discover_ecus(self) -> dict[str, str]:
-        """Probe each known ECU with a default-session request.
+    def _probe_dids(self) -> dict[str, int]:
+        """First documented non-cell DID per ECU key, for discovery probes."""
+        probes: dict[str, int] = {}
+        for spec in self.registry.all():
+            if spec.did is None or spec.key.startswith("cell_v_"):
+                continue
+            probes.setdefault(spec.ecu_key, spec.did)
+        return probes
 
-        Statuses: responder | no-response | nrc-<code>. Never writes.
+    def discover_ecus(self) -> dict[str, str]:
+        """Probe ECUs functionally and attribute answers by CAN header.
+
+        Physical addressing is not used (see Elm327Transport.set_header):
+        one functional request goes out and every ECU that answers is
+        identified by its response header (18DAF1xx on 29-bit buses, the
+        rx id on 11-bit ones). Each registry key is probed with the first
+        DID the decoder registry documents for it, so a positive answer
+        identifies the ECU that really holds that data.
+
+        Statuses: responder | no-response | nrc-<code> |
+        no-dids-registered. Never writes.
         """
-        results = {}
+        results: dict[str, str] = {}
+        self.ecu_addresses = {}
+        # Who speaks UDS at all? One functional default-session request.
+        try:
+            session = self.conn.functional_probe(
+                "1001", "UDS 0x10 0x01 default diagnostic session "
+                        "(functional discovery probe)")
+        except CommunicationError as exc:
+            log.debug("functional session probe failed: %s", exc)
+            session = {}
+        live = sorted(uds.source_label(src) for src, p in session.items()
+                      if p and p[0] == 0x50)
+        if live:
+            log.info("functional UDS responders (session probe): %s",
+                     ", ".join(live))
+        probe_dids = self._probe_dids()
         for key, spec in ECUS.items():
+            did = probe_dids.get(key)
+            if did is None:
+                # Nothing documented for this ECU, and a generic probe
+                # (e.g. 22F190) is answered by whoever knows the VIN, not
+                # by "the" ECU for this role -- reporting that as a
+                # responder would be misleading.
+                results[key] = "no-dids-registered"
+                self.repo.upsert_ecu(self.vehicle_id, key, spec.name,
+                                     spec.tx, spec.rx, results[key],
+                                     spec.doc_status)
+                continue
             status = "no-response"
             try:
-                payload = uds.parse_elm_lines(
-                    self.conn._transmit("1001", spec,
-                                        "UDS 0x10 0x01 default diagnostic "
-                                        f"session (ECU discovery probe, {key})")
-                )
-                if payload and payload[0] == 0x50:
-                    status = "responder"
-                elif payload and payload[0] == 0x7F and len(payload) > 2:
-                    status = f"nrc-{payload[2]:02X}"
+                payloads = self.conn.functional_probe(
+                    f"22{did:04X}",
+                    f"UDS 0x22 DID 0x{did:04X} functional discovery "
+                    f"probe ({key})")
             except CommunicationError as exc:
                 log.debug("ECU %s probe failed: %s", key, exc)
+                payloads = {}
+            for src, p in payloads.items():
+                if (p and p[0] == 0x62 and len(p) >= 3
+                        and ((p[1] << 8) | p[2]) == did):
+                    status = "responder"
+                    self.ecu_addresses[key] = src
+                    break
+                if p and p[0] == 0x7F and len(p) > 2 and status == "no-response":
+                    status = f"nrc-{p[2]:02X}"
             self.repo.upsert_ecu(self.vehicle_id, key, spec.name, spec.tx,
                                  spec.rx, status, spec.doc_status)
             results[key] = status
+        if self.ecu_addresses:
+            self.repo.add_event(
+                self.vehicle_id, utcnow(), "note",
+                "functional discovery: " + ", ".join(
+                    f"{k}@{uds.source_label(v)}"
+                    for k, v in sorted(self.ecu_addresses.items())))
         log.info("ECU discovery: %s", results)
         return results
 
@@ -361,6 +418,19 @@ class Collector:
             )
 
     # -- DTCs -------------------------------------------------------------------
+    def _ecu_label_for_source(self, src: int | None) -> str:
+        """Best label for a responding ECU: a registry key if the address is
+        known (learned functionally, or a documented 11-bit rx id), else a
+        plain address label."""
+        for key, addr in self.ecu_addresses.items():
+            if addr == src:
+                return key
+        if src is not None and src <= 0x7FF:
+            for key, spec in ECUS.items():
+                if spec.rx == src:
+                    return key
+        return f"uds-{uds.source_label(src)}"
+
     def read_and_store_dtcs(self) -> list[dict]:
         ts = utcnow()
         all_dtcs: list[dict] = []
@@ -373,27 +443,29 @@ class Collector:
                 all_dtcs.append({"ecu": "OBD-II", "code": code})
         except CommunicationError as exc:
             log.debug("OBD-II DTC read failed: %s", exc)
-        # UDS DTCs from discovered responder ECUs
-        for row in self.repo.list_ecus(self.vehicle_id):
-            if row["status"] != "responder":
+        # UDS DTCs: ONE functional read, attributed per responding ECU by its
+        # response header. Per-ECU reads would send the identical functional
+        # request N times and could not tell whose DTCs came back anyway.
+        try:
+            payloads = self.conn.functional_probe(
+                "190208", "UDS 0x19 0x02 ReadDTCInformation (status mask "
+                          "0x08, confirmed DTCs) - functional, read-only")
+        except CommunicationError as exc:
+            log.debug("UDS DTC read failed: %s", exc)
+            payloads = {}
+        for src, payload in payloads.items():
+            if not payload or payload[0] != 0x59:
                 continue
-            spec = ECUS.get(row["key"])
-            if spec is None:
-                continue
-            try:
-                results = self.conn.read_dtcs_uds(spec)
-            except CommunicationError as exc:
-                log.debug("UDS DTC read failed for %s: %s", spec.key, exc)
-                continue
-            for item in results:
+            ecu_label = self._ecu_label_for_source(src)
+            for item in obd2.parse_uds_dtc_response(payload):
                 code = item["code"]
                 desc, _ = dtc_analysis.describe(code)
                 cats = dtc_analysis.classify_dtc(code, item.get("status_byte"))
-                self.repo.upsert_dtc(self.vehicle_id, ts, spec.key, code, desc,
+                self.repo.upsert_dtc(self.vehicle_id, ts, ecu_label, code, desc,
                                      cats, status="confirmed",
                                      freeze_frame={"status_byte":
                                                    item.get("status_byte")})
-                all_dtcs.append({"ecu": spec.key, "code": code,
+                all_dtcs.append({"ecu": ecu_label, "code": code,
                                  "status_byte": item.get("status_byte")})
         return all_dtcs
 
