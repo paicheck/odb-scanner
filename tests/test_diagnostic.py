@@ -573,7 +573,7 @@ def test_charging_correlation(repo):
     assert corr["codes_linked_to_charging"] == ["U112300"]
     assert corr["links"][0]["gap_hours"] == 1.0
 # --- config / simulator end-to-end ----------------------------------------------
-from config import load_config  # noqa: E402
+from config import load_config, ConfigError  # noqa: E402
 
 
 def test_config_defaults():
@@ -606,6 +606,75 @@ def test_config_missing_local_file_is_not_an_error(tmp_path):
     base.write_text("adapter:\n  port: COM3\n", encoding="utf-8")
     cfg = load_config(base, tmp_path / "does-not-exist.yaml")
     assert cfg.get("adapter.port") == "COM3"
+
+
+def test_config_non_mapping_local_file_names_the_file(tmp_path):
+    """A local file holding a list must not blow up inside the merge."""
+    base = tmp_path / "config.yaml"
+    base.write_text("adapter:\n  port: COM3\n", encoding="utf-8")
+    local = tmp_path / "config.local.yaml"
+    local.write_text("- COM9\n- COM10\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as e:
+        load_config(base, local)
+    assert "config.local.yaml" in str(e.value)
+
+
+@pytest.mark.parametrize("body,expect", [
+    ("collector:\n  poll_interval: 0\n", "greater than 0"),
+    ("collector:\n  poll_interval: -5\n", "greater than 0"),
+    ("collector:\n  poll_interval: fast\n", "expected a number"),
+    ("collector:\n  max_value_age_s: 10\n", "must exceed"),
+    ("collector:\n  slow_poll_interval: 1800\n", "must exceed"),
+])
+def test_config_rejects_unusable_intervals(tmp_path, body, expect):
+    """Fail at load, naming the key, instead of busy-looping in the collector."""
+    base = tmp_path / "config.yaml"
+    base.write_text(body, encoding="utf-8")
+    with pytest.raises(ConfigError) as e:
+        load_config(base, tmp_path / "none.yaml")
+    assert expect in str(e.value)
+
+
+def test_anomaly_rescan_does_not_duplicate_rows(repo):
+    """Analysis re-reads the whole window every run, so the same anomaly is
+    offered again on every dashboard refresh."""
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    ts = "2026-09-01T10:00:00+00:00"
+    for _ in range(3):
+        repo.add_anomaly(vid, ts, "cell_delta_mv", 42.0, 10.0, 2.0, 16.0,
+                         "high", "cell delta above baseline")
+    rows = repo.conn.execute("SELECT value FROM anomalies WHERE vehicle_id=?",
+                             (vid,)).fetchall()
+    assert len(rows) == 1
+    # and the row tracks the latest calculation rather than being frozen
+    repo.add_anomaly(vid, ts, "cell_delta_mv", 43.0, 10.0, 2.0, 16.5,
+                     "high", "cell delta above baseline")
+    got = repo.conn.execute("SELECT value FROM anomalies WHERE vehicle_id=?",
+                            (vid,)).fetchall()
+    assert len(got) == 1 and got[0]["value"] == 43.0
+
+
+def test_dtc_occurrence_count_is_not_a_poll_count(repo):
+    """A stored DTC is re-read every cycle; that must not inflate the count."""
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    from datetime import datetime, timedelta, timezone
+    t0 = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
+    kw = dict(description="test", categories=["powertrain"], status="stored")
+    repo.upsert_dtc(vid, t0.isoformat(timespec="seconds"), "0x7E",
+                    "1A2B3C", **kw)
+    # 12 polls 5 s apart -- one continuous fault
+    for i in range(12):
+        ts = (t0 + timedelta(seconds=5 * i)).isoformat(timespec="seconds")
+        repo.upsert_dtc(vid, ts, "0x7E", "1A2B3C", **kw)
+    row = repo.conn.execute("SELECT occurrence_count, first_seen, last_seen "
+                            "FROM dtcs WHERE vehicle_id=?", (vid,)).fetchone()
+    assert row["occurrence_count"] == 1, "poll counted as a new occurrence"
+    assert row["first_seen"] == t0.isoformat(timespec="seconds"), "first_seen moved"
+    # after the rearm window it counts again as a genuinely new sighting
+    later = (t0 + timedelta(minutes=30)).isoformat(timespec="seconds")
+    repo.upsert_dtc(vid, later, "0x7E", "1A2B3C", **kw)
+    assert repo.conn.execute("SELECT occurrence_count FROM dtcs WHERE vehicle_id=?",
+                             (vid,)).fetchone()["occurrence_count"] == 2
 
 
 def test_config_missing_base_file_yields_defaults(tmp_path):

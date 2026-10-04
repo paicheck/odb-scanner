@@ -70,11 +70,65 @@ class Config:
         return self.get("database.path", "data/odb_scanner.db")
 
 
+class ConfigError(ValueError):
+    """Raised when a config file is structurally wrong or a value is unusable."""
+
+
 def _read_yaml(path: Path) -> dict:
     if not path.exists():
         return {}
     with open(path, "r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
+        try:
+            data = yaml.safe_load(fh)
+        except yaml.YAMLError as exc:
+            raise ConfigError(f"{path.name}: invalid YAML: {exc}") from exc
+    if data is None:
+        return {}
+    # A file holding a list or a bare scalar is not a config. Left unchecked,
+    # merging or lookup would fail much later with an AttributeError or a
+    # confusing KeyError that names no file.
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"{path.name}: expected a mapping of settings, got "
+            f"{type(data).__name__}")
+    return data
+
+
+# Values that must be positive numbers. Zero or negative intervals are not
+# caught by the code that reads them: a zero poll interval spins the collector
+# loop at full speed hammering the adapter, and a negative one silently runs
+# backwards. Both are far clearer as a startup error naming the key.
+_REQUIRED_POSITIVE = (
+    "collector.poll_interval",
+    "collector.slow_poll_interval",
+    "collector.max_value_age_s",
+    "ollama.timeout",
+)
+
+
+def _validate(data: dict) -> None:
+    cfg = Config(data)
+    for key in _REQUIRED_POSITIVE:
+        raw = cfg.get(key)
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise ConfigError(f"{key}: expected a number, got {raw!r}") from None
+        if value <= 0:
+            raise ConfigError(f"{key}: must be greater than 0, got {value}")
+    slow = cfg.get("collector.slow_poll_interval", 60.0)
+    age = cfg.get("collector.max_value_age_s", 900.0)
+    if float(age) <= float(slow):
+        # Not fatal on its own, but the carry-forward window for slow DIDs is
+        # then shorter than the interval at which they are read, so every slow
+        # value would be missing from most snapshots and recorded as unknown --
+        # which looks like a sensor fault rather than a setting.
+        raise ConfigError(
+            "collector.max_value_age_s must exceed "
+            "collector.slow_poll_interval, otherwise values that are "
+            f"legitimately absent from a cycle are dropped ({age} <= {slow})")
 
 
 def load_config(path: str | Path | None = None,
@@ -98,4 +152,5 @@ def load_config(path: str | Path | None = None,
     data = _read_yaml(base_path)
     if overlay_path != base_path:
         data = _deep_merge(data, _read_yaml(overlay_path))
+    _validate(data)
     return Config(data)

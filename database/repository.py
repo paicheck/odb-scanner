@@ -282,15 +282,28 @@ class Repository:
     def upsert_dtc(self, vehicle_id: int, ts: str, ecu: str, code: str,
                    description: str, categories: list[str],
                    status: str = "unknown",
-                   freeze_frame: dict | None = None) -> int:
+                   freeze_frame: dict | None = None,
+                   rearm_s: float = 60.0) -> int:
         row = self.conn.execute(
-            "SELECT id FROM dtcs WHERE vehicle_id=? AND ecu=? AND code=?",
+            "SELECT id, last_seen FROM dtcs WHERE vehicle_id=? AND ecu=? AND code=?",
             (vehicle_id, ecu, code),
         ).fetchone()
         if row:
+            # A stored DTC stays readable long after the fault clears, so the
+            # poll that reads it sees it on every cycle. Incrementing each time
+            # made occurrence_count a count of polls, not of occurrences: at a
+            # 5 s interval one continuous fault reported thousands of
+            # "occurrences". Only count it again once it has been absent long
+            # enough to count as a genuinely new sighting.
+            try:
+                gap = (_parse_ts(ts) - _parse_ts(row["last_seen"])).total_seconds()
+            except (TypeError, ValueError):
+                gap = rearm_s + 1.0
+            increment = gap >= rearm_s
             self.conn.execute(
-                "UPDATE dtcs SET last_seen=?, occurrence_count=occurrence_count+1, "
-                "status=? WHERE id=?", (ts, status, row["id"]),
+                "UPDATE dtcs SET last_seen=?, occurrence_count="
+                "occurrence_count+?, status=? WHERE id=?",
+                (ts, 1 if increment else 0, status, row["id"]),
             )
             dtc_id = row["id"]
         else:
@@ -365,12 +378,29 @@ class Repository:
     def add_anomaly(self, vehicle_id: int, ts: str, metric: str, value: float,
                     mean: float, std: float, z: float, direction: str,
                     description: str) -> None:
-        self.conn.execute(
-            "INSERT INTO anomalies(vehicle_id, ts, metric, value, baseline_mean, "
-            "baseline_std, zscore, direction, description) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            (vehicle_id, ts, metric, value, mean, std, z, direction, description),
-        )
+        # Scans re-read the whole window, so the same (ts, metric) is offered
+        # again every time the analysis runs -- on a dashboard refresh, for
+        # example. Inserting unconditionally duplicated rows until the table was
+        # mostly copies. A given metric can only be anomalous at a given
+        # timestamp, so upsert on that key and let a rescan refresh the numbers.
+        existing = self.conn.execute(
+            "SELECT id FROM anomalies WHERE vehicle_id=? AND ts=? AND metric=?",
+            (vehicle_id, ts, metric),
+        ).fetchone()
+        if existing:
+            self.conn.execute(
+                "UPDATE anomalies SET value=?, baseline_mean=?, baseline_std=?, "
+                "zscore=?, direction=?, description=? WHERE id=?",
+                (value, mean, std, z, direction, description, existing["id"]),
+            )
+        else:
+            self.conn.execute(
+                "INSERT INTO anomalies(vehicle_id, ts, metric, value, "
+                "baseline_mean, baseline_std, zscore, direction, description) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (vehicle_id, ts, metric, value, mean, std, z, direction,
+                 description),
+            )
         self.conn.commit()
 
     def anomalies(self, vehicle_id: int, days: int = 30):
