@@ -11,7 +11,7 @@
   <div class="card"><h3>Pack voltage</h3>
     <div class="big">{{ "%.1f"|format(battery.pack_voltage_latest_v or 0) }} V</div></div>
   <div class="card"><h3>Cell delta trend</h3>
-    <div class="big">{{ battery.cell_delta.current_mv if battery.cell_delta.current_mv is defined else '—' }} mV</div>
+    <div class="big">{{ battery.cell_delta.current_mv if battery.cell_delta is mapping else '—' }} mV</div>
     <div class="note">{{ battery.cell_delta.get('trend', 'no data') if battery.cell_delta is mapping else 'no data' }}</div></div>
   <div class="card"><h3>SOH (estimated)</h3>
     <div class="big">{{ battery.soh_latest_pct if battery.soh_latest_pct else '—' }}%</div>

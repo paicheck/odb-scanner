@@ -18,6 +18,20 @@ COMPUTED_KEYS = {
 # not a measurement.
 NOMINAL_CAC_AH_58KWH = 164.0  # approx. gross 58 kWh / ~355 V nominal
 
+
+def soh_pct_from_cac(cac_ah: float | None,
+                     nominal_ah: float = NOMINAL_CAC_AH_58KWH) -> float | None:
+    """Estimated state of health as a percentage of nominal capacity.
+
+    Lives here, next to NOMINAL_CAC_AH_58KWH, so the constant and the formula
+    that consumes it cannot drift apart. Returns None when there is nothing to
+    estimate from, so callers can distinguish "unknown" from "0 %".
+    """
+    if not cac_ah or not nominal_ah:
+        return None
+    return round(100.0 * cac_ah / nominal_ah, 1)
+
+
 DRIVE_SYSTEM_STATUS = (
     "Electric drive / inverter live data (motor rpm, torque, inverter "
     "temperatures) has NO verified UDS DIDs in public documentation for the "

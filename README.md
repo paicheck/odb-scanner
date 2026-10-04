@@ -49,11 +49,26 @@ corrected later without data loss.
 ```bat
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-copy config.yaml config.local.yaml   :: optional personal overrides
+copy config.local.yaml.example config.local.yaml   :: optional, gitignored
 ```
 
+`config.yaml` holds the shareable defaults and is meant to be committed.
+`config.local.yaml` is optional and gitignored: anything in it is deep-merged
+over `config.yaml`, so you only need to list the keys you want to change.
+
+```yaml
+# config.local.yaml -- personal overrides only
+adapter:
+  port: COM7          # nested sections merge, so adapter.baudrate is kept
+ollama:
+  model: llama3.1:8b
+```
+
+The same three Ollama keys can be set as the environment variables
+`OLLAMA_HOST`, `OLLAMA_MODEL` and `OLLAMA_TIMEOUT`, which win over both files.
+
 Install [Ollama](https://ollama.com) and pull a model, e.g.
-`ollama pull llama3.1:8b`. Set `OLLAMA_MODEL` in `config.yaml`.
+`ollama pull llama3.1:8b`.
 
 ## Testing without a car
 
@@ -157,3 +172,11 @@ gap check.
   OBDLink STN) — planned future phase; no DIDs are invented meanwhile.
 * The LLM output is hypothesis-ranking with confidence levels, never a
   definitive diagnosis; the automated validator flags over-confident wording.
+* A per-day slope needs per-day data. The cell-delta trend reports
+  `insufficient_span` until the samples cover at least 1 day, because
+  extrapolating a slope in mV/day from a few seconds of polling yields
+  meaningless numbers. Override the 1-day floor per call via the
+  `min_span_days` argument to `analysis.battery.cell_delta_trend()`.
+* LLM reports are not persisted while the database has no vehicle row
+  (`llm_reports.vehicle_id` is `NOT NULL`); the report is still returned and a
+  `NOT PERSISTED` warning is attached.

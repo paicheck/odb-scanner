@@ -45,8 +45,15 @@ web:
   port: 8000                # the tablet: http://<PC-IP>:8000 (allow in firewall)
 
 analysis:
-  trend_window_days: 30
+  trend_window_days: 30     # battery trend + overview/chart window
+  charging_window_days: 90  # charging sessions + DTC correlation window
   anomaly_zscore: 3.0
+
+battery:
+  # Nominal usable capacity of the pack in Ah. Used ONLY for the ESTIMATED
+  # SOH percentage (CAC / nominal). Published spec, not a measurement.
+  # Default comes from decoders/bms.py (NOMINAL_CAC_AH_58KWH).
+  nominal_cac_ah: 164.0
 
 simulation:
   host: "127.0.0.1"

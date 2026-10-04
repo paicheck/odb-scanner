@@ -7,6 +7,23 @@ from pathlib import Path
 import yaml
 
 DEFAULT_PATH = Path(__file__).resolve().parent / "config.yaml"
+LOCAL_PATH = Path(__file__).resolve().parent / "config.local.yaml"
+
+
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge overlay into base, returning a new dict.
+
+    Nested sections merge key-by-key so a local file can override just
+    ``adapter.port`` without having to restate the whole adapter section.
+    """
+    merged = dict(base)
+    for key, value in (overlay or {}).items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(current, value)
+        else:
+            merged[key] = value
+    return merged
 
 
 class Config:
@@ -53,11 +70,32 @@ class Config:
         return self.get("database.path", "data/odb_scanner.db")
 
 
-def load_config(path: str | Path | None = None) -> Config:
-    cfg_path = Path(path) if path else DEFAULT_PATH
-    if cfg_path.exists():
-        with open(cfg_path, "r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
+def _read_yaml(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
+
+
+def load_config(path: str | Path | None = None,
+                local_path: str | Path | None = None) -> Config:
+    """Load config.yaml, then deep-merge config.local.yaml over it if present.
+
+    config.local.yaml is gitignored and optional -- use it for personal
+    overrides (COM port, model name, adapter host) so config.yaml stays
+    shareable. Missing files are not an error; an unreadable or malformed one
+    is, because silently ignoring it would be worse than failing to start.
+    """
+    base_path = Path(path) if path else DEFAULT_PATH
+    if local_path is not None:
+        overlay_path = Path(local_path)
+    elif base_path == DEFAULT_PATH:
+        overlay_path = LOCAL_PATH
     else:
-        data = {}
+        overlay_path = base_path.with_name(
+            base_path.stem.replace(".yaml", "") + ".local.yaml")
+
+    data = _read_yaml(base_path)
+    if overlay_path != base_path:
+        data = _deep_merge(data, _read_yaml(overlay_path))
     return Config(data)

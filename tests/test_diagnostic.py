@@ -1,7 +1,9 @@
 """Unit tests: protocol decoding, read-only guard, statistics, database."""
 import os
+import sqlite3
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -134,8 +136,95 @@ def test_zscore_outlier():
     out = detect_series_anomalies(ts, vals, z_threshold=3.0)
     assert len(out) == 1
     assert out[0][1] == 40.0
+
+
+# --- decoder registry -----------------------------------------------------------
+def test_soh_uses_the_shared_nominal_constant():
+    """collector.py used to hardcode 164.0 next to the real constant in
+    decoders/bms.py; the two could silently drift apart."""
+    from decoders.bms import NOMINAL_CAC_AH_58KWH, soh_pct_from_cac
+    assert soh_pct_from_cac(NOMINAL_CAC_AH_58KWH) == 100.0
+    assert soh_pct_from_cac(NOMINAL_CAC_AH_58KWH / 2) == 50.0
+    # "unknown" must stay distinguishable from a real 0 %
+    assert soh_pct_from_cac(None) is None
+    assert soh_pct_from_cac(0) is None
+
+
+def test_collector_takes_nominal_cac_from_config(tmp_path):
+    from collector import Collector
+    from decoders.bms import NOMINAL_CAC_AH_58KWH
+    cfg = load_config()
+    cfg._data["database"]["path"] = str(tmp_path / "c.db")
+    cfg._data["adapter"]["type"] = "elm327_tcp"
+    cfg._data["battery"]["nominal_cac_ah"] = 200.0
+    col = Collector(cfg, Repository(cfg._data["database"]["path"]))
+    assert col.nominal_cac_ah == 200.0
+    # and it falls back to the published spec when unset
+    cfg._data["battery"].pop("nominal_cac_ah")
+    fallback = Collector(cfg, Repository(cfg._data["database"]["path"]))
+    assert fallback.nominal_cac_ah == NOMINAL_CAC_AH_58KWH
+
+
+def test_collector_soh_uses_the_configured_nominal(tmp_path):
+    """Guards against the collector going back to a literal 164.0: with a
+    nominal of 200 Ah, a measured CAC of 100 Ah is 50 %, not 61 %."""
+    import json
+
+    from collector import Collector
+    cfg = load_config()
+    cfg._data["database"]["path"] = str(tmp_path / "soh.db")
+    cfg._data["adapter"]["type"] = "elm327_tcp"
+    cfg._data["battery"]["nominal_cac_ah"] = 200.0
+    repo = Repository(cfg._data["database"]["path"])
+    col = Collector(cfg, repo)
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053", year=2021)
+    ts = utcnow()
+    repo.record_measurement(
+        col.vehicle_id, ts, "soh_cac", "bat_mgmt", "UDS-0x22", "0x1EFC", "Ah",
+        "reported", "builtin", "experimental", "0064",
+        None, json.dumps({"battery_cac_ah": 100.0}))
+
+    col._battery_snapshot(ts, {})
+    row = repo.conn.execute(
+        "SELECT value FROM measurements WHERE key='soh_pct' "
+        "ORDER BY id DESC LIMIT 1").fetchone()
+    assert row is not None, "soh_pct was not recorded"
+    assert row["value"] == pytest.approx(50.0), \
+        "collector ignored battery.nominal_cac_ah (used a hard-coded constant?)"
+    repo.close()
+
+
+def test_broken_decoder_is_logged_not_silent(caplog):
+    """A decoder that raises is our bug, not a vehicle condition. It must be
+    visible in the log rather than looking like 'this DID has no value'."""
+    import logging
+
+    from decoders.registry import DIDSpec
+
+    def boom(raw: bytes):
+        raise ValueError("bad scale factor")
+
+    spec = DIDSpec(key="k", ecu_key="bat_mgmt", did=0x1E40, name="n", unit="V",
+                   decode=boom)
+    with caplog.at_level(logging.WARNING, logger="decoders.registry"):
+        assert spec.decode_value(b"\x01\x02") is None, "must not raise"
+    assert any("k" in r.message for r in caplog.records), \
+        "decoder failure was not logged"
+    assert any("0102" in r.message for r in caplog.records), \
+        "raw bytes not included in the log"
+
+
+def test_decoder_without_function_returns_none_quietly(caplog):
+    """A raw-only DID is normal and must NOT warn."""
+    import logging
+
+    from decoders.registry import DIDSpec
+    spec = DIDSpec(key="raw_only", ecu_key="chg", did=0x41FC, name="n", unit="")
+    with caplog.at_level(logging.WARNING, logger="decoders.registry"):
+        assert spec.decode_value(b"\x01") is None
+    assert not caplog.records, f"raw-only DID warned: {caplog.records}"
 # --- database -------------------------------------------------------------------
-from database.repository import Repository  # noqa: E402
+from database.repository import Repository, utcnow  # noqa: E402
 from analysis.battery import cell_delta_trend  # noqa: E402
 from analysis.dtc import classify_dtc, dtc_summary  # noqa: E402
 from analysis.charging import correlate_dtc_with_sessions  # noqa: E402
@@ -149,9 +238,15 @@ def repo():
         r.close()  # release WAL locks before TemporaryDirectory cleanup
 
 
+@pytest.fixture()
+def cfg():
+    """Default config. Callers override the DB path when they need isolation."""
+    return load_config()
+
+
 def test_repository_roundtrip(repo):
     vid = repo.ensure_vehicle("WVWZZZE1ZMP087053", year=2021)
-    ts = "2026-09-01T10:00:00+00:00"
+    ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
     repo.record_battery_snapshot(vid, ts, soc_normal_pct=70, cell_delta_mv=28)
     hist = repo.battery_history(30, vid)
     assert len(hist) == 1
@@ -194,6 +289,151 @@ def test_cell_delta_trend(repo):
     assert result["status"] == "ok"
     assert result["current_mv"] == 29.0
     assert result["trend"] == "increasing"
+    assert result["span_days"] >= 9.0
+    assert result["slope_mv_per_day"] is not None
+
+
+def test_cell_delta_trend_refuses_tiny_sample_span(repo):
+    """A per-day slope from samples spanning seconds is noise, not a trend.
+
+    Regression: 3 samples a few seconds apart produced slopes in the tens of
+    thousands of mV/day and a confident "decreasing" label.
+    """
+    from datetime import datetime, timedelta, timezone
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    now = datetime.now(timezone.utc)
+    for i, delta in enumerate((20, 22, 21)):
+        ts = (now + timedelta(seconds=i)).isoformat(timespec="seconds")
+        repo.record_battery_snapshot(vid, ts, cell_delta_mv=delta)
+    result = cell_delta_trend(repo, 30, vid)
+    assert result["status"] == "ok"          # descriptive stats are still valid
+    assert result["trend"] == "insufficient_span"
+    assert result["slope_mv_per_day"] is None
+    assert result["span_days"] < 0.001
+    assert result["span_text"] == "2 s"      # not "0.0 d"
+    # ...but the underlying statistics are still reported.
+    assert result["samples"] == 3
+    assert result["mean_mv"] == 21.0
+
+
+@pytest.mark.parametrize("days,expected", [
+    (2.315e-05, "2 s"),      # 2 seconds
+    (6 / 24, "6.0 h"),       # 6 hours
+    (9.5, "9.5 d"),
+])
+def test_format_span(days, expected):
+    """A 2-second span must not be rendered as "0.0 d"."""
+    from analysis.battery import format_span
+    assert format_span(days) == expected
+
+
+def test_cell_delta_trend_min_span_is_configurable(repo):
+    """The 1-day floor is a default, and callers can demand more."""
+    from datetime import datetime, timedelta, timezone
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    now = datetime.now(timezone.utc)
+    for i, delta in enumerate((20, 22, 21)):
+        ts = (now + timedelta(hours=i * 3)).isoformat(timespec="seconds")
+        repo.record_battery_snapshot(vid, ts, cell_delta_mv=delta)
+    assert cell_delta_trend(repo, 30, vid)["trend"] == "insufficient_span"
+    # 6 h of data: fine against the 1-day default, not against a 7-day floor.
+    assert cell_delta_trend(repo, 30, vid, min_span_days=0.01)["trend"] != \
+        "insufficient_span"
+    assert cell_delta_trend(repo, 30, vid, min_span_days=7)["trend"] == \
+        "insufficient_span"
+
+
+def test_repository_context_manager_closes_connection():
+    """`with Repository(...)` must close the connection on every exit path."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with Repository(os.path.join(tmp, "ctx.db")) as r:
+            r.ensure_vehicle("WVWZZZE1ZMP087053")
+        with pytest.raises(sqlite3.ProgrammingError):
+            r.conn.execute("SELECT 1")
+
+
+def test_analysis_service_ask_with_empty_database(cfg):
+    """An empty DB must not 500 when the LLM is reachable.
+
+    Regression: `vehicle_row["id"]` raised TypeError on None, and
+    llm_reports.vehicle_id is NOT NULL, so there is no vehicle to persist to.
+    """
+    from ai.service import AnalysisService
+
+    class _FakeOllama:
+        model = "fake-model"
+
+        def generate(self, prompt, system=None, temperature=None):
+            return "No fault codes recorded.\n\nLIMITATIONS\n- none"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, "empty.db")
+        with Repository(db) as r:
+            svc = AnalysisService(cfg, r)
+            svc.llm = _FakeOllama()
+            result = svc.ask("Give me a health report.")
+            # Read back on the same connection: llm_reports.vehicle_id is
+            # NOT NULL, so a stray write would raise IntegrityError here.
+            stored = r.conn.execute(
+                "SELECT COUNT(*) FROM llm_reports").fetchone()[0]
+
+    assert result["report"].startswith("No fault codes")
+    assert any("NOT PERSISTED" in w for w in result["warnings"]), result
+    assert stored == 0
+
+
+def test_analysis_service_ask_persists_when_vehicle_exists(cfg):
+    """The normal (non-empty DB) path must still store the report."""
+    from ai.service import AnalysisService
+
+    class _FakeOllama:
+        model = "fake-model"
+
+        def generate(self, prompt, system=None, temperature=None):
+            return "Cells look balanced.\n\nLIMITATIONS\n- none"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, "one_vehicle.db")
+        with Repository(db) as r:
+            vid = r.ensure_vehicle("WVWZZZE1ZMP087053")
+            svc = AnalysisService(cfg, r)
+            svc.llm = _FakeOllama()
+            result = svc.ask("Are my cells balanced?")
+            stored = r.conn.execute(
+                "SELECT vehicle_id FROM llm_reports").fetchone()
+
+    assert not any("NOT PERSISTED" in w for w in result["warnings"]), result
+    assert stored is not None, "report was not persisted"
+    assert stored["vehicle_id"] == vid
+
+
+def test_cmd_analyze_empty_db_returns_1(cfg):
+    """The 'no vehicle' early return must not leak the sqlite connection."""
+    from main import cmd_analyze
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, "no_vehicle.db")
+        cfg._data["database"]["path"] = db
+        with Repository(db):          # create schema, add no vehicle
+            pass
+        assert cmd_analyze(cfg) == 1
+
+
+def test_cmd_analyze_persists_results(cfg):
+    from main import cmd_analyze
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, "analyze.db")
+        cfg._data["database"]["path"] = db
+        with Repository(db) as r:
+            vid = r.ensure_vehicle("WVWZZZE1ZMP087053")
+            now = datetime.now(timezone.utc)
+            for d in range(10):
+                ts = (now - timedelta(days=10 - d)).isoformat(timespec="seconds")
+                r.record_battery_snapshot(vid, ts, cell_delta_mv=20 + d)
+        assert cmd_analyze(cfg) == 0
+        with Repository(db) as r:
+            n = r.conn.execute(
+                "SELECT COUNT(*) FROM analysis_results").fetchone()[0]
+    assert n == 2, "battery-cell-delta + charging-dtc-correlation expected"
 
 
 def test_charging_correlation(repo):
@@ -215,6 +455,74 @@ def test_config_defaults():
     cfg = load_config()
     assert cfg.ollama_model  # configurable, not hard-coded in code
     assert cfg.get("vehicle.vin") == "WVWZZZE1ZMP087053"
+    assert cfg.get("analysis.trend_window_days") == 30
+    assert cfg.get("analysis.charging_window_days") == 90
+
+
+def test_config_local_overlay_deep_merges(tmp_path):
+    """config.local.yaml is documented in the README and gitignored, so it has
+    to actually be loaded -- and nested sections must merge key by key, not be
+    replaced wholesale, or overriding adapter.port would drop adapter.baudrate.
+    """
+    base = tmp_path / "config.yaml"
+    base.write_text("adapter:\n  port: COM3\n  baudrate: 38400\n"
+                    "web:\n  port: 8000\n", encoding="utf-8")
+    local = tmp_path / "config.local.yaml"
+    local.write_text("adapter:\n  port: COM9\n", encoding="utf-8")
+
+    cfg = load_config(base, local)
+    assert cfg.get("adapter.port") == "COM9", "local override not applied"
+    assert cfg.get("adapter.baudrate") == 38400, "sibling key lost by merge"
+    assert cfg.get("web.port") == 8000, "untouched section changed"
+
+
+def test_config_missing_local_file_is_not_an_error(tmp_path):
+    base = tmp_path / "config.yaml"
+    base.write_text("adapter:\n  port: COM3\n", encoding="utf-8")
+    cfg = load_config(base, tmp_path / "does-not-exist.yaml")
+    assert cfg.get("adapter.port") == "COM3"
+
+
+def test_config_missing_base_file_yields_defaults(tmp_path):
+    cfg = load_config(tmp_path / "absent.yaml", tmp_path / "absent.local.yaml")
+    assert cfg.get("anything.at.all") is None
+
+
+def test_dashboard_windows_come_from_config(monkeypatch):
+    """Routes used to hardcode 30/90 and ignore analysis.trend_window_days, so
+    the dashboard, the charts and `main.py analyze` could disagree."""
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "win.db")
+        seed = Repository(db_path)
+        seed.ensure_vehicle("WVWZZZE1ZMP087053", year=2021)
+        seed.close()          # routes short-circuit on `if vid`, so a row is needed
+        cfg = load_config()
+        cfg._data["database"]["path"] = db_path
+        cfg._data["analysis"]["trend_window_days"] = 7
+        cfg._data["analysis"]["charging_window_days"] = 11
+
+        seen: dict[str, list[int]] = {}
+        real = dash.Repository
+
+        class SpyRepo(real):
+            def battery_history(self, days=30, vehicle_id=None):
+                seen.setdefault("trend", []).append(days)
+                return super().battery_history(days, vehicle_id)
+
+            def charging_sessions(self, days=90, vehicle_id=None):
+                seen.setdefault("charging", []).append(days)
+                return super().charging_sessions(days, vehicle_id)
+
+        monkeypatch.setattr(dash, "Repository", SpyRepo)
+        client = TestClient(dash.create_app(cfg), raise_server_exceptions=False)
+        for path in ("/", "/battery", "/charging", "/api/battery"):
+            assert client.get(path).status_code == 200, path
+
+    assert seen["trend"] and set(seen["trend"]) == {7}, seen
+    assert seen["charging"] and set(seen["charging"]) == {11}, seen
 
 
 def test_simulator_end_to_end():
@@ -255,6 +563,113 @@ def test_prompt_structure():
     prompt = prompts.interpret_prompt(ctx, "test question")
     assert "test question" in prompt
     assert "EVIDENCE" in prompt
+
+
+# --- web layer ------------------------------------------------------------------
+@pytest.mark.parametrize("populate", [False, True],
+                         ids=["empty-db", "with-vehicle"])
+def test_dashboard_pages_render(populate):
+    """Every page must render with no vehicle row *and* with one.
+
+    Guards the overview cell-delta card: `battery` is {} without a vehicle, so
+    any `battery.cell_delta.<attr>` chain raises UndefinedError -- an
+    `is defined` guard cannot help, because evaluating it walks the chain too.
+    """
+    from web.dashboard import create_app
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "web.db")
+        seed = Repository(db_path)
+        if populate:
+            seed.ensure_vehicle("WVWZZZE1ZMP087053", year=2021)
+        seed.close()
+
+        cfg = load_config()
+        cfg._data["database"]["path"] = db_path
+        client = TestClient(create_app(cfg), raise_server_exceptions=False)
+        for path in ("/", "/battery", "/dtcs", "/charging", "/ai"):
+            assert client.get(path).status_code == 200, path
+
+
+def test_ai_ask_on_empty_db_does_not_500(monkeypatch, cfg):
+    """POST /ai/ask with a reachable LLM and no vehicle row must return a page.
+
+    Regression: the route only caught OllamaError, so while Ollama was *down*
+    the `vehicle_row["id"]` TypeError was masked; with Ollama up it surfaced
+    as a 500.
+    """
+    from ai.ollama import OllamaClient
+    from web.dashboard import create_app
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(
+        OllamaClient, "generate",
+        lambda self, prompt, system=None, temperature=None:
+            "No faults recorded.\n\nLIMITATIONS\n- none",
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "ai_empty.db")
+        with Repository(db_path):        # schema only, no vehicle
+            pass
+        cfg._data["database"]["path"] = db_path
+        client = TestClient(create_app(cfg), raise_server_exceptions=False)
+        resp = client.post("/ai/ask", data={"question": "How is my battery?"})
+
+    assert resp.status_code == 200, resp.status_code
+    assert "NOT PERSISTED" in resp.text
+
+
+# --- collector cadence ----------------------------------------------------------
+def _offline_collector(slow_interval: float, tmp: str):
+    """A Collector wired to a TCP adapter that is never opened, so the
+    slow-phase gate can be exercised without any I/O."""
+    from collector import Collector
+    cfg = load_config()
+    cfg._data["database"]["path"] = os.path.join(tmp, "cadence.db")
+    cfg._data["adapter"]["type"] = "elm327_tcp"
+    cfg._data["collector"]["slow_poll_interval"] = slow_interval
+    return Collector(cfg, Repository(cfg._data["database"]["path"]))
+
+
+def test_slow_phase_is_gated_not_every_cycle():
+    """The 107 slow DIDs must respect collector.slow_poll_interval instead of
+    being re-read on every fast poll."""
+    import time as _time
+    with tempfile.TemporaryDirectory() as tmp:
+        col = _offline_collector(60.0, tmp)
+        assert col._slow_phase_due() is True, "first pass must always run"
+        assert col._slow_phase_due() is False, "must not re-run immediately"
+        assert col._slow_phase_due() is False
+        col._last_slow -= 61.0          # pretend 61s elapsed
+        assert col._slow_phase_due() is True, "must re-run after the interval"
+
+
+def test_slow_phase_due_just_after_boot():
+    """time.monotonic() starts near 0 on a freshly booted host; the slow phase
+    must still run on the very first pass."""
+    with tempfile.TemporaryDirectory() as tmp:
+        col = _offline_collector(60.0, tmp)
+        assert col._last_slow < 0, "clock starts negative-relative, not at 0"
+        assert col._slow_phase_due() is True
+
+
+def test_slow_pass_excludes_cell_dids():
+    """_sweep_cells() reads the per-cell DIDs; _slow_pass() must not read them
+    again in the same phase, or every cell DID is polled twice per cycle."""
+    from decoders.registry import build_default_registry
+    with tempfile.TemporaryDirectory() as tmp:
+        col = _offline_collector(60.0, tmp)
+        cell_keys = {s.key for s in col.registry.all()
+                     if s.key.startswith("cell_v_")}
+        assert cell_keys, "expected per-cell DIDs to be registered"
+        polled: list[str] = []
+        col.poll_did = lambda spec, ts: polled.append(spec.key)
+        col._slow_pass("ts", {})
+        assert polled, "slow pass polled nothing"
+        assert not (cell_keys & set(polled)), "cell DIDs double-polled"
+        assert len(polled) == len(set(polled)), "a slow DID was polled twice"
 
 
 

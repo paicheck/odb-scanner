@@ -8,10 +8,12 @@ It only uses DiagnosticConnection methods, which can only produce:
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 
 from analysis import dtc as dtc_analysis
+from decoders.bms import NOMINAL_CAC_AH_58KWH, soh_pct_from_cac
 from decoders.registry import Provenance, build_default_registry
 from diagnostic import obd2, uds
 from diagnostic.connection import DiagnosticConnection
@@ -51,7 +53,16 @@ class Collector:
         )
         self.vehicle_id: int | None = None
         self.vin: str | None = None
-        self._last_slow = 0.0
+        self.slow_interval = float(
+            self.cfg.get("collector.slow_poll_interval", 60.0))
+        # Nominal pack capacity, only ever used for the ESTIMATED SOH figure.
+        # Overridable for a different pack; the constant stays the single
+        # source of truth in decoders/bms.py.
+        self.nominal_cac_ah = float(
+            self.cfg.get("battery.nominal_cac_ah", NOMINAL_CAC_AH_58KWH))
+        # negative offset so the first pass is always due, even on a host that
+        # booted less than slow_interval seconds ago (monotonic starts at 0)
+        self._last_slow = -self.slow_interval
         self._active_session_id: int | None = None
 
     # -- phase 1: connect & identify -----------------------------------------
@@ -109,7 +120,6 @@ class Collector:
         value = spec.decode_value(raw) if success else None
         text_value = None
         if isinstance(value, dict):
-            import json
             text_value, value = json.dumps(value), None
         self.repo.record_measurement(
             self.vehicle_id, ts, spec.key, spec.ecu_key,
@@ -180,14 +190,25 @@ class Collector:
                 "(max - min) * 1000", "calculated", "", delta_mv,
             )
 
-        # per-cell sweep (slow pass piggybacks on fast pass cadence flag)
-        if self.cfg.get("collector.read_cell_voltages", True):
-            self._sweep_cells(ts)
-
-        self._slow_pass(ts, snapshot)
+        # slow phase: per-cell sweep + non-cell slow DIDs. Reads 107 DIDs, so
+        # it runs on its own cadence (collector.slow_poll_interval) rather than
+        # on every fast poll.
+        if self._slow_phase_due():
+            if self.cfg.get("collector.read_cell_voltages", True):
+                self._sweep_cells(ts)
+            self._slow_pass(ts, snapshot)
         self._battery_snapshot(ts, snapshot)
         self._charging_tracking(ts, snapshot)
         return snapshot
+
+    def _slow_phase_due(self) -> bool:
+        """True when collector.slow_poll_interval has elapsed. Always true on
+        the first pass, so a fresh run has cell data without waiting."""
+        now = time.monotonic()
+        if now - self._last_slow < self.slow_interval:
+            return False
+        self._last_slow = now
+        return True
 
     def _sweep_cells(self, ts: str) -> None:
         """Read per-cell DIDs. DIDs outside the real pack return NRC 0x31
@@ -208,27 +229,42 @@ class Collector:
                                 f"Cell sweep recorded {snapshot_note}")
 
     def _slow_pass(self, ts: str, snapshot: dict) -> None:
+        """Poll the non-cell slow DIDs. Per-cell DIDs are excluded here
+        because _sweep_cells() already reads them in the same slow phase."""
         for spec in self.registry.slow():
+            if spec.key.startswith("cell_v_"):
+                continue
             self.poll_did(spec, ts)
 
     def _battery_snapshot(self, ts: str, snap: dict) -> None:
         latest = self.repo.latest_measurements(self.vehicle_id)
+
         def val(key, field=None):
             if key in snap:
                 return snap[key]
             m = latest.get(key)
             return m["value"] if m else None
 
-        energy = latest.get("energy_counters")
-        energy_ch = energy_used = None
-        if energy and energy.get("text_value"):
-            import json
-            d = json.loads(energy["text_value"])
-            energy_ch, energy_used = d.get("charged_kwh"), d.get("used_kwh")
-        cac = val("soh_cac") or {}
-        cac_ah = cac.get("battery_cac_ah") if isinstance(cac, dict) else None
-        nominal = 164.0  # ID.3 58 kWh nominal (published spec, see bms.py)
-        soh = round(100.0 * cac_ah / nominal, 1) if cac_ah else None
+        def val_json(key) -> dict:
+            """Dict-valued decoders (soh_cac, energy_counters) are stored with
+            value=NULL and the payload JSON-encoded in text_value, so they must
+            be read from there -- val() would always hand back None for them."""
+            if isinstance(snap.get(key), dict):
+                return snap[key]
+            m = latest.get(key)
+            if not m or not m.get("text_value"):
+                return {}
+            try:
+                parsed = json.loads(m["text_value"])
+            except (TypeError, ValueError):
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+
+        energy = val_json("energy_counters")
+        energy_ch = energy.get("charged_kwh")
+        energy_used = energy.get("used_kwh")
+        cac_ah = val_json("soh_cac").get("battery_cac_ah")
+        soh = soh_pct_from_cac(cac_ah, self.nominal_cac_ah)
         if soh:
             self.repo.record_measurement(
                 self.vehicle_id, ts, "soh_pct", "bat_mgmt", "calc", "-", "%",
@@ -318,7 +354,6 @@ class Collector:
     # -- main loop ----------------------------------------------------------------
     def run(self, max_cycles: int | None = None) -> None:
         interval = float(self.cfg.get("collector.poll_interval", 5.0))
-        slow_interval = float(self.cfg.get("collector.slow_poll_interval", 60.0))
         self.open_and_identify()
         self.discover_ecus()
         cycles = 0

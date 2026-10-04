@@ -62,8 +62,21 @@ class AnalysisService:
         report, warnings = reports.validate_report(report)
         vehicle_row = self.repo.conn.execute(
             "SELECT id FROM vehicles ORDER BY id LIMIT 1").fetchone()
-        self.repo.add_llm_report(vehicle_row["id"], question,
-                                 self.llm.model, report, context, warnings)
+        if vehicle_row is None:
+            # llm_reports.vehicle_id is NOT NULL REFERENCES vehicles(id), and an
+            # empty database is reachable (fresh install, or a wiped DB). There
+            # is nothing meaningful to attach a report to, and generating one
+            # from an empty evidence packet is not worth persisting -- so return
+            # it to the caller without storing, rather than raising TypeError
+            # and turning POST /ai/ask into a 500.
+            log.warning("not persisting LLM report: no vehicle in the database")
+            warnings = list(warnings) + [
+                "NOT PERSISTED: the database contains no vehicle, so this "
+                "report could not be stored."]
+        else:
+            self.repo.add_llm_report(vehicle_row["id"], question,
+                                     self.llm.model, report, context,
+                                     warnings)
         return {"question": question, "report": report,
                 "warnings": warnings, "context": context,
                 "model": self.llm.model}

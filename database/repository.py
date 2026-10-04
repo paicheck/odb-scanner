@@ -31,7 +31,13 @@ class Repository:
     def __init__(self, path: str | Path):
         self.path = str(path)
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        # One connection is shared by the collector and by FastAPI's threadpool
+        # (check_same_thread=False), so busy_timeout is what keeps a web write
+        # from raising "database is locked" while the collector holds the write
+        # lock. It is also sqlite3's default; stated explicitly because the
+        # dashboard and the collector are genuinely concurrent processes here.
+        self.conn = sqlite3.connect(self.path, check_same_thread=False,
+                                    timeout=30.0)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA_SQL)
         self.conn.execute(
@@ -42,6 +48,12 @@ class Repository:
 
     def close(self) -> None:
         self.conn.close()
+
+    def __enter__(self) -> "Repository":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     # -- vehicle / ecus ------------------------------------------------------
     def ensure_vehicle(self, vin: str, make="", model="", variant="", year=None) -> int:

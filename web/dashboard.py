@@ -28,6 +28,12 @@ def create_app(cfg: Config) -> FastAPI:
     svc = AnalysisService(cfg, repo)
     app = FastAPI(title="ID.3 Diagnostic System", docs_url=None, redoc_url=None)
 
+    # Analysis windows come from config so the dashboard, the charts and the
+    # CLI agree. Previously each route hardcoded its own 30/90 and silently
+    # ignored analysis.trend_window_days.
+    trend_days = int(cfg.get("analysis.trend_window_days", 30))
+    charging_days = int(cfg.get("analysis.charging_window_days", 90))
+
     def vehicle_and_id():
         row = repo.conn.execute(
             "SELECT * FROM vehicles ORDER BY id LIMIT 1").fetchone()
@@ -44,11 +50,11 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
         _, vid = vehicle_and_id()
-        days = int(cfg.get("analysis.trend_window_days", 30))
+        days = trend_days
         battery = (battery_analysis.battery_overview(repo, days, vid)
                    if vid else {})
         dtcs = dtc_analysis.dtc_summary(repo.dtc_list(vid)) if vid else {}
-        charging = (charging_analysis.session_comparison(repo, vid)
+        charging = (charging_analysis.session_comparison(repo, vid, charging_days)
                     if vid else {})
         anomalies = [dict(a) for a in repo.anomalies(vid, days)] if vid else []
         return render("overview.html", request, battery=battery, dtcs=dtcs,
@@ -57,7 +63,7 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/battery", response_class=HTMLResponse)
     def battery_page(request: Request):
         _, vid = vehicle_and_id()
-        rows = repo.battery_history(30, vid) if vid else []
+        rows = repo.battery_history(trend_days, vid) if vid else []
         chart = {
             "ts": [r["ts"] for r in rows],
             "delta_mv": [r["cell_delta_mv"] for r in rows],
@@ -65,9 +71,10 @@ def create_app(cfg: Config) -> FastAPI:
             "pack_v": [r["pack_voltage_v"] for r in rows],
             "temp": [r["battery_temp_c"] for r in rows],
         }
-        trend = (battery_analysis.cell_delta_trend(repo, 30, vid)
+        trend = (battery_analysis.cell_delta_trend(repo, trend_days, vid)
                  if vid else {"status": "no vehicle"})
-        return render("battery.html", request, chart=chart, trend=trend)
+        return render("battery.html", request, chart=chart, trend=trend,
+                      days=trend_days)
 
     @app.get("/dtcs", response_class=HTMLResponse)
     def dtc_page(request: Request):
@@ -78,11 +85,11 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/charging", response_class=HTMLResponse)
     def charging_page(request: Request):
         _, vid = vehicle_and_id()
-        sessions = repo.charging_sessions(90, vid) if vid else []
-        comparison = (charging_analysis.session_comparison(repo, vid, 90)
-                      if vid else {})
-        corr = (charging_analysis.correlate_dtc_with_sessions(repo, vid, 90)
-                if vid else {})
+        sessions = repo.charging_sessions(charging_days, vid) if vid else []
+        comparison = (charging_analysis.session_comparison(
+            repo, vid, charging_days) if vid else {})
+        corr = (charging_analysis.correlate_dtc_with_sessions(
+            repo, vid, charging_days) if vid else {})
         return render("charging.html", request,
                       sessions=[dict(s) for s in sessions],
                       comparison=comparison, correlation=corr)
@@ -113,7 +120,7 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/api/battery")
     def api_battery():
         _, vid = vehicle_and_id()
-        rows = repo.battery_history(30, vid) if vid else []
+        rows = repo.battery_history(trend_days, vid) if vid else []
         return [dict(r) for r in rows]
 
     @app.get("/api/health")

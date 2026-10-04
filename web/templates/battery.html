@@ -3,10 +3,14 @@
 <h2>Battery</h2>
 <div class="cards">
   <div class="card"><h3>Current delta</h3><div class="big">{{ trend.current_mv if trend.current_mv is defined else '—' }} mV</div></div>
-  <div class="card"><h3>30-day mean</h3><div class="big">{{ trend.mean_mv if trend.mean_mv is defined else '—' }} mV</div></div>
+  <div class="card"><h3>{{ trend.window_days if trend.window_days is defined else days }}-day mean</h3><div class="big">{{ trend.mean_mv if trend.mean_mv is defined else '—' }} mV</div></div>
   <div class="card"><h3>Std dev</h3><div class="big">{{ trend.std_mv if trend.std_mv is defined else '—' }} mV</div></div>
   <div class="card"><h3>Trend</h3><div class="big" style="font-size:18px">{{ trend.trend if trend.trend is defined else 'insufficient data' }}</div>
-  <div class="note">{{ trend.slope_mv_per_day if trend.slope_mv_per_day is defined else '' }} mV/day</div></div>
+  {% if trend.slope_mv_per_day is defined and trend.slope_mv_per_day is not none %}
+  <div class="note">{{ trend.slope_mv_per_day }} mV/day</div>
+  {% elif trend.trend is defined and trend.trend == 'insufficient_span' %}
+  <div class="note">needs {{ trend.min_span_days }} d of samples, have {{ trend.span_text }}</div>
+  {% endif %}</div>
 </div>
 <div class="chartbox"><canvas id="deltaChart" height="90"></canvas></div>
 <div class="chartbox"><canvas id="socChart" height="90"></canvas></div>

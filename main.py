@@ -54,13 +54,15 @@ def cmd_collect(cfg, cycles: int | None) -> int:
 def cmd_report(cfg, question: str | None) -> int:
     from ai.service import DEFAULT_QUESTIONS, AnalysisService
     from ai.ollama import OllamaError
-    svc = AnalysisService(cfg, Repository(cfg.db_path))
     q = question or DEFAULT_QUESTIONS[4]
-    try:
-        result = svc.ask(q)
-    except OllamaError as exc:
-        print(f"Ollama error: {exc}\nStart Ollama and ensure the model is pulled.")
-        return 1
+    with Repository(cfg.db_path) as repo:
+        svc = AnalysisService(cfg, repo)
+        try:
+            result = svc.ask(q)
+        except OllamaError as exc:
+            print(f"Ollama error: {exc}\n"
+                  "Start Ollama and ensure the model is pulled.")
+            return 1
     print(result["report"])
     if result["warnings"]:
         print("\nValidator warnings:")
@@ -95,16 +97,21 @@ def cmd_simulate(cfg) -> int:
 
 def cmd_analyze(cfg) -> int:
     """Run the statistical analysis engine and persist/print results."""
-    from analysis import anomaly, battery as batt, charging as chg, dtc as dtca
-    from analysis import stats
+    # `with` so the connection is released on every exit path, including the
+    # "no vehicle in database" early return below.
+    with Repository(cfg.db_path) as repo:
+        row = repo.conn.execute("SELECT id FROM vehicles LIMIT 1").fetchone()
+        if not row:
+            print("No vehicle in database. Run 'seed' or 'collect' first.")
+            return 1
+        return _analyze(repo, row["id"], cfg)
 
-    repo = Repository(cfg.db_path)
-    row = repo.conn.execute("SELECT id FROM vehicles LIMIT 1").fetchone()
-    if not row:
-        print("No vehicle in database. Run 'seed' or 'collect' first.")
-        return 1
-    vid = row["id"]
+
+def _analyze(repo, vid: int, cfg) -> int:
+    from analysis import anomaly, battery as batt, charging as chg, dtc as dtca
+
     days = int(cfg.get("analysis.trend_window_days", 30))
+    charging_days = int(cfg.get("analysis.charging_window_days", 90))
     z = float(cfg.get("analysis.anomaly_zscore", 3.0))
 
     delta = batt.cell_delta_trend(repo, days, vid)
@@ -112,8 +119,13 @@ def cmd_analyze(cfg) -> int:
     if delta.get("status") == "ok":
         print(f"  current {delta['current_mv']} mV | mean {delta['mean_mv']} mV "
               f"| std {delta['std_mv']} mV")
-        print(f"  trend: {delta['trend']} "
-              f"({delta['slope_mv_per_day']} mV/day)")
+        slope = delta.get("slope_mv_per_day")
+        if slope is None:
+            print(f"  trend: {delta['trend']} (needs >= "
+                  f"{delta.get('min_span_days')} d of samples, have "
+                  f"{delta.get('span_text')})")
+        else:
+            print(f"  trend: {delta['trend']} ({slope} mV/day)")
     else:
         print(f"  {delta['status']}")
 
@@ -123,7 +135,7 @@ def cmd_analyze(cfg) -> int:
         n = anomaly.scan_metric(repo, vid, metric, desc, days, z)
         print(f"Anomalies in {metric}: {n} (z >= {z})")
 
-    corr = chg.correlate_dtc_with_sessions(repo, vid, days=90)
+    corr = chg.correlate_dtc_with_sessions(repo, vid, days=charging_days)
     print(f"DTCs linked to charging (within {corr['window_hours']} h of "
           f"charge end): {corr['codes_linked_to_charging'] or 'none'}")
 
@@ -134,9 +146,9 @@ def cmd_analyze(cfg) -> int:
               f"x{c['count']} last {c['last_seen']}")
 
     repo.add_analysis(vid, "battery-cell-delta", "hv_battery", days, delta)
-    repo.add_analysis(vid, "charging-dtc-correlation", "charging", 90, corr)
+    repo.add_analysis(vid, "charging-dtc-correlation", "charging",
+                      charging_days, corr)
     print("Results persisted to analysis_results / anomalies.")
-    repo.close()
     return 0
 
 

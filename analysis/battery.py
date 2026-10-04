@@ -3,13 +3,39 @@ from __future__ import annotations
 
 from analysis import stats
 
+# A per-day slope is only meaningful if the samples actually span a meaningful
+# amount of time. Polling every 5 s for an hour yields x-values around 1e-5 days,
+# so a 2 mV wobble divided by that produces slopes in the tens of thousands of
+# mV/day -- arithmetically correct, physically meaningless. Refuse to report a
+# slope below this span rather than dressing noise up as a trend.
+MIN_TREND_SPAN_DAYS = 1.0
 
-def cell_delta_trend(repo, days: int = 30, vehicle_id: int | None = None) -> dict:
+
+def format_span(span_days: float) -> str:
+    """Render a day-denominated span at a resolution a human can read.
+
+    `round(span_days, 4)` turns a 2-second span into "0.0 d", which tells the
+    user nothing; this picks the unit that actually carries the information.
+    """
+    if span_days < 1 / 24:
+        return f"{span_days * 86400:.0f} s"
+    if span_days < 1:
+        return f"{span_days * 24:.1f} h"
+    return f"{span_days:.1f} d"
+
+
+def cell_delta_trend(repo, days: int = 30, vehicle_id: int | None = None,
+                     min_span_days: float = MIN_TREND_SPAN_DAYS) -> dict:
     """Analyse the (max cell - min cell) delta over the window.
 
     Example output:
         {"current_mv": 38, "mean_mv": 24, "std_mv": 6, "trend": "increasing",
-         "slope_mv_per_day": 0.47, "samples": 112, "first_seen": ..., }
+         "slope_mv_per_day": 0.47, "samples": 112, "span_days": 27.4, }
+
+    ``trend`` is "insufficient_span" (and ``slope_mv_per_day`` is None) when the
+    samples cover less than ``min_span_days`` -- typically a brand-new database
+    that has only been collected for a few minutes. The descriptive statistics
+    are still reported, because they are valid; only the extrapolation is not.
     """
     hist = repo.battery_history(days, vehicle_id)
     rows = [(r["ts"], r["cell_delta_mv"]) for r in hist
@@ -22,7 +48,13 @@ def cell_delta_trend(repo, days: int = 30, vehicle_id: int | None = None) -> dic
     mean = stats.mean(deltas)
     std = stats.stdev(deltas)
     day_xs = stats.ts_to_days(ts_list)
-    slope = stats.linear_regression_slope(deltas, day_xs)  # mV per day
+    span_days = (day_xs[-1] - day_xs[0]) if day_xs else 0.0
+
+    if span_days < min_span_days:
+        slope, trend = None, "insufficient_span"
+    else:
+        slope = stats.linear_regression_slope(deltas, day_xs)  # mV per day
+        trend = stats.classify_trend(slope, std, threshold=0.1)
     return {
         "status": "ok",
         "window_days": days,
@@ -32,8 +64,11 @@ def cell_delta_trend(repo, days: int = 30, vehicle_id: int | None = None) -> dic
         "std_mv": round(std, 1) if std is not None else None,
         "min_mv": round(min(deltas), 1),
         "max_mv": round(max(deltas), 1),
+        "span_days": round(span_days, 6),
+        "span_text": format_span(span_days),
+        "min_span_days": min_span_days,
         "slope_mv_per_day": round(slope, 3) if slope is not None else None,
-        "trend": stats.classify_trend(slope, std, threshold=0.1),
+        "trend": trend,
         "first_seen": ts_list[0],
         "last_seen": ts_list[-1],
     }

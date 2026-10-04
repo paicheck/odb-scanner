@@ -13,9 +13,12 @@ DID decodes, so new decoders can be added later without data loss
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable
+
+log = logging.getLogger(__name__)
 
 
 class Provenance(str, Enum):
@@ -45,11 +48,24 @@ class DIDSpec:
     slow: bool = False  # poll on slow interval (counter/static-ish values)
 
     def decode_value(self, raw: bytes):
+        """Decode raw bytes, or None if there is nothing to decode.
+
+        A decoder that raises is a bug in *our* code, not a vehicle condition,
+        so it must not silently look like "this DID has no value". It is logged
+        at WARNING with the raw bytes and still returns None, because one bad
+        decoder must never abort a collection pass.
+        """
         if self.decode is None or not raw:
             return None
         try:
             return self.decode(raw)
         except Exception:
+            log.warning("decoder for %s (DID 0x%s) raised on raw=%s -- "
+                        "returning None; raw bytes are preserved",
+                        self.key,
+                        f"{self.did:04X}" if self.did is not None else "----",
+                        raw.hex().upper())
+            log.debug("decoder traceback", exc_info=True)
             return None
 
 
