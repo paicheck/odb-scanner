@@ -209,9 +209,7 @@ def _db_size_mb(path: str) -> float:
     return total / (1024 * 1024)
 
 
-def main() -> int:
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Read-only ID.3 diagnostics")
     parser.add_argument("command",
                         choices=["discover", "collect", "analyze", "report",
@@ -229,7 +227,19 @@ def main() -> int:
                         help="doctor: override adapter.port for this run")
     parser.add_argument("--tcp", nargs=2, metavar=("HOST", "PORT"),
                         help="doctor: use a TCP adapter/simulator")
-    args = parser.parse_args()
+    parser.add_argument("--all-ports", action="store_true",
+                        help="doctor: try every serial port until one opens")
+    parser.add_argument("--timeout", type=float, default=None,
+                        help="doctor: per-command timeout in seconds")
+    parser.add_argument("--only-config", action="store_true",
+                        help="doctor: print configuration, touch no hardware")
+    return parser
+
+
+def main() -> int:
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    args = build_parser().parse_args()
 
     if args.command == "guard-test":
         return cmd_guard_test()
@@ -245,14 +255,20 @@ def main() -> int:
         # Imported lazily: the doctor is a troubleshooting path, and nothing
         # else in the tool should depend on it.
         from tools.doctor import main as doctor_main
-        doctor_argv = ["doctor", "--config", args.config] if args.config \
-            else ["doctor"]
+        # Forward explicitly rather than rewriting sys.argv: the two parsers
+        # must not share global state.
+        doctor_argv = ["--config", args.config] if args.config else []
         if args.tcp:
             doctor_argv += ["--tcp", args.tcp[0], str(args.tcp[1])]
         if args.port:
             doctor_argv += ["--port", args.port]
-        sys.argv = doctor_argv
-        return doctor_main()
+        if args.all_ports:
+            doctor_argv += ["--all-ports"]
+        if args.timeout is not None:
+            doctor_argv += ["--timeout", str(args.timeout)]
+        if args.only_config:
+            doctor_argv += ["--only-config"]
+        return doctor_main(doctor_argv)
     if args.command == "prune":
         return cmd_prune(cfg, args.days, args.hard)
     try:

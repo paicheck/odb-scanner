@@ -669,8 +669,9 @@ def run(cfg, tcp=None, port_override=None, all_ports=False, timeout=5.0,
     return stages, causes, fixes
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
+        prog="doctor",
         description="Diagnose why the adapter is not connecting.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Every stage is read-only: no write can reach the vehicle.")
@@ -686,7 +687,11 @@ def main() -> int:
     ap.add_argument("--only-config", action="store_true",
                     help="print configuration and exit without touching "
                          "hardware")
-    args = ap.parse_args()
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     print("ID.3 connection doctor " + "=" * 46)
     print("read-only: this tool cannot transmit a write to the vehicle\n")

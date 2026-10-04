@@ -1356,3 +1356,25 @@ def test_doctor_never_sends_a_write_to_the_vehicle():
         with pytest.raises(ReadOnlyViolationError):
             doc._vehicle(bad)
     assert _FakeT.sent == [], f"a write reached the transport: {_FakeT.sent}"
+
+
+def test_doctor_cli_flags_survive_main_parser():
+    """`main.py doctor <flag>` must not be rejected by main.py's own parser.
+
+    Regression: the doctor was originally reached by rewriting sys.argv, so
+    every flag it documented was rejected before the doctor ever saw it.
+    """
+    import main as app
+    parser = app.build_parser()
+    for flag in ("--all-ports", "--only-config", "--timeout"):
+        args = parser.parse_args(["doctor", flag] + (["3"] if
+                                                     flag == "--timeout" else
+                                                     []))
+        assert args.command == "doctor"
+
+
+def test_doctor_main_accepts_explicit_argv(monkeypatch, capsys):
+    """main() must take argv rather than reading global sys.argv."""
+    from tools import doctor
+    assert doctor.main(["--only-config"]) == 0
+    assert "adapter.port" in capsys.readouterr().out
