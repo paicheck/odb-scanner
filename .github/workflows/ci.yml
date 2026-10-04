@@ -35,6 +35,12 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      # The .bat shortcuts are the primary interface on Windows, where the
+      # real user has no car and only a tablet. They cannot run here, but
+      # their wiring can be checked: every command they call must exist.
+      - name: Check the .bat shortcuts
+        run: python tests/check_bat_wrappers.py
+
       - name: Unit tests (fast)
         run: python -m pytest -m "not slow"
 

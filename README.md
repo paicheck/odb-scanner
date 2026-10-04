@@ -120,6 +120,26 @@ Manual equivalent, in two terminals:
 
 ## Running the stack continuously
 
+### If you would rather not type commands
+
+On Windows there are double-clickable shortcuts next to this file, and
+`HOW_IT_WORKS.txt` explains them in plain English. Start with
+**`5_TRY_IT_NOW.bat`** (needs no car) then **`1_START_COLLECTING.bat`**.
+
+| Shortcut | Does |
+|---|---|
+| `1_START_COLLECTING.bat` | check the link, then start collecting + dashboard |
+| `2_DOCTOR.bat` | work out why it will not connect |
+| `2_DOCTOR_ALL_PORTS.bat` | try every COM port (Windows Bluetooth creates two) |
+| `3_STOP.bat` | stop the collector and dashboard |
+| `4_STATUS.bat` | what is running right now |
+| `5_TRY_IT_NOW.bat` | test the whole pipeline with no car |
+
+They only wrap the commands below, so anything you can do here you can do
+by double-clicking instead.
+
+### Doing it by hand
+
 For a live dashboard instead of a one-shot test, `tools/start_scanner.py`
 starts the simulator, collector and dashboard detached, writes logs to
 `data/logs/{simulator,collector,web}.log` and remembers the pids in
