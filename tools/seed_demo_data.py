@@ -33,7 +33,6 @@ def seed(db_path: str, days: int = 30) -> None:
                         "responder", "experimentally determined")
 
         cac = 161.0
-        sessions = []
         # ---- daily battery snapshots + cell voltages -------------------------
         for day in range(days, -1, -1):
             ts = (now - timedelta(days=day)).isoformat(timespec="seconds")

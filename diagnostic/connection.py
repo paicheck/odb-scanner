@@ -12,7 +12,6 @@ import logging
 
 from . import obd2, uds
 from .ecus import ECUSpec
-from .elm327 import Elm327Transport
 from .interface import CommunicationError, OBDInterface
 from .uds import NegativeResponseError, ProtocolError
 

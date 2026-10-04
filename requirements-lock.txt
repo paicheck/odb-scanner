@@ -1,0 +1,24 @@
+# Fully pinned direct dependencies, captured on 2026-10-04 on Python 3.14.
+#
+# requirements.txt states *what ranges* the project accepts; this file pins
+# the exact versions verified working there (107 unit tests plus the
+# end-to-end smoke test). Install with:
+#
+#     python -m pip install -r requirements-lock.txt
+#
+# Only direct dependencies are listed, so pip still resolves the transitive
+# ones. That keeps the file valid on both the Windows machine that talks to
+# the adapter and the Linux/macOS dev machines, where compiled wheels differ
+# per platform.
+#
+# ruff is intentionally absent: it lints the source, it is not needed to run
+# the scanner. Install it on its own to lint (see pyproject.toml).
+fastapi==0.142.2
+httpx==0.28.1
+jinja2==3.1.6
+pyserial==3.5
+pytest==9.1.1
+python-multipart==0.0.32
+PyYAML==6.0.3
+requests==2.34.2
+uvicorn==0.54.0

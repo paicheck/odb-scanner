@@ -125,7 +125,7 @@ class Repository:
                 pass
         self._local = threading.local()
 
-    def __enter__(self) -> "Repository":
+    def __enter__(self) -> Repository:
         return self
 
     def __exit__(self, *exc) -> None:

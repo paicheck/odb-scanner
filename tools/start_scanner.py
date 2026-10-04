@@ -6,8 +6,8 @@ logs in data/logs/ and a pid file, so it can be re-run safely — anything that
 is already running is skipped instead of duplicated.
 
 Usage:
-    python tools/start_scanner.py                 # start simulator + collector + dashboard
-    python tools/start_scanner.py --cycles 1      # one collection pass, then stop collecting
+    python tools/start_scanner.py                 # sim + collector + dashboard
+    python tools/start_scanner.py --cycles 1      # one pass, then stop collecting
     python tools/start_scanner.py --no-web        # adapter + collector only
     python tools/start_scanner.py --status        # what is running right now
     python tools/start_scanner.py --stop          # stop everything this script started

@@ -20,7 +20,6 @@ Standalone use:
 """
 from __future__ import annotations
 
-import socket
 import socketserver
 import sys
 import threading
@@ -42,7 +41,7 @@ def make_handler(mode: str):
             while True:
                 try:
                     chunk = self.request.recv(1024)
-                except (socket.timeout, OSError):
+                except (TimeoutError, OSError):
                     continue
                 if not chunk:
                     return

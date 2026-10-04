@@ -57,8 +57,8 @@ def cmd_collect(cfg, cycles: int | None) -> int:
 
 
 def cmd_report(cfg, question: str | None) -> int:
-    from ai.service import DEFAULT_QUESTIONS, AnalysisService
     from ai.ollama import OllamaError
+    from ai.service import DEFAULT_QUESTIONS, AnalysisService
     q = question or DEFAULT_QUESTIONS[4]
     with Repository(cfg.db_path) as repo:
         svc = AnalysisService(cfg, repo)
@@ -78,6 +78,7 @@ def cmd_report(cfg, question: str | None) -> int:
 
 def cmd_serve(cfg) -> int:
     import uvicorn
+
     from web.dashboard import create_app
     app = create_app(cfg)
     uvicorn.run(app, host=cfg.get("web.host", "127.0.0.1"),
@@ -113,7 +114,10 @@ def cmd_analyze(cfg) -> int:
 
 
 def _analyze(repo, vid: int, cfg) -> int:
-    from analysis import anomaly, battery as batt, charging as chg, dtc as dtca
+    from analysis import anomaly
+    from analysis import battery as batt
+    from analysis import charging as chg
+    from analysis import dtc as dtca
 
     days = int(cfg.get("analysis.trend_window_days", 30))
     charging_days = int(cfg.get("analysis.charging_window_days", 90))

@@ -1,0 +1,44 @@
+[tool.ruff]
+# 90 rather than ruff's default 79: the codebase was written to a wider
+# column and has never been reformatted, so enforcing 79 would fail on
+# pre-existing code rather than catch new problems.
+line-length = 90
+target-version = "py310"
+extend-exclude = [".venv", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    # Imports are deliberately placed next to the section they test, and the
+    # test module adds the repo root to sys.path before importing project
+    # packages (that line is exactly what E402 flags). Rewriting this would
+    # move code the author placed on purpose.
+    "E402",
+    # zip() calls here pair sequences the caller has already length-checked
+    # (e.g. regression_slope raises on a mismatch), so strict= would be
+    # noise on every call site.
+    "B905",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test helpers shadow fixtures and import project modules after the sys.path
+# setup; the import sorting rule fights that layout.
+"tests/*" = ["I001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# -ra: show a reason for every skipped test, not just the count.
+# --strict-markers: a typo in @pytest.mark.something fails instead of
+# silently running the test unmarked.
+addopts = "-ra --strict-markers"
+markers = [
+    "slow: takes more than a couple of seconds (end-to-end simulator, sleeps)",
+    "hardware: needs a real OBD adapter attached to the vehicle",
+]
+filterwarnings = [
+    # Starlette's TestClient warns at import time that it wants httpx2. It still
+    # works, and the warning comes from inside the dependency, so there is
+    # nothing to fix in this project. Matched on the message, not the module:
+    # it is raised from fastapi/testclient.py, not starlette/testclient.py.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]

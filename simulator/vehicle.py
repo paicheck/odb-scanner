@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import math
 import random
-import socket
 import socketserver
 import threading
 import time
@@ -182,7 +181,7 @@ class SimHandler(socketserver.BaseRequestHandler):
         while True:
             try:
                 chunk = self.request.recv(1024)
-            except socket.timeout:
+            except TimeoutError:
                 # Idle keep-alive: a real ELM327 link stays open between polls
                 # (the collector only talks every collector.poll_interval), so a
                 # recv timeout must NOT be treated as a disconnect. Closing here

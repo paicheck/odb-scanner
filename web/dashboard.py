@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from ai.ollama import OllamaError
-from ai.service import AnalysisService, DEFAULT_QUESTIONS
+from ai.service import DEFAULT_QUESTIONS, AnalysisService
 from analysis import battery as battery_analysis
 from analysis import charging as charging_analysis
 from analysis import dtc as dtc_analysis

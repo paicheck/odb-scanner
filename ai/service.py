@@ -7,15 +7,14 @@ invents.
 """
 from __future__ import annotations
 
-import json
 import logging
 
 from ai import prompts, reports
-from ai.ollama import OllamaClient, OllamaError
+from ai.ollama import OllamaClient
 from analysis import battery as battery_analysis
 from analysis import charging as charging_analysis
 from analysis import dtc as dtc_analysis
-from database.repository import Repository, utcnow
+from database.repository import Repository
 
 log = logging.getLogger(__name__)
 

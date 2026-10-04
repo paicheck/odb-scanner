@@ -518,7 +518,7 @@ class Doctor:
             return causes, fixes
 
         if ports and ports.status == FAIL:
-            causes.append(f"The configured COM port does not exist.")
+            causes.append("The configured COM port does not exist.")
             fixes.append("Run with --all-ports to find the real one.")
             fixes.append("On Windows Bluetooth SPP, choose the OUTGOING port "
                          "(the one whose description reads 'outgoing'); the "

@@ -13,14 +13,14 @@ import logging
 import time
 
 from analysis import dtc as dtc_analysis
+from database.repository import Repository, utcnow
 from decoders.bms import NOMINAL_CAC_AH_58KWH, soh_pct_from_cac
 from decoders.registry import Provenance, build_default_registry
 from diagnostic import obd2, uds
 from diagnostic.connection import DiagnosticConnection
-from diagnostic.ecus import ECUS, ECUSpec
+from diagnostic.ecus import ECUS
 from diagnostic.elm327 import Elm327Transport
 from diagnostic.interface import CommunicationError
-from database.repository import Repository, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -163,7 +163,7 @@ class Collector:
             raw = self.conn.read_did(ecu, spec.did)
             self._record(spec, raw, ts)
             return raw
-        except (CommunicationError,) as exc:
+        except CommunicationError as exc:
             self._record(spec, None, ts, error=str(exc), success=False)
             return None
 
@@ -202,7 +202,7 @@ class Collector:
             self.repo.record_measurement(
                 self.vehicle_id, ts, "pack_power_kw", "bat_mgmt", "calc", "-",
                 "kW", Provenance.CALCULATED.value,
-                "voltage * current / 1000", "calculated", "", 
+                "voltage * current / 1000", "calculated", "",
                 snapshot["pack_power_kw"],
             )
         vmin, vmax = snapshot.get("cell_voltage_min"), snapshot.get("cell_voltage_max")
@@ -317,7 +317,8 @@ class Collector:
             battery_temp_c=val("battery_temp"),
             energy_charged_kwh=energy_ch, energy_used_kwh=energy_used,
             soh_pct=soh, cac_ah=cac_ah,
-            charge_mode=CHARGE_MODE_CODES.get(mode, str(mode)) if mode is not None else None,
+            charge_mode=(CHARGE_MODE_CODES.get(mode, str(mode))
+                         if mode is not None else None),
         )
 
     def _charging_tracking(self, ts: str, snap: dict) -> None:
@@ -390,7 +391,8 @@ class Collector:
                 cats = dtc_analysis.classify_dtc(code, item.get("status_byte"))
                 self.repo.upsert_dtc(self.vehicle_id, ts, spec.key, code, desc,
                                      cats, status="confirmed",
-                                     freeze_frame={"status_byte": item.get("status_byte")})
+                                     freeze_frame={"status_byte":
+                                                   item.get("status_byte")})
                 all_dtcs.append({"ecu": spec.key, "code": code,
                                  "status_byte": item.get("status_byte")})
         return all_dtcs

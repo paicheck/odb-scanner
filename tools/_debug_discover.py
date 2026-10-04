@@ -1,17 +1,14 @@
 """Temporary debug: probe ECU discovery against the simulator."""
 import logging
 import sys
-import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 logging.basicConfig(level=logging.WARNING)
 
-from simulator.vehicle import SimServer
-from diagnostic.elm327 import Elm327Transport
 from diagnostic.connection import DiagnosticConnection
-from diagnostic import uds
-from diagnostic.ecus import get_ecu
+from diagnostic.elm327 import Elm327Transport
+from simulator.vehicle import SimServer
 
 srv = SimServer("127.0.0.1", 35199)
 srv.start()
@@ -23,9 +20,10 @@ try:
 
     # Now the REAL collector path
     import tempfile
+
+    from collector import Collector
     from config import load_config
     from database.repository import Repository
-    from collector import Collector
 
     with tempfile.TemporaryDirectory() as tmp:
         with Repository(f"{tmp}/dbg.db") as repo:

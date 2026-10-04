@@ -132,10 +132,10 @@ def validate_request(payload: str | bytes) -> int:
         )
     try:
         service = int(hexed[:2], 16)
-    except ValueError:
+    except ValueError as exc:
         raise ReadOnlyViolationError(
             f"Refusing to transmit {hexed!r}: first byte is not a service id."
-        )
+        ) from exc
     validate_service(service)
     return service
 

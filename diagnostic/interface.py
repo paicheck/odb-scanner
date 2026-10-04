@@ -42,7 +42,7 @@ class OBDInterface(ABC):
     @abstractmethod
     def is_open(self) -> bool: ...
 
-    def __enter__(self) -> "OBDInterface":
+    def __enter__(self) -> OBDInterface:
         self.open()
         return self
 

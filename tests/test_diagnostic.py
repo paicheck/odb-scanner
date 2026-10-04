@@ -345,22 +345,8 @@ def test_decoder_without_function_returns_none_quietly(caplog):
 # --- database -------------------------------------------------------------------
 from database.repository import Repository, utcnow  # noqa: E402
 from analysis.battery import cell_delta_trend  # noqa: E402
-from analysis.dtc import classify_dtc, dtc_summary  # noqa: E402
+from analysis.dtc import classify_dtc  # noqa: E402
 from analysis.charging import correlate_dtc_with_sessions  # noqa: E402
-
-
-@pytest.fixture()
-def repo():
-    with tempfile.TemporaryDirectory() as tmp:
-        r = Repository(os.path.join(tmp, "test.db"))
-        yield r
-        r.close()  # release WAL locks before TemporaryDirectory cleanup
-
-
-@pytest.fixture()
-def cfg():
-    """Default config. Callers override the DB path when they need isolation."""
-    return load_config()
 
 
 def test_repository_roundtrip(repo):
@@ -925,6 +911,7 @@ def test_dashboard_windows_come_from_config(monkeypatch):
     assert seen["charging"] and set(seen["charging"]) == {11}, seen
 
 
+@pytest.mark.slow
 def test_simulator_end_to_end():
     """Full pipeline against the simulated ELM327: VIN, DID reads, DTCs."""
     from simulator.vehicle import SimServer
@@ -946,7 +933,10 @@ def test_simulator_end_to_end():
         # unavailable DID -> NRC 0x31 -> try_read_did returns None
         assert c.try_read_did(bms, 0xFFFF) is None
         c.close()
+
+
 # --- AI layer -------------------------------------------------------------------
+@pytest.mark.slow
 def test_report_validator():
     from ai.reports import validate_report
     text = ("VEHICLE DIAGNOSTIC REPORT\nOBSERVATION\nThe battery is definitely "
@@ -1134,7 +1124,6 @@ def _offline_collector(slow_interval: float, tmp: str):
 def test_slow_phase_is_gated_not_every_cycle():
     """The 107 slow DIDs must respect collector.slow_poll_interval instead of
     being re-read on every fast poll."""
-    import time as _time
     with tempfile.TemporaryDirectory() as tmp:
         col = _offline_collector(60.0, tmp)
         assert col._slow_phase_due() is True, "first pass must always run"
@@ -1156,7 +1145,6 @@ def test_slow_phase_due_just_after_boot():
 def test_slow_pass_excludes_cell_dids():
     """_sweep_cells() reads the per-cell DIDs; _slow_pass() must not read them
     again in the same phase, or every cell DID is polled twice per cycle."""
-    from decoders.registry import build_default_registry
     with tempfile.TemporaryDirectory() as tmp:
         col = _offline_collector(60.0, tmp)
         cell_keys = {s.key for s in col.registry.all()
@@ -1274,6 +1262,7 @@ def _stage(stages, title):
     return next(s for s in stages if s.title == title)
 
 
+@pytest.mark.slow
 def test_doctor_reports_a_working_link(tmp_path):
     """The good path must reach a connection verdict, not just avoid crashing."""
     from tools import fake_adapters
@@ -1291,6 +1280,7 @@ def test_doctor_reports_a_working_link(tmp_path):
     assert any("connecting" in c for c in causes)
 
 
+@pytest.mark.slow
 def test_doctor_blames_the_ignition_when_the_adapter_is_fine():
     """Adapter answers, car silent -> vehicle-side cause, not a tool cause."""
     stages, causes, fixes = _doctor_with_fake_adapter("dead")
@@ -1300,6 +1290,7 @@ def test_doctor_blames_the_ignition_when_the_adapter_is_fine():
     assert any("ignition" in f.lower() for f in fixes), fixes
 
 
+@pytest.mark.slow
 def test_doctor_blames_the_link_when_nothing_answers_at_all():
     """Port opens but the adapter never speaks -> wrong port / unpaired."""
     stages, causes, fixes = _doctor_with_fake_adapter("mute")
@@ -1309,6 +1300,7 @@ def test_doctor_blames_the_link_when_nothing_answers_at_all():
     assert any("Bluetooth" in f for f in fixes), fixes
 
 
+@pytest.mark.slow
 def test_doctor_detects_a_refused_protocol_change():
     """A pinned protocol looks identical to a sleeping car unless the refusal
     is noticed -- and the refusal is the only thing that tells them apart."""
@@ -1321,6 +1313,7 @@ def test_doctor_detects_a_refused_protocol_change():
     assert not any("ignition" in c.lower() for c in causes), causes
 
 
+@pytest.mark.slow
 def test_doctor_warns_about_an_unknown_adapter_but_still_connects():
     stages, causes, _fixes = _doctor_with_fake_adapter("clone")
     ident = _stage(stages, "Adapter identity")
@@ -1329,6 +1322,7 @@ def test_doctor_warns_about_an_unknown_adapter_but_still_connects():
     assert any("known ELM327 family" in c for c in causes), causes
 
 
+@pytest.mark.slow
 def test_doctor_flags_a_missing_configured_port(tmp_path):
     from diagnostic.interface import detect_serial_ports
     from tools.doctor import Doctor
@@ -1341,6 +1335,7 @@ def test_doctor_flags_a_missing_configured_port(tmp_path):
         assert any("COM99 is not present" in p for p in stage.problems)
 
 
+@pytest.mark.slow
 def test_doctor_never_sends_a_write_to_the_vehicle():
     """The doctor must not be able to put a write on the wire, even if edited."""
     from tools.doctor import Doctor

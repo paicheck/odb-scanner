@@ -14,9 +14,9 @@ DID decodes, so new decoders can be added later without data loss
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
 
 log = logging.getLogger(__name__)
 

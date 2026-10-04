@@ -162,6 +162,41 @@ gap check.
 .venv\Scripts\python -m pytest tests -v
 ```
 
+107 tests, no car and no Ollama required. A few drive a fake adapter over a
+real socket and are marked `slow`, so the quick inner loop is:
+
+```bat
+.venv\Scripts\python -m pytest -m "not slow"   :: 98 tests, ~2s
+.venv\Scripts\python -m pytest -m slow         :: the 9 that open sockets
+```
+
+### Linting
+
+```bat
+.venv\Scripts\pip install ruff
+.venv\Scripts\python -m ruff check .
+```
+
+Config lives in `pyproject.toml`. Two rules are switched off on purpose:
+`E402`, because imports sit next to the section they support, and `B905`,
+because the `zip()` calls here pair sequences the caller has already
+length-checked.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs lint, the fast tests, the full suite, the
+offline smoke test and `guard-test` on Python 3.11–3.14. The smoke test and
+the read-only guard are separate steps on purpose: they catch wiring breaks
+and safety regressions that the unit tests would not.
+
+### Dependency pinning
+
+`requirements.txt` holds the accepted version ranges. `requirements-lock.txt`
+pins the exact versions verified working (the 107 tests and the smoke test
+above) if you want a reproducible environment instead of the newest allowed.
+Only direct dependencies are pinned, so the same file is valid on Windows and
+on Linux/macOS, where the compiled wheels differ.
+
 ## Commands
 
 | Command | Purpose |

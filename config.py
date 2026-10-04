@@ -77,7 +77,7 @@ class ConfigError(ValueError):
 def _read_yaml(path: Path) -> dict:
     if not path.exists():
         return {}
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         try:
             data = yaml.safe_load(fh)
         except yaml.YAMLError as exc:

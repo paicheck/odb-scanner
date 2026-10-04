@@ -48,7 +48,7 @@ def check(name: str, ok: bool | None, detail: str = "") -> bool:
 
 def scratch_config(port: int, db_path: str) -> Config:
     """config.yaml with the scratch DB and the simulator's TCP port."""
-    with open(DEFAULT_PATH, "r", encoding="utf-8") as fh:
+    with open(DEFAULT_PATH, encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
     data.setdefault("database", {})["path"] = db_path
     adapter = data.setdefault("adapter", {})

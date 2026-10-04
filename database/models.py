@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS diagnostic_events (
     id INTEGER PRIMARY KEY,
     vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
     ts TEXT NOT NULL,
-    kind TEXT NOT NULL,            -- wake | sleep | charge-start | charge-end | adapter | note
+    kind TEXT NOT NULL,            -- wake|sleep|charge-start|charge-end|adapter|note
     ecu TEXT,
     description TEXT NOT NULL,
     data TEXT                      -- JSON

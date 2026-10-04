@@ -156,7 +156,7 @@ class Elm327Transport(OBDInterface):
                     chunk = self._dev.read(256)
                 else:  # socket
                     chunk = self._dev.recv(4096)
-            except (OSError, socket.timeout):
+            except (TimeoutError, OSError):
                 chunk = b""
             if chunk:
                 buf += chunk
