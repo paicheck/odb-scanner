@@ -27,8 +27,12 @@ def _parse_ts(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
 
 
+class SchemaMismatchError(RuntimeError):
+    """The database on disk was written by a build with a different schema."""
+
+
 class Repository:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, check_schema: bool = True):
         self.path = str(path)
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         # One connection is shared by the collector and by FastAPI's threadpool
@@ -39,12 +43,43 @@ class Repository:
         self.conn = sqlite3.connect(self.path, check_same_thread=False,
                                     timeout=30.0)
         self.conn.row_factory = sqlite3.Row
+        existing = self._stored_schema_version()
         self.conn.executescript(SCHEMA_SQL)
+        if check_schema and existing is not None \
+                and existing != SCHEMA_VERSION:
+            # CREATE TABLE IF NOT EXISTS leaves an older database's tables
+            # exactly as they are, so a version mismatch means the columns this
+            # build reads may not be the ones that are there. Stamping the
+            # current version over the old one (as this used to do on every
+            # open) destroyed the only record that the two had diverged.
+            self.conn.close()
+            raise SchemaMismatchError(
+                f"{self.path}: database schema is version {existing}, but this "
+                f"build expects {SCHEMA_VERSION}. Refusing to write, because the "
+                f"existing tables may not have the columns this build reads. "
+                f"Start from an empty database, or restore a backup and migrate."
+            )
         self.conn.execute(
             "INSERT OR REPLACE INTO meta VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),
         )
         self.conn.commit()
+
+    def _stored_schema_version(self) -> int | None:
+        """Version recorded in an existing database, or None if it is new."""
+        row = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='meta'"
+        ).fetchone()
+        if row is None:
+            return None
+        row = self.conn.execute(
+            "SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        if row is None:
+            return None
+        try:
+            return int(row["value"])
+        except (TypeError, ValueError):
+            return None
 
     def close(self) -> None:
         self.conn.close()
@@ -176,6 +211,69 @@ class Repository:
             args.append(vehicle_id)
         sql += " ORDER BY ts"
         return self.conn.execute(sql, args).fetchall()
+
+    def vacuum(self) -> None:
+        """Reclaim space after pruning. Needs no open transaction.
+
+        VACUUM rewrites the whole database into the WAL, so without a
+        truncating checkpoint the file on disk appears to have grown -- the
+        new copy sits beside the old pages until the WAL is folded back in.
+        """
+        self.conn.isolation_level = None
+        try:
+            self.conn.execute("VACUUM")
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            self.conn.isolation_level = ""
+
+    def prune(self, days: float = 90.0, keep_raw: bool = True) -> dict:
+        """Trim history, and report what it removed.
+
+        An always-on collector appends a few hundred measurement rows per
+        minute, so an unattended database grows without bound -- enough to
+        exhaust the tablet's storage, and enough rows that the latest-value
+        lookups slow down noticeably.
+
+        keep_raw (the default) drops only the verbatim vehicle bytes on rows
+        older than `days`, keeping every parsed value, so trends, reports and
+        the dashboard are unaffected and the evidence trail stays in the
+        numeric columns. Set it False to delete the rows themselves, which is
+        the only way to reclaim the space promptly without leaving a high-water
+        mark. Pass 0 to prune everything.
+
+        Nothing is deleted automatically: pruning is destructive, so the caller
+        decides when. Anything still inside the window is left alone, including
+        rows belonging to an in-progress charging session.
+        """
+        cutoff = _iso_days_ago(days)
+        # Every table below carries a `ts` column holding an ISO-8601 UTC stamp,
+        # so one cutoff applies to all of them. Sessions, DTCs, vehicles and ECUs
+        # are deliberately absent: they are small and are the durable record.
+        # llm_reports is kept too -- it is the user's own generated history.
+        tables = ("measurements", "battery_measurements", "cell_voltages",
+                  "charging_samples", "anomalies", "diagnostic_events",
+                  "analysis_results", "tx_log")
+        removed = {t: 0 for t in tables}
+        removed["measurements_raw"] = 0
+        removed["cutoff"] = cutoff
+        removed["keep_raw"] = keep_raw
+        if keep_raw:
+            cur = self.conn.execute(
+                "UPDATE measurements SET raw_response=NULL "
+                "WHERE ts < ? AND raw_response IS NOT NULL", (cutoff,))
+            removed["measurements_raw"] = cur.rowcount
+        else:
+            for table in tables:
+                cur = self.conn.execute(f"DELETE FROM {table} WHERE ts < ?",
+                                        (cutoff,))
+                removed[table] = cur.rowcount
+        self.conn.commit()
+        return removed
+
+    def _table_exists(self, name: str) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (name,)).fetchone() is not None
 
     def record_cell_voltages(self, vehicle_id: int, ts: str, voltages: list[float],
                          cell_numbers: list[int] | None = None) -> None:

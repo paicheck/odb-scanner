@@ -160,6 +160,18 @@ gap check.
 | `python tools/start_scanner.py` | Start/stop the simulated stack (`--status`, `--stop`) |
 | `python main.py seed` | Load example 30-day dataset |
 | `python main.py guard-test` | Verify the read-only UDS guard |
+| `python main.py prune --days 90` | Drop stale raw response bytes, keeping every parsed value |
+| `python main.py prune --days 90 --hard` | Delete history rows older than 90 days entirely |
+
+### Database growth
+
+An always-on collector appends a few hundred rows a minute, so an unattended
+database grows without bound. `prune` never runs automatically — deleting data
+is your call. The default drops only the verbatim vehicle bytes older than
+`--days`, keeping every parsed value, so trends and reports are unaffected.
+`--hard` also deletes the rows, and is the only way to reclaim the space
+promptly (it vacuums). Vehicles, ECUs, sessions, DTCs and generated reports are
+never pruned.
 
 ## Key limitations
 

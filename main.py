@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from config import load_config
 from database.repository import Repository
@@ -172,13 +173,55 @@ def cmd_guard_test() -> int:
     return 0 if ok else 1
 
 
+def cmd_prune(cfg, days: float, hard: bool) -> int:
+    """Trim history. Never runs automatically -- deleting data is the user's call."""
+    with Repository(cfg.db_path) as repo:
+        before = _db_size_mb(cfg.db_path)
+        removed = repo.prune(days=days, keep_raw=not hard)
+        if not hard:
+            # Freeing pages needs VACUUM, which cannot run inside a transaction.
+            repo.vacuum()
+        after = _db_size_mb(cfg.db_path)
+    what = ("raw payloads" if not hard else "rows")
+    print(f"Pruned {what} older than {days:g} days (cutoff {removed['cutoff']}):")
+    for key, count in removed.items():
+        # isinstance(True, int) is True, so the keep_raw flag would otherwise
+        # be reported as a count of one.
+        if isinstance(count, int) and not isinstance(count, bool) and count:
+            print(f"  {key:22} {count}")
+    if hard:
+        print("Parsed values inside the window are untouched. Vehicles, ECUs, "
+              "sessions, DTCs and reports are never pruned.")
+    else:
+        print("Every parsed value inside the window is untouched, including the "
+              "verbatim bytes of recent rows.")
+    print(f"Database size: {before:.1f} MB -> {after:.1f} MB")
+    return 0
+
+
+def _db_size_mb(path: str) -> float:
+    """On-disk size including the WAL, which holds recent writes not yet folded in."""
+    total = 0
+    for suffix in ("", "-wal", "-shm"):
+        p = Path(path).with_name(Path(path).name + suffix)
+        if p.exists():
+            total += p.stat().st_size
+    return total / (1024 * 1024)
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(description="Read-only ID.3 diagnostics")
     parser.add_argument("command",
                         choices=["discover", "collect", "analyze", "report",
-                                 "serve", "simulate", "seed", "guard-test"])
+                                 "serve", "simulate", "seed", "guard-test",
+                                 "prune"])
+    parser.add_argument("--days", type=float, default=90.0,
+                        help="prune: age in days to keep (default 90)")
+    parser.add_argument("--hard", action="store_true",
+                        help="prune: delete whole rows instead of only the "
+                             "verbatim response payloads")
     parser.add_argument("--cycles", type=int, default=None)
     parser.add_argument("--question", type=str, default=None)
     parser.add_argument("--config", type=str, default=None)
@@ -194,6 +237,8 @@ def main() -> int:
         return 0
 
     cfg = load_config(args.config)
+    if args.command == "prune":
+        return cmd_prune(cfg, args.days, args.hard)
     try:
         if args.command == "discover":
             return cmd_discover(cfg)

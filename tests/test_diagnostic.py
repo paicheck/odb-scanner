@@ -677,6 +677,67 @@ def test_dtc_occurrence_count_is_not_a_poll_count(repo):
                              (vid,)).fetchone()["occurrence_count"] == 2
 
 
+def test_schema_mismatch_refuses_to_write_and_preserves_evidence(tmp_path):
+    """An older database must be reported, not silently restamped as current.
+
+    CREATE TABLE IF NOT EXISTS leaves existing tables alone, so a version
+    mismatch means the columns this build reads may not exist. Stamping the
+    current version over the old one destroyed the only sign of divergence.
+    """
+    import sqlite3 as sq
+    from database.repository import Repository, SchemaMismatchError
+    db = tmp_path / "old.db"
+    repo = Repository(db)
+    repo.conn.execute("UPDATE meta SET value='0' WHERE key='schema_version'")
+    repo.conn.commit()
+    repo.close()
+    with pytest.raises(SchemaMismatchError) as e:
+        Repository(db)
+    assert "version 0" in str(e.value) and "expects 1" in str(e.value)
+    still = sq.connect(db).execute(
+        "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
+    assert still == "0", "refusal overwrote the recorded version"
+
+
+def test_prune_keeps_values_and_drops_only_stale_raw_bytes(repo):
+    """Default pruning must not disturb anything the reports read."""
+    from datetime import datetime, timedelta, timezone
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    old = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat(
+        timespec="seconds")
+    new = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for ts in (old, new):
+        repo.record_measurement(vid, ts, "pack_voltage", "bat_mgmt", "UDS-0x22",
+                                "0x1E3B", "V", "reported", "builtin",
+                                "documented", "DEADBEEF", 350.0)
+    removed = repo.prune(days=90)
+    assert removed["measurements_raw"] == 1
+    rows = repo.conn.execute(
+        "SELECT raw_response, value FROM measurements ORDER BY ts").fetchall()
+    assert len(rows) == 2, "a measurement row was deleted"
+    assert rows[0]["raw_response"] is None, "stale raw bytes kept"
+    assert rows[0]["value"] == 350.0, "parsed value lost with the raw bytes"
+    assert rows[1]["raw_response"] == "DEADBEEF", "recent raw bytes discarded"
+
+
+def test_hard_prune_removes_old_rows_but_keeps_identity(repo):
+    from datetime import datetime, timedelta, timezone
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    old = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat(
+        timespec="seconds")
+    new = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for ts in (old, new):
+        repo.record_measurement(vid, ts, "pack_voltage", "bat_mgmt", "UDS-0x22",
+                                "0x1E3B", "V", "reported", "builtin",
+                                "documented", "DEADBEEF", 350.0)
+    removed = repo.prune(days=90, keep_raw=False)
+    assert removed["measurements"] == 1
+    left = repo.conn.execute("SELECT ts FROM measurements").fetchall()
+    assert [r["ts"] for r in left] == [new]
+    assert repo.conn.execute("SELECT id FROM vehicles WHERE id=?",
+                             (vid,)).fetchone() is not None, "vehicle pruned"
+
+
 def test_config_missing_base_file_yields_defaults(tmp_path):
     cfg = load_config(tmp_path / "absent.yaml", tmp_path / "absent.local.yaml")
     assert cfg.get("anything.at.all") is None
