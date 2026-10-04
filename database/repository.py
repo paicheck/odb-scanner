@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -32,17 +33,28 @@ class SchemaMismatchError(RuntimeError):
 
 
 class Repository:
+    """One per-process handle to the SQLite database.
+
+    Connections are per-thread. The dashboard runs sync handlers on
+    Starlette's threadpool while the collector thread writes, and a single
+    sqlite3.Connection cannot be used that way: interleaved use raises
+    InterfaceError ("bad parameter or other API misuse") and silently drops
+    writes, because the connection's implicit transaction state is shared. The
+    busy_timeout below only covers lock contention between *processes*; it does
+    nothing for two threads driving the same connection object.
+
+    Each thread gets its own connection to the same file, so WAL still allows
+    concurrent reads alongside a single writer, and `repo.conn` keeps working
+    unchanged for callers and tests.
+    """
+
     def __init__(self, path: str | Path, check_schema: bool = True):
         self.path = str(path)
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        # One connection is shared by the collector and by FastAPI's threadpool
-        # (check_same_thread=False), so busy_timeout is what keeps a web write
-        # from raising "database is locked" while the collector holds the write
-        # lock. It is also sqlite3's default; stated explicitly because the
-        # dashboard and the collector are genuinely concurrent processes here.
-        self.conn = sqlite3.connect(self.path, check_same_thread=False,
-                                    timeout=30.0)
-        self.conn.row_factory = sqlite3.Row
+        self._local = threading.local()
+        self._conns: list[sqlite3.Connection] = []
+        self._conns_lock = threading.Lock()
+        self._closed = False
         existing = self._stored_schema_version()
         self.conn.executescript(SCHEMA_SQL)
         if check_schema and existing is not None \
@@ -52,7 +64,7 @@ class Repository:
             # build reads may not be the ones that are there. Stamping the
             # current version over the old one (as this used to do on every
             # open) destroyed the only record that the two had diverged.
-            self.conn.close()
+            self.close()
             raise SchemaMismatchError(
                 f"{self.path}: database schema is version {existing}, but this "
                 f"build expects {SCHEMA_VERSION}. Refusing to write, because the "
@@ -64,6 +76,27 @@ class Repository:
             (str(SCHEMA_VERSION),),
         )
         self.conn.commit()
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """This thread's connection, opened on first use."""
+        if self._closed:
+            # Deliberately not lazy: quietly reopening would hide the lifecycle
+            # bug that closing was meant to surface.
+            raise sqlite3.ProgrammingError(
+                f"repository for {self.path} is closed")
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.path, check_same_thread=False,
+                                   timeout=30.0)
+            conn.row_factory = sqlite3.Row
+            # foreign_keys is per-connection and is not persisted in the file,
+            # so it has to be set on every connection the process opens.
+            conn.execute("PRAGMA foreign_keys=ON")
+            self._local.conn = conn
+            with self._conns_lock:
+                self._conns.append(conn)
+        return conn
 
     def _stored_schema_version(self) -> int | None:
         """Version recorded in an existing database, or None if it is new."""
@@ -82,7 +115,15 @@ class Repository:
             return None
 
     def close(self) -> None:
-        self.conn.close()
+        self._closed = True
+        with self._conns_lock:
+            conns, self._conns = self._conns, []
+        for conn in conns:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+        self._local = threading.local()
 
     def __enter__(self) -> "Repository":
         return self

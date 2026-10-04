@@ -677,6 +677,64 @@ def test_dtc_occurrence_count_is_not_a_poll_count(repo):
                              (vid,)).fetchone()["occurrence_count"] == 2
 
 
+def test_concurrent_threads_do_not_lose_writes(repo):
+    """The dashboard serves sync handlers on a threadpool while the collector
+    thread writes.
+
+    A single shared sqlite3.Connection cannot be driven from two threads: the
+    interleaved use raised InterfaceError and silently discarded writes, so a
+    scan measured only a fraction of what was written. Connections are
+    per-thread, so every write must land.
+    """
+    import threading
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    errors = []
+
+    def writer(n):
+        try:
+            for i in range(150):
+                repo.record_measurement(vid, "2026-09-01T10:00:00+00:00",
+                                        f"key{n}", "bms", "UDS-0x22", "0x1E3B",
+                                        "V", "reported", "builtin", "documented",
+                                        "AABB", float(i))
+        except Exception as exc:            # pragma: no cover - diagnostics
+            errors.append(repr(exc))
+
+    def reader(_n):
+        try:
+            for _ in range(150):
+                repo.latest_measurements(vid)
+        except Exception as exc:            # pragma: no cover - diagnostics
+            errors.append(repr(exc))
+
+    threads = [threading.Thread(target=writer, args=(i,)) for i in range(4)]
+    threads += [threading.Thread(target=reader, args=(i,)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, f"thread errors: {errors[:3]}"
+    total = repo.conn.execute(
+        "SELECT COUNT(*) FROM measurements WHERE key LIKE 'key%'"
+    ).fetchone()[0]
+    assert total == 600, f"lost writes: {total}/600"
+
+
+def test_each_thread_gets_a_connection_with_foreign_keys_on(repo):
+    """foreign_keys is per-connection, so a worker thread must set it too."""
+    import threading
+    seen = {}
+
+    def check():
+        seen["fk"] = repo.conn.execute("PRAGMA foreign_keys").fetchone()[0]
+        seen["distinct"] = repo.conn is not repo.conn
+
+    t = threading.Thread(target=check)
+    t.start()
+    t.join()
+    assert seen["fk"] == 1, "foreign keys silently off on a worker connection"
+
+
 def test_schema_mismatch_refuses_to_write_and_preserves_evidence(tmp_path):
     """An older database must be reported, not silently restamped as current.
 
