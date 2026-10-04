@@ -28,22 +28,22 @@ try:
     from collector import Collector
 
     with tempfile.TemporaryDirectory() as tmp:
-        repo = Repository(f"{tmp}/dbg.db")
-        col = Collector(load_config(), repo)
-        col.conn.t.host, col.conn.t.tcp_port = "127.0.0.1", 35199
-        col.conn.t._dev = None
-        col.conn.t._opened = False
-        col.conn.open()
-        col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
-        col.vin = "WVWZZZE1ZMP087053"
-        print("discover_ecus:", col.discover_ecus())
-        rows = repo.conn.execute("SELECT key, status FROM ecus").fetchall()
-        print("db:", [(r["key"], r["status"]) for r in rows])
-        tx = repo.conn.execute(
-            "SELECT direction, ecu, payload, purpose FROM tx_log "
-            "ORDER BY id DESC LIMIT 8").fetchall()
-        for r in tx:
-            print("tx:", dict(r))
-        col.close()
+        with Repository(f"{tmp}/dbg.db") as repo:
+            col = Collector(load_config(), repo)
+            col.conn.t.host, col.conn.t.tcp_port = "127.0.0.1", 35199
+            col.conn.t._dev = None
+            col.conn.t._opened = False
+            col.conn.open()
+            col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+            col.vin = "WVWZZZE1ZMP087053"
+            print("discover_ecus:", col.discover_ecus())
+            rows = repo.conn.execute("SELECT key, status FROM ecus").fetchall()
+            print("db:", [(r["key"], r["status"]) for r in rows])
+            tx = repo.conn.execute(
+                "SELECT direction, ecu, payload, purpose FROM tx_log "
+                "ORDER BY id DESC LIMIT 8").fetchall()
+            for r in tx:
+                print("tx:", dict(r))
+            col.close()
 finally:
     srv.stop()

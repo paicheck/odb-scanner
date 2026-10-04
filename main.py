@@ -23,31 +23,35 @@ from diagnostic.interface import AdapterNotFoundError, CommunicationError
 
 def cmd_discover(cfg) -> int:
     from collector import Collector
-    c = Collector(cfg, Repository(cfg.db_path))
-    try:
-        vin = c.open_and_identify()
-        print(f"VIN: {vin}")
-        results = c.discover_ecus()
-        for key, status in results.items():
-            print(f"  {key:<10} {status}")
-        print("\nNOTE: 'no-response' may simply mean the ECU is not reachable "
-              "with this adapter — see README 'What this can and cannot access'.")
-        dtcs = c.read_and_store_dtcs()
-        print(f"DTCs found: {dtcs or 'none'}")
-    finally:
-        c.close()
+    # `with` because Collector.close() only closes the transport, not the repo.
+    with Repository(cfg.db_path) as repo:
+        c = Collector(cfg, repo)
+        try:
+            vin = c.open_and_identify()
+            print(f"VIN: {vin}")
+            results = c.discover_ecus()
+            for key, status in results.items():
+                print(f"  {key:<10} {status}")
+            print("\nNOTE: 'no-response' may simply mean the ECU is not "
+                  "reachable with this adapter — see README 'What this can "
+                  "and cannot access'.")
+            dtcs = c.read_and_store_dtcs()
+            print(f"DTCs found: {dtcs or 'none'}")
+        finally:
+            c.close()
     return 0
 
 
 def cmd_collect(cfg, cycles: int | None) -> int:
     from collector import Collector
-    c = Collector(cfg, Repository(cfg.db_path))
-    try:
-        c.run(max_cycles=cycles)
-    except KeyboardInterrupt:
-        print("Stopped.")
-    finally:
-        c.close()
+    with Repository(cfg.db_path) as repo:
+        c = Collector(cfg, repo)
+        try:
+            c.run(max_cycles=cycles)
+        except KeyboardInterrupt:
+            print("Stopped.")
+        finally:
+            c.close()
     return 0
 
 
