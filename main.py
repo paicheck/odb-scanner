@@ -216,7 +216,7 @@ def main() -> int:
     parser.add_argument("command",
                         choices=["discover", "collect", "analyze", "report",
                                  "serve", "simulate", "seed", "guard-test",
-                                 "prune"])
+                                 "prune", "doctor"])
     parser.add_argument("--days", type=float, default=90.0,
                         help="prune: age in days to keep (default 90)")
     parser.add_argument("--hard", action="store_true",
@@ -225,6 +225,10 @@ def main() -> int:
     parser.add_argument("--cycles", type=int, default=None)
     parser.add_argument("--question", type=str, default=None)
     parser.add_argument("--config", type=str, default=None)
+    parser.add_argument("--port", type=str, default=None,
+                        help="doctor: override adapter.port for this run")
+    parser.add_argument("--tcp", nargs=2, metavar=("HOST", "PORT"),
+                        help="doctor: use a TCP adapter/simulator")
     args = parser.parse_args()
 
     if args.command == "guard-test":
@@ -237,6 +241,18 @@ def main() -> int:
         return 0
 
     cfg = load_config(args.config)
+    if args.command == "doctor":
+        # Imported lazily: the doctor is a troubleshooting path, and nothing
+        # else in the tool should depend on it.
+        from tools.doctor import main as doctor_main
+        doctor_argv = ["doctor", "--config", args.config] if args.config \
+            else ["doctor"]
+        if args.tcp:
+            doctor_argv += ["--tcp", args.tcp[0], str(args.tcp[1])]
+        if args.port:
+            doctor_argv += ["--port", args.port]
+        sys.argv = doctor_argv
+        return doctor_main()
     if args.command == "prune":
         return cmd_prune(cfg, args.days, args.hard)
     try:

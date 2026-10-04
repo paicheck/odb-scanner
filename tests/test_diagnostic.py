@@ -1250,3 +1250,109 @@ def test_ts_to_days_empty_and_malformed_do_not_raise():
 def test_classify_dtc_rejects_empty_input():
     assert classify_dtc("") == ["unknown"]
     assert classify_dtc(None) == ["unknown"]
+
+
+# -- connection doctor ----------------------------------------------------------
+
+def _doctor_with_fake_adapter(mode):
+    """Run the doctor against a fake adapter in `mode`; return (stages, causes)."""
+    from tools import fake_adapters
+    from tools.doctor import run as run_doctor
+    srv, port = fake_adapters.start(mode, port=0)
+    try:
+        cfg = Config({"adapter": {"type": "elm327_serial",
+                                  "port": "COM_DOES_NOT_EXIST"}})
+        stages, causes, fixes = run_doctor(
+            cfg, tcp=("127.0.0.1", port), timeout=1.0, verbose=False)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+    return stages, causes, fixes
+
+
+def _stage(stages, title):
+    return next(s for s in stages if s.title == title)
+
+
+def test_doctor_reports_a_working_link(tmp_path):
+    """The good path must reach a connection verdict, not just avoid crashing."""
+    from tools import fake_adapters
+    from tools.doctor import run as run_doctor
+    srv, port = fake_adapters.start("clone", port=0)
+    try:
+        cfg = Config({"adapter": {"type": "elm327_serial", "port": "COM3"}})
+        stages, causes, fixes = run_doctor(
+            cfg, tcp=("127.0.0.1", port), timeout=1.0, verbose=False)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+    assert _stage(stages, "Port open").status != "FAIL"
+    assert _stage(stages, "Adapter identity").status != "FAIL"
+    assert any("connecting" in c for c in causes)
+
+
+def test_doctor_blames_the_ignition_when_the_adapter_is_fine():
+    """Adapter answers, car silent -> vehicle-side cause, not a tool cause."""
+    stages, causes, fixes = _doctor_with_fake_adapter("dead")
+    assert _stage(stages, "Adapter identity").status == "OK"
+    assert _stage(stages, "Protocol negotiation").status == "FAIL"
+    assert any("vehicle-side" in c for c in causes), causes
+    assert any("ignition" in f.lower() for f in fixes), fixes
+
+
+def test_doctor_blames_the_link_when_nothing_answers_at_all():
+    """Port opens but the adapter never speaks -> wrong port / unpaired."""
+    stages, causes, fixes = _doctor_with_fake_adapter("mute")
+    assert _stage(stages, "Port open").status == "OK"
+    assert _stage(stages, "Adapter identity").status == "FAIL"
+    assert any("no ELM327 answered" in c for c in causes), causes
+    assert any("Bluetooth" in f for f in fixes), fixes
+
+
+def test_doctor_detects_a_refused_protocol_change():
+    """A pinned protocol looks identical to a sleeping car unless the refusal
+    is noticed -- and the refusal is the only thing that tells them apart."""
+    stages, causes, fixes = _doctor_with_fake_adapter("wrongproto")
+    proto = _stage(stages, "Protocol negotiation")
+    assert proto.status == "FAIL"
+    assert proto.data.get("refused"), "ATSP refusals were not recorded"
+    assert any("refused to change protocol" in c for c in causes), causes
+    # and explicitly NOT the ignition advice, which would send the user away
+    assert not any("ignition" in c.lower() for c in causes), causes
+
+
+def test_doctor_warns_about_an_unknown_adapter_but_still_connects():
+    stages, causes, _fixes = _doctor_with_fake_adapter("clone")
+    ident = _stage(stages, "Adapter identity")
+    assert ident.status == "WARN"
+    assert _stage(stages, "OBD-II bus").status != "FAIL"
+    assert any("known ELM327 family" in c for c in causes), causes
+
+
+def test_doctor_flags_a_missing_configured_port(tmp_path):
+    from diagnostic.interface import detect_serial_ports
+    from tools.doctor import Doctor
+    doc = Doctor(Config({"adapter": {"type": "elm327_serial",
+                                    "port": "COM99"}}))
+    stage = doc.stage_ports()
+    if detect_serial_ports():
+        # Only assert the diagnosis when the port genuinely is absent.
+        assert stage.status == "FAIL"
+        assert any("COM99 is not present" in p for p in stage.problems)
+
+
+def test_doctor_never_sends_a_write_to_the_vehicle():
+    """The doctor must not be able to put a write on the wire, even if edited."""
+    from tools.doctor import Doctor
+    from diagnostic.uds import ReadOnlyViolationError
+    doc = Doctor(Config({"adapter": {"type": "elm327_serial", "port": "COM3"}}))
+    class _FakeT:
+        sent = []
+        def send_command(self, cmd):
+            _FakeT.sent.append(cmd)
+            return ["OK"]
+    doc.transport = _FakeT()
+    for bad in ("2E1234", "1403FFFF", "2E10", "3101FFFF", "2701"):
+        with pytest.raises(ReadOnlyViolationError):
+            doc._vehicle(bad)
+    assert _FakeT.sent == [], f"a write reached the transport: {_FakeT.sent}"

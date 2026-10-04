@@ -177,6 +177,7 @@ gap check.
 | `python tools/start_scanner.py` | Start/stop the simulated stack (`--status`, `--stop`) |
 | `python main.py seed` | Load example 30-day dataset |
 | `python main.py guard-test` | Verify the read-only UDS guard |
+| `python main.py doctor` | **Work out why the adapter is not connecting** |
 | `python main.py prune --days 90` | Drop stale raw response bytes, keeping every parsed value |
 | `python main.py prune --days 90 --hard` | Delete history rows older than 90 days entirely |
 
@@ -189,6 +190,56 @@ is your call. The default drops only the verbatim vehicle bytes older than
 `--hard` also deletes the rows, and is the only way to reclaim the space
 promptly (it vacuums). Vehicles, ECUs, sessions, DTCs and generated reports are
 never pruned.
+
+## When it will not connect — run the doctor
+
+`NO DATA` from every request looks identical whether the cause is a wrong COM
+port, an unpaired Bluetooth link, a locked port, a pinned protocol or a sleeping
+car. `python main.py doctor` works out which layer stopped answering:
+
+```
+[1/8] Configuration ......... OK      adapter.port COM3
+[3/8] Port open ............. OK      COM3 opened
+[4/8] Adapter identity ...... OK      ATI  Veepeak BLE+ v3.1
+[5/8] Protocol negotiation .. FAIL    ATSP6 CAN 11-bit 500k  no answer
+                                         ATSP7 CAN 29-bit 500k  no answer
+                                         ...
+[6/8] OBD-II bus ............ FAIL    0100 -> NO DATA
+Verdict
+  1. The adapter works, but the car never answered. This is a vehicle-side or
+     power problem, not a tool problem.
+  1. Turn the ignition ON and leave it on.
+  2. Reseat the OBD plug...
+```
+
+It is read-only: every request that could reach the vehicle goes through
+`uds.validate_request`, so the tool cannot transmit a write even if edited.
+
+```
+python main.py doctor                      # configured adapter
+python main.py doctor --port COM7          # try another port
+python main.py doctor --all-ports          # probe every port until one opens
+python main.py doctor --only-config        # check settings without hardware
+python main.py doctor --tcp 127.0.0.1 35000  # simulator / TCP bridge
+```
+
+The three findings worth knowing about, because they are not guessable:
+
+* **Bluetooth SPP on Windows creates two COM ports** — an outgoing one that
+  carries your bytes and an incoming one that does not. The incoming port opens
+  cleanly and returns nothing at all, so it looks like a dead adapter. Stage 2
+  lists every port with its description and flags the one you configured.
+* **A refused `ATSP` is not a sleeping car.** If the adapter answers `?` to a
+  protocol change, it is pinned to whatever protocol it powered up with, and no
+  amount of waiting will help — unplug it fully to reset. Stage 5 records
+  refusals separately from silence precisely because the two otherwise look
+  identical.
+* **Only one process may hold the port.** The dashboard, `main.py collect` and
+  `tools/elm_console.py` all fail to open it while another holds it, and on
+  Bluetooth SPP there is no sharing at all.
+
+For raw bytes, `python tools/elm_console.py --no-init` shows exactly what is
+arriving when the doctor's verdict is not enough.
 
 ## Key limitations
 

@@ -135,14 +135,20 @@ def _build_response(req: bytes, tx: int) -> list[bytes] | None:
         did = (req[1] << 8) | req[2]
         val = _did_value(did)
         if val is None:
-            return [bytes([0x7F, 0x22, 0x31])]  # NRC requestOutOfRange
+            # ISO-TP single frame: PCI length byte first, then 7F <sid> NRC.
+            # A real ELM327 with headers on shows "7E8 03 7F 22 31"; emitting
+            # the 7F bare made reassemble() treat it as an unknown frame type
+            # and return None, so every NRC looked like "no response" instead
+            # of "this ECU is alive but does not have that DID".
+            return [bytes([0x03, 0x7F, 0x22, 0x31])]  # NRC requestOutOfRange
         return _isotp_encode(bytes([0x62, req[1], req[2]]) + val)
     if sid == 0x10:
         return _isotp_encode(
             bytes([0x50, req[1] if len(req) > 1 else 0x01, 0x00, 0x19, 0x01, 0xF4])
         )
     if sid == 0x3E:
-        return [bytes([0x7E, 0x00])]
+        # TesterPresent positive response, single frame with PCI length.
+        return [bytes([0x02, 0x7E, 0x00])]
     if sid == 0x19 and len(req) >= 3 and req[1] == 0x02:
         # one confirmed DTC: U1123 00 (D1 23 00), status 0x2F (charge-mgmt only)
         if tx == 0x765:
