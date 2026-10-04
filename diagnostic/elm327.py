@@ -183,6 +183,11 @@ class Elm327Transport(OBDInterface):
         # CAN bus init and shows whether anything is awake. On a silent bus
         # (vehicle asleep, gateway off) it returns NO DATA — logged, not
         # fatal: the caller surfaces a clear "vehicle did not answer" error.
+        # This is a vehicle request sent straight through the transport, so it
+        # bypasses DiagnosticConnection._transmit and must be validated here --
+        # otherwise it would be a hole in the read-only guarantee.
+        from . import uds
+        uds.validate_request("0100")
         warm = " ".join(self.send_command("0100")).upper()
         if "NO DATA" in warm or "UNABLE" in warm or not warm:
             log.warning(
@@ -194,8 +199,14 @@ class Elm327Transport(OBDInterface):
         log.info("Adapter initialized: %s", self.identity)
         return self.identity
 
-    def set_header(self, tx_id: int) -> None:
-        self.send_command(f"ATSH{tx_id & 0x7FF:03X}")
+    def set_header(self, tx_id: int | None) -> None:
+        # ATSh with no argument CLEARS the filter, which is what functional
+        # OBD-II requests (modes 01/03/09) need. Sending "ATSH000" instead
+        # would address request id 0x000 and silently drop the response.
+        if tx_id is None:
+            self.send_command("ATSH")
+        else:
+            self.send_command(f"ATSH{tx_id & 0x7FF:03X}")
 
     def set_receive_address(self, rx_id: int | None) -> None:
         if rx_id is None:

@@ -23,8 +23,90 @@ def test_blocked_services(sid):
 
 
 def test_allowed_services():
-    for sid in (0x10, 0x22, 0x19, 0x3E):
+    for sid in (0x10, 0x22, 0x19, 0x3E, 0x01, 0x03, 0x09):
         uds.validate_service(sid)  # must not raise
+
+
+# --- read-only enforcement on the transmit path -------------------------------
+class _RecordingTransport:
+    """Minimal transport that records everything handed to the wire."""
+
+    def __init__(self, reply=None):
+        self.written: list[str] = []
+        self._reply = reply or ["NO DATA"]
+
+    def open(self): ...
+    def close(self): ...
+    def initialize(self): return "recording-transport"
+    def description(self): return "recording"
+    def set_header(self, tx):
+        self.written.append("ATSH" if tx is None else f"ATSH{tx:03X}")
+    def set_receive_address(self, rx): self.written.append(f"ATCRA{rx or ''}")
+
+    def send_command(self, command):
+        self.written.append(command)
+        return list(self._reply)
+
+
+def test_transmit_refuses_every_write_service():
+    """Regression: the read-only guarantee was only enforced by build_* helpers
+    that production code never calls, so _transmit put anything on the wire."""
+    from diagnostic.connection import DiagnosticConnection
+    for payload in ("2E0102FFFF", "2701", "14FFFFFF", "31010001", "3800",
+                    "3501", "2F0102", "2803", "2A0101", "85", "87"):
+        t = _RecordingTransport()
+        conn = DiagnosticConnection(t)
+        with pytest.raises(ReadOnlyViolationError):
+            conn._transmit(payload, None, "test")
+        assert payload not in t.written, f"{payload} reached the transport"
+
+
+def test_transmit_allows_read_only_services():
+    from diagnostic.connection import DiagnosticConnection
+    for payload in ("221E3B", "1001", "3E00", "0902", "0105", "03"):
+        t = _RecordingTransport()
+        DiagnosticConnection(t)._transmit(payload, None, "test")
+        assert payload in t.written
+
+
+def test_validate_request_fails_closed():
+    for bad in ("", "ZZ", "nothex", b""):
+        with pytest.raises(ReadOnlyViolationError):
+            uds.validate_request(bad)
+
+
+def test_functional_requests_clear_the_ecu_header():
+    """Mode 01/03/09 are functional: they must not inherit the ATSH/ATCRA of
+    the previous DID read, or the response filter discards the answer."""
+    from diagnostic.connection import DiagnosticConnection
+    from diagnostic.ecus import get_ecu
+
+    t = _RecordingTransport()
+    conn = DiagnosticConnection(t)
+    bms = get_ecu("bat_mgmt")
+    conn._transmit("221E3B", bms, "DID read")
+    assert "ATSH7E5" in t.written
+    t.written.clear()
+    conn._transmit("03", None, "mode 03")
+    # bare ATSH clears the filter; an "ATSH000" would address request id 0
+    assert "ATSH" in t.written and "ATSH000" not in t.written, t.written
+    assert "ATCRA" in t.written, t.written
+
+
+def test_truncated_multiframe_response_is_rejected():
+    """A short multi-frame buffer is a truncated read, not a short value.
+
+    Regression: returning it made u32be() yield 0, so lifetime energy
+    discharged was recorded as exactly 0 kWh and flagged as an anomaly.
+    """
+    # First frame announces 11 bytes; only 4 bytes of payload arrive.
+    assert uds.reassemble([bytes([0x10, 0x0B, 1, 2, 3])]) is None
+    assert uds.reassemble([bytes([0x10, 0x0B, 1, 2, 3]),
+                           bytes([0x21, 4])]) is None
+    # A complete response still reassembles (FF announces 8 data bytes).
+    assert uds.reassemble([bytes([0x10, 0x08, 1, 2, 3]),
+                           bytes([0x21, 4]), bytes([0x22, 5, 6, 7, 8])]) == \
+        bytes([1, 2, 3, 4, 5, 6, 7, 8])
 
 
 def test_no_api_for_writes():

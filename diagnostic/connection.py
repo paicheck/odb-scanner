@@ -38,7 +38,7 @@ class DiagnosticConnection:
             log.exception("Error closing adapter")
 
     # -- addressing ----------------------------------------------------------
-    def _set_ecu(self, tx: int, rx: int | None) -> None:
+    def _set_ecu(self, tx: int | None, rx: int | None) -> None:
         if self._current_ecu != (tx, rx):
             self.t.set_header(tx)
             self.t.set_receive_address(rx)
@@ -46,8 +46,19 @@ class DiagnosticConnection:
 
     # -- core transmit -------------------------------------------------------
     def _transmit(self, hexcmd: str, ecu: ECUSpec | None, purpose: str) -> list[str]:
+        # The single choke point for every request that reaches the vehicle.
+        # validate_request raises ReadOnlyViolationError for anything off the
+        # read-only allow-list, so no caller -- including the ones that build
+        # hex by hand -- can put a write service on the wire.
+        uds.validate_request(hexcmd)
         if ecu is not None:
             self._set_ecu(ecu.tx, ecu.rx)
+        else:
+            # OBD-II modes (01/03/09) are functional requests addressed to
+            # whoever answers them. They must NOT inherit the ATSH/ATCRA of
+            # the previous DID read, or they go out with that request ID and
+            # the response filter drops the answer.
+            self._set_ecu(None, None)
         self.tx_logger(direction="TX", ecu=ecu.key if ecu else None,
                        payload=hexcmd, purpose=purpose)
         lines = self.t.send_command(hexcmd)

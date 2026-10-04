@@ -31,6 +31,13 @@ SERVICES = {
     0x22: "ReadDataByIdentifier",
     0x19: "ReadDTCInformation",
     0x3E: "TesterPresent",
+    # Read-only OBD-II modes. These only ever *read* emissions data, so they
+    # cannot modify the vehicle -- but they are genuinely used (VIN via mode 09,
+    # live PIDs via mode 01, powertrain DTCs via mode 03) and must be on the
+    # allow-list for validate_request() to let them through.
+    0x01: "RequestCurrentPowertrainDiagnosticData (mode 01, read-only)",
+    0x03: "RequestPowertrainDiagnosticInformation (mode 03, read-only)",
+    0x09: "RequestVehicleInformation (mode 09, read-only)",
 }
 
 BLOCKED_SERVICES = {
@@ -103,6 +110,34 @@ def validate_service(service: int) -> None:
             f"Service 0x{service:02X} is not on the read-only allow-list "
             f"{sorted(hex(s) for s in SERVICES)}."
         )
+
+
+def validate_request(payload: str | bytes) -> int:
+    """Validate the service byte of an *outgoing* request. Returns the service.
+
+    This is the enforcement point for the read-only guarantee. `validate_service`
+    on its own was not enough: it was only ever called from the build_* helpers,
+    which production code does not use, so DiagnosticConnection._transmit could
+    put any hex string on the wire. Everything that reaches the vehicle's
+    diagnostic port must pass through here first.
+
+    Fails closed: anything that is not a well-formed, allow-listed service is
+    rejected rather than sent.
+    """
+    hexed = clean_hex(payload) if isinstance(payload, str) else payload.hex()
+    if len(hexed) < 2:
+        raise ReadOnlyViolationError(
+            f"Refusing to transmit an empty or malformed request {hexed!r}: "
+            "this system is strictly READ-ONLY."
+        )
+    try:
+        service = int(hexed[:2], 16)
+    except ValueError:
+        raise ReadOnlyViolationError(
+            f"Refusing to transmit {hexed!r}: first byte is not a service id."
+        )
+    validate_service(service)
+    return service
 
 
 def build_read_did_request(did: int) -> bytes:
@@ -180,6 +215,14 @@ def reassemble(frames: list[bytes]) -> bytes | None:
         seq += 1
         if len(data) >= total:
             break
+    # Completeness check. ISO-TP permits a sender to abort after the FF and
+    # emit fewer CFs than it announced (bus arbitration, ECU timeout), so a
+    # short buffer here is NOT a shorter value -- it is a truncated response.
+    # Returning it would let a missing tail read as real data: u32be() on a
+    # short buffer silently yields 0, so e.g. lifetime energy discharged would
+    # be recorded as exactly 0 kWh and flagged as an anomaly. Fail closed.
+    if len(data) < total:
+        return None
     return bytes(data[:total])
 
 
