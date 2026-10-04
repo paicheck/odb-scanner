@@ -133,16 +133,18 @@ class Repository:
 
     # -- vehicle / ecus ------------------------------------------------------
     def ensure_vehicle(self, vin: str, make="", model="", variant="", year=None) -> int:
-        row = self.conn.execute("SELECT id FROM vehicles WHERE vin=?", (vin,)).fetchone()
-        if row:
-            return row["id"]
-        cur = self.conn.execute(
+        # Insert-then-read rather than read-then-insert: two threads can both
+        # miss the initial SELECT, and the loser's INSERT then died on the UNIQUE
+        # constraint. ON CONFLICT DO NOTHING makes the insert idempotent so the
+        # second thread simply reads back the row the first one created.
+        self.conn.execute(
             "INSERT INTO vehicles(vin, make, model, variant, year, first_seen) "
-            "VALUES (?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?) ON CONFLICT(vin) DO NOTHING",
             (vin, make, model, variant, year, utcnow()),
         )
         self.conn.commit()
-        return cur.lastrowid
+        return self.conn.execute(
+            "SELECT id FROM vehicles WHERE vin=?", (vin,)).fetchone()["id"]
 
     def upsert_ecu(self, vehicle_id: int, key: str, name: str, tx: int, rx: int,
                    status: str, doc_status: str) -> None:
@@ -446,14 +448,19 @@ class Repository:
             )
             dtc_id = row["id"]
         else:
-            cur = self.conn.execute(
-                "INSERT INTO dtcs(vehicle_id, ecu, code, description, categories, "
-                "status, first_seen, last_seen, occurrence_count) "
-                "VALUES (?,?,?,?,?,?,?,?,'1')",
+            # Same reasoning as ensure_vehicle: two threads can both find no
+            # row, and the loser would die on UNIQUE(vehicle_id, ecu, code).
+            self.conn.execute(
+                "INSERT INTO dtcs(vehicle_id, ecu, code, description, "
+                "categories, status, first_seen, last_seen, occurrence_count) "
+                "VALUES (?,?,?,?,?,?,?,?,'1') "
+                "ON CONFLICT(vehicle_id, ecu, code) DO NOTHING",
                 (vehicle_id, ecu, code, description,
                  json.dumps(categories), status, ts, ts),
             )
-            dtc_id = cur.lastrowid
+            dtc_id = self.conn.execute(
+                "SELECT id FROM dtcs WHERE vehicle_id=? AND ecu=? AND code=?",
+                (vehicle_id, ecu, code)).fetchone()["id"]
         self.conn.execute(
             "INSERT INTO dtc_occurrences(dtc_id, ts, freeze_frame) VALUES (?,?,?)",
             (dtc_id, ts, json.dumps(freeze_frame) if freeze_frame else None),

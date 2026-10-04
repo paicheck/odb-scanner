@@ -28,6 +28,23 @@ This system performs **no writes to the vehicle**. Enforced structurally in
   (safety manifest).
 * The LLM has no path to the adapter whatsoever.
 
+### Network exposure — read this before connecting it to anything
+
+The dashboard and the `/ai/ask` endpoint have **no authentication and no CSRF
+protection**. Anyone who can reach the port can read the vehicle history and
+submit prompts to the LLM. This is deliberate for the intended use — a phone or
+tablet on a private Wi-Fi network talking to a laptop running the collector — but
+it is a real boundary, not an oversight:
+
+* Do not port-forward or expose the port to the internet.
+* On shared or untrusted Wi-Fi, bind to localhost only and reach it over an SSH
+  tunnel, or put a reverse proxy with authentication in front of it.
+* The read-only guarantee described above is about the **vehicle**: no request
+  the dashboard can trigger writes to the car. It says nothing about who can
+  reach the dashboard itself.
+* HTML is rendered through Jinja2 with autoescaping on, and no template opts out
+  via `|safe`, so stored vehicle values are not an injection vector.
+
 ## What a cheap ELM327 CAN and CANNOT access on an ID.3
 
 | Data | Standard OBD-II | UDS (this project) |

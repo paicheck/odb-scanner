@@ -714,6 +714,56 @@ def test_dtc_occurrence_count_is_not_a_poll_count(repo):
                              (vid,)).fetchone()["occurrence_count"] == 2
 
 
+def test_concurrent_upserts_do_not_collide(repo):
+    """Two threads reaching ensure_vehicle/upsert_dtc at once must not raise.
+
+    Both read-then-wrote: each could find no row, and the loser's INSERT then
+    failed on the UNIQUE constraint. ON CONFLICT DO NOTHING makes the second
+    insert idempotent instead.
+    """
+    import threading
+    errors = []
+    ids = []
+    lock = threading.Lock()
+
+    def make_vehicle():
+        try:
+            got = repo.ensure_vehicle("WVWZZZE1ZMP087053", year=2021)
+            with lock:
+                ids.append(got)
+        except Exception as exc:            # pragma: no cover - diagnostics
+            errors.append(repr(exc))
+
+    def make_dtc(vid):
+        try:
+            for _ in range(40):
+                repo.upsert_dtc(vid, "2026-09-01T10:00:00+00:00", "0x7E",
+                                "1A2B3C", "test", ["powertrain"])
+        except Exception as exc:            # pragma: no cover - diagnostics
+            errors.append(repr(exc))
+
+    ts = [threading.Thread(target=make_vehicle) for _ in range(4)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert not errors, f"race raised: {errors[:2]}"
+    assert len(set(ids)) == 1, f"vehicle id disagreed: {set(ids)}"
+    vid = ids[0]
+
+    ts = [threading.Thread(target=make_dtc, args=(vid,)) for _ in range(4)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert not errors, f"race raised: {errors[:2]}"
+    assert repo.conn.execute(
+        "SELECT COUNT(*) FROM dtcs WHERE vehicle_id=?", (vid,)).fetchone()[0] == 1
+    assert repo.conn.execute(
+        "SELECT COUNT(*) FROM vehicles WHERE vin=?",
+        ("WVWZZZE1ZMP087053",)).fetchone()[0] == 1
+
+
 def test_concurrent_threads_do_not_lose_writes(repo):
     """The dashboard serves sync handlers on a threadpool while the collector
     thread writes.
