@@ -65,17 +65,59 @@ def zscore(value: float, mean_: float | None, std_: float | None) -> float | Non
     return (value - mean_) / std_
 
 
+def linear_regression_stderr(
+    ys: list[float], xs: list[float] | None = None
+) -> float | None:
+    """Standard error of the slope from an ordinary least-squares fit.
+
+    This is the scale the slope should be judged against: `slope / stderr` is
+    how many standard errors the trend sits from zero, so it answers "is this
+    slope distinguishable from noise?" without guessing a constant. Returns
+    None when it cannot be computed (too few points, no spread in x, or a
+    perfectly straight fit, where the residual is zero).
+    """
+    n = len(ys)
+    if n < 3:
+        return None
+    if xs is None:
+        xs = list(range(n))
+    if len(xs) != n:
+        raise ValueError("xs/ys length mismatch")
+    mx, my = st.fmean(xs), st.fmean(ys)
+    den = sum((x - mx) ** 2 for x in xs)
+    if not den:
+        return None
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den
+    resid = sum((y - (my + slope * (x - mx))) ** 2 for x, y in zip(xs, ys))
+    variance = resid / (n - 2)
+    if variance <= 0:
+        return None
+    return math.sqrt(variance / den)
+
+
 def classify_trend(
-    slope: float | None, noise_std: float | None, threshold: float
+    slope: float | None, noise_std: float | None, threshold: float,
+    slope_stderr: float | None = None
 ) -> str:
     """Classify a series trend: increasing / decreasing / stable / noisy.
 
     `slope` is per-day change in the metric's unit; `threshold` is the
     per-day change considered meaningful (e.g. 0.1 mV/day for cell delta).
+
+    `slope_stderr` is the standard error of that slope, when known. The slope
+    is then called noise when it sits within two standard errors of zero --
+    a real test of the fit, and the only one that compares like with like.
+    `noise_std` alone cannot do that: it is the spread of the raw values
+    (mV per sample) while the slope is mV per day, so the old test divided one
+    by an unexplained 30 and called the result a verdict.
     """
     if slope is None:
         return "insufficient_data"
-    if noise_std is not None and abs(slope) < noise_std / 30.0:
+    if slope_stderr is not None:
+        # 2 sigma: below this the direction is not established by the data.
+        if abs(slope) < 2.0 * slope_stderr:
+            return "noisy (no clear trend)"
+    elif noise_std is not None and abs(slope) < noise_std / 30.0:
         return "noisy (no clear trend)"
     if slope > threshold:
         return "increasing"

@@ -62,7 +62,9 @@ def cell_delta_trend(repo, days: int = 30, vehicle_id: int | None = None,
         slope, trend = None, "insufficient_span"
     else:
         slope = stats.linear_regression_slope(deltas, day_xs)  # mV per day
-        trend = stats.classify_trend(slope, std, threshold=0.1)
+        stderr = stats.linear_regression_stderr(deltas, day_xs)
+        trend = stats.classify_trend(slope, std, threshold=0.1,
+                                     slope_stderr=stderr)
     return {
         "status": "ok",
         "window_days": days,

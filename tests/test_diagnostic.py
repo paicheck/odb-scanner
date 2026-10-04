@@ -205,6 +205,43 @@ def test_classify_trend():
     assert stats.classify_trend(None, None, 0.1) == "insufficient_data"
 
 
+def test_trend_verdict_uses_the_slope_standard_error():
+    """The slope must be judged against its own uncertainty.
+
+    noise_std is the spread of the raw samples (mV) while the slope is mV/day,
+    so dividing one by a constant could not say whether a trend was real.
+    """
+    # The same slope with a tight fit is a real trend; the old noise_std rule
+    # called this "noisy" because 0.5 < 20/30.
+    assert stats.classify_trend(0.5, 20.0, 0.1, slope_stderr=0.1) == "increasing"
+    # ...and with a loose fit the verdict flips, which noise_std alone could not do.
+    assert stats.classify_trend(0.5, 0.0, 0.1, slope_stderr=0.5) == \
+        "noisy (no clear trend)"
+    # Within two standard errors of zero: the direction is not established.
+    assert stats.classify_trend(0.05, 0.0, 0.1, slope_stderr=0.05) == \
+        "noisy (no clear trend)"
+    assert stats.classify_trend(-0.9, 0.0, 0.1, slope_stderr=0.8) == \
+        "noisy (no clear trend)"
+    # 2 sigma above zero is a real signal in the other direction.
+    assert stats.classify_trend(0.5, 0.0, 0.1, slope_stderr=0.1) == "increasing"
+    assert stats.classify_trend(-0.5, 0.0, 0.1, slope_stderr=0.1) == "decreasing"
+
+
+def test_slope_stderr_is_none_when_it_cannot_be_computed():
+    assert stats.linear_regression_stderr([1.0, 2.0]) is None      # n < 3
+    assert stats.linear_regression_stderr([1.0, 2.0, 3.0], [1, 1, 1]) is None
+    # A perfectly straight line has no residual scatter.
+    assert stats.linear_regression_stderr([1.0, 2.0, 3.0, 4.0]) is None
+    got = stats.linear_regression_stderr([1.0, 3.0, 2.0, 5.0, 4.0])
+    assert got is not None and got > 0
+
+
+def test_classify_trend_without_stderr_keeps_the_old_fallback():
+    # Callers that cannot supply a standard error still get an answer.
+    assert stats.classify_trend(0.01, 2.0, 0.1) == "noisy (no clear trend)"
+    assert stats.classify_trend(0.5, 2.0, 0.1) == "increasing"
+
+
 def test_pearson():
     xs = [1, 2, 3, 4, 5]
     assert stats.pearson(xs, [2, 4, 6, 8, 10]) == pytest.approx(1.0)
