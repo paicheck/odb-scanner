@@ -48,6 +48,14 @@ def cell_delta_trend(repo, days: int = 30, vehicle_id: int | None = None,
     mean = stats.mean(deltas)
     std = stats.stdev(deltas)
     day_xs = stats.ts_to_days(ts_list)
+    if len(day_xs) != len(deltas):
+        # ts_to_days() skips unparseable timestamps, so a partial list would no
+        # longer line up with the deltas and the regression would pair the
+        # wrong sample with the wrong time. Without trustworthy timestamps there
+        # is no trend to report.
+        return {"status": "insufficient_data", "samples": len(deltas),
+                "window_days": days,
+                "detail": "unparseable timestamps in window"}
     span_days = (day_xs[-1] - day_xs[0]) if day_xs else 0.0
 
     if span_days < min_span_days:

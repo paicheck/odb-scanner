@@ -798,3 +798,82 @@ def test_slow_pass_excludes_cell_dids():
 
 
 
+
+
+# -- session energy integration --------------------------------------------------
+
+def test_session_energy_is_integrated_not_summed(repo):
+    """Energy must be power integrated over time, not the sum of samples.
+
+    Summing instantaneous kW values and scaling by the duration multiplies the
+    result by the sample count, so a session sampled five times reported five
+    times the energy actually delivered.
+    """
+    from datetime import datetime, timedelta, timezone
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    start = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
+    sid = repo.open_session(vid, start.isoformat(), "AC_DC", 20.0)
+    # 5 samples 15 min apart spanning 1 h at a constant 6 kW -> 6 kWh
+    for i in range(5):
+        ts = (start + timedelta(minutes=15 * i)).isoformat(timespec="seconds")
+        repo.add_charging_sample(sid, ts, power_kw=6.0, battery_temp_c=22.0)
+    repo.close_session(sid, (start + timedelta(hours=1)).isoformat(
+        timespec="seconds"), 80.0)
+    sess = repo.conn.execute("SELECT duration_s, energy_estimate_kwh, "
+                             "max_power_kw FROM charging_sessions WHERE id=?",
+                             (sid,)).fetchone()
+    assert sess["duration_s"] == 3600
+    # 6 kW over 1 h is 6 kWh. The old sum-of-samples formula reported 30.
+    assert sess["energy_estimate_kwh"] == pytest.approx(6.0)
+    assert sess["max_power_kw"] == pytest.approx(6.0)
+
+
+def test_session_energy_handles_uneven_sampling(repo):
+    """Trapezoidal over the real timestamps, so uneven sampling still totals
+    the area under the power curve."""
+    from datetime import datetime, timedelta, timezone
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    start = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
+    sid = repo.open_session(vid, start.isoformat(), "AC_DC", 20.0)
+    mid = start + timedelta(hours=1)
+    end = mid + timedelta(hours=1)
+    for t, p in ((start, 10.0), (mid, 20.0), (end, 20.0)):
+        repo.add_charging_sample(sid, t.isoformat(timespec="seconds"),
+                                 power_kw=p, battery_temp_c=22.0)
+    repo.close_session(sid, end.isoformat(timespec="seconds"), 80.0)
+    got = repo.conn.execute("SELECT energy_estimate_kwh FROM charging_sessions "
+                            "WHERE id=?", (sid,)).fetchone()["energy_estimate_kwh"]
+    # trapezoid: 0-1 h at (10+20)/2 = 15 kWh, 1-2 h at 20 kWh -> 35 kWh
+    assert got == pytest.approx(35.0)
+
+
+def test_session_clock_correction_does_not_go_negative(repo):
+    """An end stamp before the start must not persist negative duration/energy."""
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    sid = repo.open_session(vid, "2026-09-01T12:00:00+00:00", "AC_DC", 20.0)
+    repo.add_charging_sample(sid, "2026-09-01T12:00:00+00:00",
+                              power_kw=50.0, battery_temp_c=22.0)
+    repo.close_session(sid, "2026-09-01T11:00:00+00:00", 80.0)
+    sess = repo.conn.execute("SELECT duration_s, energy_estimate_kwh FROM "
+                             "charging_sessions WHERE id=?", (sid,)).fetchone()
+    assert sess["duration_s"] == 0.0
+    assert sess["energy_estimate_kwh"] is None
+
+
+# -- tolerant timestamp / DTC parsing -------------------------------------------
+
+def test_ts_to_days_handles_mixed_naive_and_aware():
+    # Subtracting a naive from an aware datetime raises TypeError; these must
+    # still convert so a window spanning a timezone change is usable.
+    assert stats.ts_to_days(["2026-01-01T00:00:00",
+                             "2026-01-02T00:00:00+00:00"]) == [0.0, 1.0]
+
+
+def test_ts_to_days_empty_and_malformed_do_not_raise():
+    assert stats.ts_to_days([]) == []
+    assert stats.ts_to_days(["not-a-timestamp", ""]) == []
+
+
+def test_classify_dtc_rejects_empty_input():
+    assert classify_dtc("") == ["unknown"]
+    assert classify_dtc(None) == ["unknown"]

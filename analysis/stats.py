@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 import statistics as st
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def mean(xs: list[float]) -> float | None:
@@ -92,7 +92,27 @@ def rate_of_change(xs: list[float], per_index: float = 1.0) -> float | None:
 
 
 def ts_to_days(ts_list: list[str]) -> list[float]:
-    """Convert ISO timestamps to fractional days since the first sample."""
-    times = [datetime.fromisoformat(t) for t in ts_list]
-    t0 = times[0]
-    return [(t - t0).total_seconds() / 86400.0 for t in times]
+    """Convert ISO timestamps to fractional days since the first sample.
+
+    Tolerant by design, because these come from a database that a long-running
+    collector has been appending to for months:
+      * naive and timezone-aware stamps are normalised to UTC before
+        subtracting -- mixing them raises TypeError otherwise;
+      * unparseable stamps are dropped rather than aborting the whole analysis;
+      * an empty or fully-unparseable input returns [] instead of IndexError.
+    Returns [] rather than raising, so callers get "no data" instead of a
+    traceback from deep inside a regression.
+    """
+    parsed: list[datetime] = []
+    for t in ts_list:
+        try:
+            dt = datetime.fromisoformat(t)
+        except (TypeError, ValueError):
+            continue
+        # Treat a naive stamp as UTC so it can be compared with aware ones.
+        parsed.append(dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None
+                      else dt.astimezone(timezone.utc))
+    if not parsed:
+        return []
+    t0 = min(parsed)
+    return [(t - t0).total_seconds() / 86400.0 for t in parsed]

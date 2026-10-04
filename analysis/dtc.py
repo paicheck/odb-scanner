@@ -37,6 +37,11 @@ KNOWN_VAG_CODES: dict[str, tuple[str, list[str]]] = {
 
 
 def classify_dtc(code: str, status_byte: int | None = None) -> list[str]:
+    # Codes arrive from the adapter and the database, so an empty or truncated
+    # string is reachable; code[:1] on "" would raise IndexError and take the
+    # whole DTC page down.
+    if not code or not isinstance(code, str):
+        return ["unknown"]
     cats: list[str] = []
     known = KNOWN_VAG_CODES.get(code)
     if known:

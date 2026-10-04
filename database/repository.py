@@ -225,15 +225,32 @@ class Repository:
             "SELECT * FROM charging_sessions WHERE id=?", (session_id,)
         ).fetchone()
         samples = self.conn.execute(
-            "SELECT power_kw, battery_temp_c FROM charging_samples "
+            "SELECT ts, power_kw, battery_temp_c FROM charging_samples "
             "WHERE session_id=? ORDER BY ts", (session_id,)
         ).fetchall()
         powers = [s["power_kw"] for s in samples if s["power_kw"] is not None]
         temps = [s["battery_temp_c"] for s in samples
                  if s["battery_temp_c"] is not None]
         duration = (_parse_ts(ts) - _parse_ts(sess["started_at"])).total_seconds()
-        energy = (sum(p for p in powers if p > 0) * duration / 3600.0
-                  if powers else None)
+        # A clock correction can put the end before the start. Persisting that
+        # would store a negative duration and a negative energy for ever.
+        duration = max(0.0, duration)
+        # Integrate power over time to get kWh. Summing the samples and scaling
+        # by the duration is dimensionally wrong -- it multiplies by the number
+        # of samples, so a 12-sample session reported ~12x the energy actually
+        # delivered. Trapezoidal over the real sample timestamps, so uneven
+        # sampling does not distort the total.
+        pts = [(_parse_ts(s["ts"]), s["power_kw"]) for s in samples
+               if s["power_kw"] is not None]
+        energy = None
+        if len(pts) >= 2 and duration > 0:
+            energy = 0.0
+            for (t0, p0), (t1, p1) in zip(pts, pts[1:]):
+                span_h = (t1 - t0).total_seconds() / 3600.0
+                if span_h > 0:
+                    energy += (p0 + p1) / 2.0 * span_h
+        elif pts and duration > 0:
+            energy = pts[0][1] * duration / 3600.0
         self.conn.execute(
             "UPDATE charging_sessions SET ended_at=?, end_soc=?, duration_s=?, "
             "energy_estimate_kwh=?, max_power_kw=?, avg_battery_temp_c=?, "

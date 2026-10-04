@@ -26,7 +26,8 @@ _templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 def create_app(cfg: Config) -> FastAPI:
     repo = Repository(cfg.db_path)
     svc = AnalysisService(cfg, repo)
-    app = FastAPI(title="ID.3 Diagnostic System", docs_url=None, redoc_url=None)
+    app = FastAPI(title="ID.3 Diagnostic System", docs_url=None, redoc_url=None,
+                  openapi_url=None)
 
     # Analysis windows come from config so the dashboard, the charts and the
     # CLI agree. Previously each route hardcoded its own 30/90 and silently
