@@ -158,6 +158,24 @@ def _build_response(req: bytes, tx: int) -> list[bytes] | None:
         return _isotp_encode(
             bytes([0x59, 0x02, 0xFF, 0xD1, 0x23, 0x00, 0x2F])
         )
+    if sid == 0x19 and len(req) >= 3 and req[1] == 0x04:
+        # reportDTCSnapshotRecordNumber: the demo DTC (D1 23 00) carries a
+        # snapshot -- record 01 with one identifier (pack voltage DID
+        # 0x1E3B at the live DID's scale) -- so freeze-frame data flows
+        # through the whole pipeline. Codes the simulator does not store
+        # get NRC 0x31, like a real ECU.
+        if len(req) < 6:
+            return [bytes([0x03, 0x7F, 0x19, 0x13])]
+        # request layout: 19 04 <DTC(3)> <recordNumber> -- the DTC starts at
+        # index 2 (unlike the RESPONSE, where a statusAvailabilityMask byte
+        # shifts it to index 3).
+        if req[2:5] == bytes([0xD1, 0x23, 0x00]):
+            snap = (bytes([0xD1, 0x23, 0x00, 0x2F,   # DTC + status
+                           0x01, 0x01,               # record 01, 1 identifier
+                           0x1E, 0x3B])              # DID: pack voltage
+                    + _enc_u16(pack_voltage() * 64))
+            return _isotp_encode(bytes([0x59, 0x04, 0xFF]) + snap)
+        return [bytes([0x03, 0x7F, 0x19, 0x31])]     # requestOutOfRange
     if sid == 0x01 and len(req) >= 2:  # standard OBD-II via motor ECU
         pid = req[1]
         if pid == 0x00:

@@ -179,3 +179,85 @@ def parse_uds_dtc_response(payload: bytes) -> list[dict]:
         out.append({"code": decode_vag_dtc(b1, b2, b3), "status_byte": status})
     return out
 
+
+def encode_vag_dtc(code: str) -> bytes:
+    """Inverse of decode_vag_dtc: 'U112300' -> b'\\xD1\\x23\\x00'.
+
+    Raises ValueError on anything malformed. Fail closed: these bytes go
+    on the wire inside a 0x19 0x04 request, so a guessed encoding is
+    worse than no request at all.
+    """
+    inverse = {letter: bits for bits, letter in DTC_LETTERS.items()}
+    c = (code or "").strip().upper()
+    if len(c) != 7 or c[0] not in inverse:
+        raise ValueError(f"Malformed DTC code: {code!r}")
+    try:
+        d1 = int(c[1])
+        if not 0 <= d1 <= 3:
+            raise ValueError(f"DTC digit out of range: {code!r}")
+        b1 = (inverse[c[0]] << 6) | (d1 << 4) | int(c[2], 16)
+        b2 = (int(c[3], 16) << 4) | int(c[4], 16)
+        b3 = int(c[5:7], 16)
+    except ValueError as exc:
+        raise ValueError(f"Malformed DTC code: {code!r}") from exc
+    return bytes([b1, b2, b3])
+
+
+def parse_uds_dtc_snapshot_response(payload: bytes) -> list[dict]:
+    """Parse UDS 0x19 0x04 (reportDTCSnapshotRecordNumber) positive response.
+
+    Layout [documented ISO 14229]: 59 04 <statusAvailabilityMask>, then
+    DTC(3) <statusOfDTC>(1), then the snapshot records for that DTC:
+    <recordNumber>(1) <numberOfIdentifiers>(1) and identifier blocks of
+    DID(2) + data. A recordNumber of 0xFF means the ECU stores no
+    snapshot for this DTC.
+
+    Snapshot DATA content and per-identifier lengths are
+    manufacturer-defined (VAG does not frame them), so only
+    single-identifier records can be split reliably; everything else is
+    preserved raw rather than guessed. Requests are per-DTC, so only the
+    first DTC block is parsed (mask-based multi-DTC reads are not used).
+
+    Returns [{'code': str, 'status_byte': int, 'records':
+              [{'record': int, 'identifiers': [int, ...],
+                'data': {did_hex: raw_hex} | None, 'raw': str}]}]
+    """
+    if len(payload) < 7 or payload[0] != 0x59 or payload[1] != 0x04:
+        return []
+    entry = {"code": decode_vag_dtc(payload[3], payload[4], payload[5]),
+             "status_byte": payload[6], "records": []}
+    body = payload
+    i = 7
+    while i < len(body):
+        record = body[i]
+        i += 1
+        if record == 0xFF:          # ISO: no snapshot records stored
+            break
+        if i >= len(body):
+            break
+        num_ids = body[i]
+        i += 1
+        identifiers: list[int] = []
+        for _ in range(num_ids):
+            if i + 2 > len(body):
+                break
+            identifiers.append((body[i] << 8) | body[i + 1])
+            i += 2
+        rest = body[i:].hex().upper()
+        data = None
+        if num_ids == 1 and identifiers and rest:
+            # Single identifier: the remaining bytes are unambiguously its
+            # data (nothing else can follow within this DTC's record).
+            data = {f"{identifiers[0]:04X}": rest}
+            i = len(body)
+        entry["records"].append({"record": record,
+                                 "identifiers": identifiers,
+                                 "data": data, "raw": rest})
+        if num_ids != 1:
+            # Multiple identifiers with unframed data: the next record
+            # boundary cannot be located without guessing. Stop here; the
+            # raw bytes are preserved (and the full response lives in the
+            # tx_log anyway).
+            break
+    return [entry]
+

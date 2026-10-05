@@ -161,3 +161,33 @@ class DiagnosticConnection:
             nrc = negatives[0][2] if len(negatives[0]) > 2 else 0
             raise NegativeResponseError(0x19, nrc)
         raise CommunicationError(f"No response to DTC read from {ecu.key}")
+
+    def read_dtc_snapshots(self, code: str) -> dict[int | None, list[dict]]:
+        """UDS 0x19 0x04 reportDTCSnapshotRecordNumber for one DTC code.
+
+        Sent functionally with record number 0xFF (all records), so every
+        ECU that has this DTC stored answers with ITS OWN snapshot -- the
+        conditions the ECU recorded at fault time. Returns reassembled
+        snapshot entries keyed by responding ECU header (empty dict when
+        nobody answered or everybody refused; malformed codes raise
+        CommunicationError rather than guessing wire bytes).
+
+        Read-only: 0x19 0x04 is a pure read of stored data.
+        """
+        try:
+            dtc = obd2.encode_vag_dtc(code)
+        except ValueError as exc:
+            raise CommunicationError(str(exc)) from exc
+        lines = self._transmit(
+            f"1904{dtc.hex().upper()}FF", None,
+            f"UDS 0x19 0x04 reportDTCSnapshotRecordNumber for {code}, all "
+            f"records - read-only (ECU's stored conditions at fault time)",
+        )
+        out: dict[int | None, list[dict]] = {}
+        for src, payload in uds.payloads_by_source(lines).items():
+            if (payload and len(payload) >= 2
+                    and payload[0] == 0x59 and payload[1] == 0x04):
+                records = obd2.parse_uds_dtc_snapshot_response(payload)
+                if records:
+                    out[src] = records
+        return out

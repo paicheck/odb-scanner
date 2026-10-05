@@ -73,6 +73,11 @@ class Collector:
         # ECU that actually answered that key's probe (functional addressing,
         # so the answer's response header is the only identity we get).
         self.ecu_addresses: dict[str, int] = {}
+        # Per-run cache of 0x19 0x04 snapshot reads, keyed by DTC code. One
+        # functional read per code per run: a code nobody stores costs a
+        # full adapter.timeout on every cycle otherwise, and the stored-DTC
+        # set rarely changes within a run.
+        self._dtc_snapshots: dict[str, dict] = {}
 
     def _adopt_open_session(self) -> None:
         """Continue a session a previous run left open.
@@ -453,20 +458,40 @@ class Collector:
         except CommunicationError as exc:
             log.debug("UDS DTC read failed: %s", exc)
             payloads = {}
+        uds_items: list[tuple[int | None, str, dict]] = []
         for src, payload in payloads.items():
             if not payload or payload[0] != 0x59:
                 continue
-            ecu_label = self._ecu_label_for_source(src)
+            label = self._ecu_label_for_source(src)
             for item in obd2.parse_uds_dtc_response(payload):
-                code = item["code"]
-                desc, _ = dtc_analysis.describe(code)
-                cats = dtc_analysis.classify_dtc(code, item.get("status_byte"))
-                self.repo.upsert_dtc(self.vehicle_id, ts, ecu_label, code, desc,
-                                     cats, status="confirmed",
-                                     freeze_frame={"status_byte":
-                                                   item.get("status_byte")})
-                all_dtcs.append({"ecu": ecu_label, "code": code,
-                                 "status_byte": item.get("status_byte")})
+                uds_items.append((src, label, item))
+        # Freeze-frame snapshots (0x19 0x04): one functional read per unique
+        # code, attempted once per run (see _dtc_snapshots). Each ECU that
+        # stores the code answers with its own snapshot; attribution by
+        # response header attaches it to that ECU's DTC row.
+        for code in dict.fromkeys(item["code"] for _, _, item in uds_items):
+            if code in self._dtc_snapshots:
+                continue
+            try:
+                self._dtc_snapshots[code] = self.conn.read_dtc_snapshots(code)
+            except CommunicationError as exc:
+                log.debug("Snapshot read failed for %s: %s", code, exc)
+                self._dtc_snapshots[code] = {}
+        for src, label, item in uds_items:
+            code = item["code"]
+            desc, _ = dtc_analysis.describe(code)
+            cats = dtc_analysis.classify_dtc(code, item.get("status_byte"))
+            freeze = {"status_byte": item.get("status_byte")}
+            records = self._dtc_snapshots.get(code, {}).get(src)
+            if records:
+                freeze["snapshot"] = records
+            self.repo.upsert_dtc(self.vehicle_id, ts, label, code, desc,
+                                 cats, status="confirmed", freeze_frame=freeze)
+            entry = {"ecu": label, "code": code,
+                     "status_byte": item.get("status_byte")}
+            if records:
+                entry["snapshot"] = records
+            all_dtcs.append(entry)
         return all_dtcs
 
     # -- main loop ----------------------------------------------------------------

@@ -84,18 +84,32 @@ def describe(code: str) -> tuple[str, bool]:
     return "No public description available (code recorded, raw data preserved)", False
 
 
-def dtc_summary(dtc_rows) -> dict:
-    """Aggregate a repo.dtc_list() result for dashboard/LLM."""
+def dtc_summary(dtc_rows, freeze_frames: dict | None = None) -> dict:
+    """Aggregate a repo.dtc_list() result for dashboard/LLM.
+
+    `freeze_frames` is an optional repo.latest_freeze_frames() mapping
+    {(ecu, code): freeze-frame dict}; when present, each code's entry
+    carries the latest snapshot records (flattened) so the dashboard and
+    the LLM context can show what the ECU recorded at fault time.
+    """
     out = {"total": len(dtc_rows), "by_category": {}, "codes": []}
     for r in dtc_rows:
         cats = json.loads(r["categories"]) if isinstance(r["categories"], str) \
             else list(r["categories"])
         for c in cats:
             out["by_category"][c] = out["by_category"].get(c, 0) + 1
-        out["codes"].append({
+        entry = {
             "ecu": r["ecu"], "code": r["code"],
             "description": r["description"], "categories": cats,
             "first_seen": r["first_seen"], "last_seen": r["last_seen"],
             "count": r["occurrence_count"],
-        })
+        }
+        ff = (freeze_frames or {}).get((r["ecu"], r["code"]))
+        if ff:
+            entry["status_byte"] = ff.get("status_byte")
+            entry["snapshot_records"] = [
+                rec for e in ff.get("snapshot") or []
+                for rec in e.get("records") or []
+            ]
+        out["codes"].append(entry)
     return out

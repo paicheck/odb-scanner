@@ -474,6 +474,30 @@ class Repository:
             (vehicle_id,),
         ).fetchall()
 
+    def latest_freeze_frames(self, vehicle_id: int) -> dict:
+        """Most recent non-empty freeze-frame JSON per (ecu, code).
+
+        Freeze frames live on dtc_occurrences (one per sighting); the
+        newest one carries the latest snapshot the ECU reported for that
+        DTC, which is what the dashboard and the LLM context want.
+        """
+        rows = self.conn.execute(
+            "SELECT d.ecu, d.code, o.freeze_frame FROM dtc_occurrences o "
+            "JOIN dtcs d ON d.id=o.dtc_id "
+            "WHERE d.vehicle_id=? AND o.freeze_frame IS NOT NULL "
+            "ORDER BY o.ts ASC",
+            (vehicle_id,),
+        ).fetchall()
+        out: dict = {}
+        for r in rows:
+            try:
+                parsed = json.loads(r["freeze_frame"])
+            except (TypeError, ValueError):
+                continue
+            if parsed:
+                out[(r["ecu"], r["code"])] = parsed  # ASC order: last wins
+        return out
+
     def dtc_occurrences(self, vehicle_id: int, since: str | None = None):
         sql = ("SELECT o.*, d.code, d.ecu, d.categories FROM dtc_occurrences o "
                "JOIN dtcs d ON d.id=o.dtc_id WHERE d.vehicle_id=?")

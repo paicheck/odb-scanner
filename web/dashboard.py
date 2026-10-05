@@ -80,7 +80,9 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/dtcs", response_class=HTMLResponse)
     def dtc_page(request: Request):
         _, vid = vehicle_and_id()
-        summary = dtc_analysis.dtc_summary(repo.dtc_list(vid)) if vid else {}
+        summary = (dtc_analysis.dtc_summary(repo.dtc_list(vid),
+                                            repo.latest_freeze_frames(vid))
+                   if vid else {})
         return render("dtcs.html", request, dtcs=summary)
 
     @app.get("/charging", response_class=HTMLResponse)

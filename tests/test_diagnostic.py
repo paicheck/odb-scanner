@@ -201,6 +201,57 @@ def test_read_did_accepts_any_functional_responder():
     assert refused.try_read_did(get_ecu("bat_mgmt"), 0xFFFF) is None
 
 
+# --- DTC freeze-frame snapshots (UDS 0x19 0x04) ------------------------------
+def test_encode_vag_dtc_roundtrip():
+    for raw in (bytes([0xD1, 0x23, 0x00]), bytes([0x58, 0xAB, 0xCD]),
+                bytes([0x01, 0x02, 0x03])):
+        assert obd2.encode_vag_dtc(obd2.decode_vag_dtc(*raw)) == raw
+    # malformed codes are refused, never guessed onto the wire
+    for bad in ("", "U1123", "X112300", "U412300", "U1123GG", None):
+        with pytest.raises(ValueError):
+            obd2.encode_vag_dtc(bad)
+
+
+def test_parse_uds_dtc_snapshot_response():
+    # 59 04 FF | D1 23 00 2F | rec 01, 1 identifier | DID 1E3B | data 58A0
+    out = obd2.parse_uds_dtc_snapshot_response(
+        bytes.fromhex("5904FFD123002F01011E3B58A0"))
+    assert out == [{"code": "U112300", "status_byte": 0x2F,
+                    "records": [{"record": 1, "identifiers": [0x1E3B],
+                                 "data": {"1E3B": "58A0"},
+                                 "raw": "58A0"}]}]
+    # record number 0xFF: ECU stores no snapshot for this DTC
+    none_recs = obd2.parse_uds_dtc_snapshot_response(
+        bytes.fromhex("5904FFD123002FFF"))
+    assert none_recs[0]["records"] == []
+    # truncated positives and negatives parse to nothing
+    assert obd2.parse_uds_dtc_snapshot_response(bytes.fromhex("5904FF")) == []
+    assert obd2.parse_uds_dtc_snapshot_response(bytes.fromhex("7F1931")) == []
+
+
+def test_read_dtc_snapshots_functional():
+    from diagnostic.connection import DiagnosticConnection
+    from diagnostic.interface import CommunicationError
+
+    # one ECU answers with a multi-frame snapshot (29-bit headers)
+    lines = ["18DAF10A100D5904FFD12300",
+             "18DAF10A212F01011E3B58A0"]
+    c = DiagnosticConnection(_RecordingTransport(lines))
+    snaps = c.read_dtc_snapshots("U112300")
+    assert list(snaps) == [0x18DAF10A]
+    assert snaps[0x18DAF10A][0]["records"][0]["data"] == {"1E3B": "58A0"}
+
+    # malformed code: refused before anything reaches the wire
+    t = _RecordingTransport(lines)
+    with pytest.raises(CommunicationError):
+        DiagnosticConnection(t).read_dtc_snapshots("banana")
+    assert not [w for w in t.written if w.upper().startswith("19")]
+
+    # everybody refuses (NRC 0x31) -> empty dict, no exception
+    c3 = DiagnosticConnection(_RecordingTransport(["18DAF10A037F1931"]))
+    assert c3.read_dtc_snapshots("U112300") == {}
+
+
 def test_negative_response():
     with pytest.raises(uds.NegativeResponseError) as exc:
         uds.expect_positive(bytes([0x7F, 0x22, 0x31]), 0x22)
@@ -999,6 +1050,14 @@ def test_simulator_end_to_end():
         mgmt = get_ecu("chg_mgmt")
         dtcs = c.read_dtcs_uds(mgmt)
         assert dtcs[0]["code"] == "U112300"
+        # freeze-frame snapshot for the stored DTC; unknown codes get NRC
+        snaps = c.read_dtc_snapshots("U112300")
+        assert snaps, "simulator must snapshot its stored DTC"
+        entry = next(iter(snaps.values()))[0]
+        assert entry["code"] == "U112300"
+        rec = entry["records"][0]
+        assert rec["identifiers"] == [0x1E3B] and rec["data"]
+        assert c.read_dtc_snapshots("P0A8000") == {}
         # unavailable DID -> NRC 0x31 -> try_read_did returns None
         assert c.try_read_did(bms, 0xFFFF) is None
         c.close()
