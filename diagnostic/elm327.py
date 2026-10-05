@@ -62,6 +62,10 @@ class Elm327Transport(OBDInterface):
         self._opened = False
         self.identity = "unknown"
         self._addressing_warned = False
+        # VAG MEB physical addressing state (see _negotiate_meb / set_module)
+        self.meb_addressing = False
+        self._meb_module: int | None = None   # None = functional addressing
+        self._caf = 1                          # CAN auto-formatting on/off
 
     # -- lifecycle ----------------------------------------------------------
     @property
@@ -183,6 +187,13 @@ class Elm327Transport(OBDInterface):
         return text
 
     # -- ELM327 protocol ----------------------------------------------------
+    def _base_init(self) -> None:
+        for cmd in ("ATE0", "ATL0", "ATS0", "ATH1", "ATAT1",
+                    f"ATSP{PINNED_PROTOCOL}", "ATCAF1"):
+            self.send_command(cmd)
+        self._caf = 1
+        self._meb_module = None
+
     def initialize(self) -> str:
         """Bring the adapter into a known state. Returns adapter identity."""
         time.sleep(0.3)
@@ -190,9 +201,8 @@ class Elm327Transport(OBDInterface):
         time.sleep(0.3)
         resp = self.send_command("ATI")
         self.identity = " ".join(resp) if resp else "unknown"
-        for cmd in ("ATE0", "ATL0", "ATS0", "ATH1", "ATAT1",
-                    f"ATSP{PINNED_PROTOCOL}", "ATCAF1"):
-            self.send_command(cmd)
+        self._base_init()
+        self._negotiate_meb()
         # OBD-II warm-up: '0100' (supported-PID request) makes the ELM finish
         # CAN bus init and shows whether anything is awake. On a silent bus
         # (vehicle asleep, gateway off) it returns NO DATA — logged, not
@@ -244,6 +254,82 @@ class Elm327Transport(OBDInterface):
         until ATZ. Receive everything and select in software
         (uds.payloads_by_source) instead.
         """
+
+    # -- VAG MEB physical addressing ---------------------------------------
+    def _negotiate_meb(self) -> None:
+        """Probe whether the adapter accepts VAG MEB module addressing.
+
+        MEB modules (BMS 0x17FC007B, DC/DC 0x17FC00B9, ...) answer at 29-bit
+        ids built from a priority byte plus a 6-digit address. ABRP's MEB
+        profile (ev-obd-pids) drives ELM327-class adapters with:
+
+            ATCP 17          # priority byte
+            ATSH FC007B      # completed to 0x17FC007B
+
+        Both are needed because the field clone refuses the 8-digit ATSH a
+        29-bit id would otherwise require. On success the functional header
+        is restored (CP 18 + DB33F1) so OBD-II modes keep working; if that
+        restore is refused the adapter is reset with ATZ. Failure of either
+        probe just leaves the transport in functional-only mode.
+        """
+        if any("?" in r for r in self.send_command("ATCP 17")):
+            log.info("Adapter refused 'ATCP 17' - MEB physical addressing "
+                     "unavailable, staying functional-only")
+            self.send_command("ATCP 18")
+            return
+        if any("?" in r for r in self.send_command("ATSH FC007B")):
+            log.info("Adapter refused 6-digit 'ATSH FC007B' - staying "
+                     "functional-only")
+            self.send_command("ATCP 18")
+            return
+        self.meb_addressing = True
+        self._meb_module = 0x17FC007B
+        self.send_command("ATCRA0")     # best-effort accept-all filter
+        if not self._restore_functional():
+            log.warning("Functional header restore refused - resetting adapter")
+            self.send_command("ATZ")
+            time.sleep(0.3)
+            self._base_init()
+        log.info("MEB physical addressing available (ATCP + 6-digit ATSH)")
+
+    def _restore_functional(self) -> bool:
+        """Point the adapter back at the functional OBD header (0x18DB33F1)."""
+        resp = self.send_command("ATCP 18") + self.send_command("ATSH DB33F1")
+        if any("?" in r for r in resp):
+            return False
+        self._meb_module = None
+        return True
+
+    def set_module(self, tx29: int | None) -> bool:
+        """Switch addressing between functional (None) and one MEB module.
+
+        Also flips CAN auto-formatting: module reads use ATCAF0 with a
+        hand-built ISO-TP single frame (ABRP's proven wire form), while
+        functional OBD-II stays on ATCAF1 where bare '0100' is expected.
+        Returns False when the switch was refused and the caller should
+        fall back to functional addressing.
+        """
+        if not self.meb_addressing:
+            return tx29 is None
+        if tx29 == self._meb_module:
+            return True
+        if tx29 is None:
+            if not self._restore_functional():
+                return False
+            if self._caf != 1:
+                self.send_command("ATCAF1")
+                self._caf = 1
+            return True
+        resp = self.send_command(f"ATCP {(tx29 >> 24) & 0xFF:02X}")
+        resp += self.send_command(f"ATSH {tx29 & 0xFFFFFF:06X}")
+        if any("?" in r for r in resp):
+            log.warning("Adapter refused module header %08X", tx29)
+            return False
+        if self._caf != 0:
+            self.send_command("ATCAF0")
+            self._caf = 0
+        self._meb_module = tx29
+        return True
 
     def description(self) -> str:
         return f"{self.name} ({self.identity})"

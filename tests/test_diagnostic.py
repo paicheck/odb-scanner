@@ -119,6 +119,231 @@ def test_no_api_for_writes():
                       "build_tester_present"]
 
 
+# --- VAG MEB physical addressing ---------------------------------------------
+def test_meb_29bit_header_is_stripped_and_attributed():
+    """17FExxxx module responses must parse like the 18DA OBD ones.
+
+    The 29-bit branch used to key on the "18D" prefix only, which happens to
+    be true of OBD functional ids (18DAF1xx) but not of MEB module traffic
+    (17FC007B requests / 17FE007B responses). Those lines fell through to
+    "header off" and every BMS read came back as an undecodable frame.
+    """
+    frame, header = uds.line_to_frame_header("17FE007B0662028CCBAAAAAA")
+    assert frame == bytes.fromhex("0662028CCBAAAAAA")
+    assert header == 0x17FE007B
+    assert uds.source_label(0x17FE007B) == "0x7B"
+    # 17xx multi-frame (energy counters, 8 data bytes -> FF/CF/CF)
+    lines = ["17FE007B" + f.hex().upper()
+             for f in uds.encode_isotp(bytes(range(8)))]
+    assert uds.parse_elm_lines(lines) == bytes(range(8))
+
+
+def test_18db_prefix_still_strips_and_headerless_lines_stay_payloads():
+    frame, header = uds.line_to_frame_header("18DB33F106410098180001")
+    assert header == 0x18DB33F1
+    assert frame == bytes.fromhex("06410098180001")
+    # Header-off line: the whole line is the frame, no CAN id to attribute.
+    assert uds.line_to_frame_header("06421E3B0FA0AA") == \
+        (bytes.fromhex("06421E3B0FA0AA"), None)
+
+
+class _StubTransport:
+    """Stands in for a serial link: records commands, scripts replies."""
+
+    def __init__(self, refusals=(), reply=None):
+        self.sent: list[str] = []
+        self.refusals = set(refusals)
+        self.reply = list(reply) if reply else ["OK"]
+
+    def send_command(self, command):
+        self.sent.append(command)
+        return ["?"] if command in self.refusals else list(self.reply)
+
+
+def test_meb_negotiation_sets_module_mode_and_restores_functional():
+    from diagnostic.elm327 import Elm327Transport
+
+    stub = _StubTransport()
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t._negotiate_meb()
+
+    assert t.meb_addressing is True
+    assert "ATCP 17" in stub.sent and "ATSH FC007B" in stub.sent
+    # Functional addressing must be restored, or every OBD-II mode 01/09
+    # read would be addressed to the BMS instead of the whole bus.
+    assert "ATCP 18" in stub.sent and "ATSH DB33F1" in stub.sent
+    assert stub.sent.index("ATSH DB33F1") > stub.sent.index("ATSH FC007B")
+
+
+def test_meb_negotiation_refused_stays_functional():
+    stub = _StubTransport(refusals=("ATCP 17",))
+    from diagnostic.elm327 import Elm327Transport
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t._negotiate_meb()
+
+    assert t.meb_addressing is False
+    # Must not leave the adapter on a header nothing answers.
+    assert "ATSH FC007B" not in stub.sent
+    assert t.set_module(0x17FC007B) is False
+
+
+def test_set_module_switches_header_and_caf_mode():
+    stub = _StubTransport()
+    from diagnostic.elm327 import Elm327Transport
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t.meb_addressing = True
+    t._meb_module = None
+
+    assert t.set_module(0x17FC007B) is True
+    assert "ATSH FC007B" in stub.sent
+    # Module reads are hand-framed (ATCAF0); the ELM must not re-frame them.
+    assert "ATCAF0" in stub.sent
+
+    stub.sent.clear()
+    assert t.set_module(0x17FC007B) is True
+    assert stub.sent == [], "already on that module: no traffic expected"
+
+    stub.sent.clear()
+    assert t.set_module(None) is True
+    assert "ATSH DB33F1" in stub.sent
+    assert "ATCAF1" in stub.sent, "OBD-II requests need auto-formatting back on"
+
+
+def test_meb_did_read_routes_to_module_and_hand_frames_it():
+    """A read for an ECU with a tx29 must go out as a CAF0 single frame."""
+    stub = _StubTransport(reply=["17FE007B0662028CCBAAAA"])
+    from diagnostic.elm327 import Elm327Transport
+    from diagnostic.connection import DiagnosticConnection
+    from diagnostic.ecus import get_ecu
+
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t.meb_addressing = True
+    t._meb_module = None
+    conn = DiagnosticConnection(t)
+    raw = conn.read_did(get_ecu("bat_mgmt"), 0x028C)
+
+    # Single frame: 62 <DID> <data...>, PCI length 0x06 in front of it.
+    assert raw == bytes.fromhex("CBAAAA")
+    on_wire = [c for c in stub.sent if not c.startswith("AT")]
+    assert on_wire == ["0322028C55555555"], on_wire
+
+
+def test_functional_read_switches_back_off_the_module():
+    stub = _StubTransport(reply=["18DAF10A03410D26"])
+    from diagnostic.elm327 import Elm327Transport
+    from diagnostic.connection import DiagnosticConnection
+
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t.meb_addressing = True
+    t._meb_module = 0x17FC007B          # left on the BMS by a previous read
+    t._caf = 0
+    conn = DiagnosticConnection(t)
+    conn.mode01(0x0D)
+
+    assert "ATCP 18" in stub.sent and "ATSH DB33F1" in stub.sent
+    on_wire = [c for c in stub.sent if not c.startswith("AT")]
+    assert on_wire == ["010D"], on_wire
+
+
+def test_meb_decoders_match_car_scanner_values():
+    """Every MEB scale factor is pinned to a value from the car's own log.
+
+    Raw bytes come from a Car Scanner ELM OBD2 capture of the ID.3 (2026-10-05);
+    expected values are what Car Scanner displayed. If a formula drifts, this
+    test fails instead of the dashboard showing plausible nonsense.
+    """
+    from decoders.registry import build_default_registry
+
+    reg = build_default_registry("meb")
+
+    def val(key, raw):
+        if isinstance(raw, (bytes, bytearray)):
+            data = bytes(raw)
+        else:
+            data = bytes.fromhex(raw)
+        return reg.get(key).decode_value(data)
+
+    assert val("soc_abs", "CB") == pytest.approx(81.2)       # BMS 81.2 %
+    assert val("soc_normal", "CB") == pytest.approx(83.63, abs=0.01)  # dash 83.63 %
+    assert val("pack_voltage", "06BD") == pytest.approx(431.25)  # raw 1725
+    assert val("pack_current", "00024AB6") == pytest.approx(1.98)
+    assert val("cell_voltage_max", "3FF9") == pytest.approx(3.99829)
+    assert val("cell_v_000", "0BB5") == pytest.approx(3.997)   # u16/1000 + 1
+    assert val("battery_temp", "78") == pytest.approx(20.0)
+    assert val("bat_temp_max", "0538") == pytest.approx(20.875)
+    assert val("bat_temp_min", "04E8") == pytest.approx(19.625)
+    assert val("dyn_charge_limit", "0429") == pytest.approx(213.0)
+    assert val("dcdc_current", "00E1") == pytest.approx(14.0625)
+    assert val("dcdc_voltage", "1C33") == pytest.approx(14.0996)
+    assert val("cell_t_00", "01E0") == pytest.approx(20.0)
+    assert val("charge_mode", "04") == 1 and val("charge_mode", "06") == 2
+    assert val("charge_mode", "00") == 0 and val("op_mode", "01") == 1
+    assert val("gear", "0008") == "P"
+    assert val("odometer_km", "0BBF7F") == 769919.0  # 3-byte big-endian
+    # Unpopulated cell slots decode to None, never a phantom voltage.
+    assert val("cell_v_106", "0FFE") is None
+    assert val("cell_v_107", "0FFE") is None
+    # 53,200 Wh rated energy (the SoH reference) round-trips through u32.
+    assert val("hv_energy_max", "04280A64") == pytest.approx(53200.0)
+    # Lifetime counters from the log: 24,422.82 kWh in, 23,447.48 kWh out.
+    charged_raw = int(24422.82 * 8583.07123641215)
+    used_raw = -int(23447.48 * 8583.07123641215)
+    counters = val("energy_counters", charged_raw.to_bytes(4, "big")
+                   + (used_raw & 0xFFFFFFFF).to_bytes(4, "big"))
+    assert counters["charged_kwh"] == pytest.approx(24422.82, rel=1e-6)
+    assert counters["used_kwh"] == pytest.approx(23447.48, rel=1e-6)
+
+
+def test_meb_registry_has_the_full_cell_bank():
+    from decoders.registry import build_default_registry
+
+    reg = build_default_registry("meb")
+    cells = [s for s in reg.all() if s.key.startswith("cell_v_")]
+    assert len(cells) == 108
+    assert cells[0].did == 0x1E40 and cells[-1].did == 0x1EAB
+    temps = [s for s in reg.all() if s.key.startswith("cell_t_")]
+    assert len(temps) == 18            # 0x1EAE..0x1EBD plus 0x7425/0x7426
+
+
+def test_soh_falls_back_to_reported_max_energy_content():
+    """The MEB BMS exposes no capacity (CAC) DID, so SOH must be derivable
+    from the rated max energy content instead of showing nothing."""
+    from decoders.bms import soh_pct_from_energy, NOMINAL_ENERGY_WH_58KWH
+
+    assert soh_pct_from_energy(NOMINAL_ENERGY_WH_58KWH) == 100.0
+    assert soh_pct_from_energy(53200.0) == pytest.approx(91.7, abs=0.1)
+    assert soh_pct_from_energy(None) is None
+    assert soh_pct_from_energy(0) is None
+
+
+def test_eup_profile_is_unchanged_by_the_meb_profile():
+    from decoders.registry import build_default_registry
+
+    eup = build_default_registry()          # default must stay e-Up
+    assert eup.get("pack_voltage").decode_value(bytes.fromhex("0FA0")) == 62.5
+    assert "cell_v_105" not in [s.key for s in eup.all()]   # 102 slots there
+    meb = build_default_registry("meb")
+    assert meb.get("pack_voltage").did == 0x1E3B
+    assert [s.ecu_key for s in meb.all() if s.key == "odometer_km"] == ["veh_info"]
+
+
+def test_ecu_specs_carry_meb_module_addresses():
+    from diagnostic.ecus import get_ecu
+
+    bms = get_ecu("bat_mgmt")
+    assert bms.tx29 == 0x17FC007B and bms.rx29 == 0x17FE007B
+    assert get_ecu("dcdc").tx29 == 0x17FC00B9
+    assert get_ecu("energy").tx29 == 0x17000710
+    assert get_ecu("veh_info").tx29 == 0x17FC0076
+    # ECUs with no MEB module address keep functional-only addressing.
+    assert get_ecu("chg_mgmt").tx29 is None
+
+
 # --- ISO-TP / ELM parsing ----------------------------------------------------
 def test_line_to_frame_single():
     assert uds.line_to_frame("7ED04621E3B0FA0") == bytes.fromhex("04621E3B0FA0")
@@ -893,7 +1118,7 @@ def test_collect_once_records_speed_and_12v(repo, tmp_path):
                   "database": {"path": str(tmp_path / "c.db")}})
 
     class _CarConn:
-        def functional_probe(self, hexcmd, purpose):
+        def functional_probe(self, hexcmd, purpose, ecu=None):
             return {}
 
         def read_did(self, ecu, did):
@@ -1113,6 +1338,49 @@ def test_simulator_end_to_end():
         c.close()
 
 
+@pytest.mark.slow
+def test_simulator_meb_addressing_end_to_end():
+    """The whole MEB path against the simulated adapter: negotiate ATCP/ATSH,
+    read BMS DIDs at 0x17FC007B, other modules at their own addresses, and
+    check functional OBD-II still works afterwards."""
+    from simulator.vehicle import SimServer
+    from diagnostic.elm327 import Elm327Transport
+    from diagnostic.connection import DiagnosticConnection
+    from diagnostic.ecus import get_ecu
+    from decoders.meb import register_meb
+    from decoders.registry import DIDRegistry
+
+    with SimServer("127.0.0.1", 35124):
+        t = Elm327Transport(host="127.0.0.1", tcp_port=35124, timeout=5.0)
+        c = DiagnosticConnection(t)
+        c.open()
+        assert t.meb_addressing is True, "simulator must accept MEB addressing"
+
+        bms = get_ecu("bat_mgmt")
+        reg = DIDRegistry()
+        register_meb(reg)
+        soc = reg.get("soc_abs").decode_value(c.read_did(bms, 0x028C))
+        assert 50.0 < soc < 80.0, soc
+        volt = reg.get("pack_voltage").decode_value(c.read_did(bms, 0x1E3B))
+        assert 300.0 < volt < 400.0, volt
+
+        # A second module: physical address switches, then answers.
+        energy = reg.get("hv_energy_max").decode_value(
+            c.read_did(get_ecu("energy"), 0x2AB2))
+        assert energy == pytest.approx(53200.0, rel=0.01)
+        odo = reg.get("odometer_km").decode_value(
+            c.read_did(get_ecu("veh_info"), 0x295A))
+        assert odo > 0
+        dcdc_v = reg.get("dcdc_voltage").decode_value(
+            c.read_did(get_ecu("dcdc"), 0x465D))
+        assert 10.0 < dcdc_v < 16.0, dcdc_v
+
+        # Functional reads must still work after all that module switching.
+        assert c.read_vin() == "WVWZZZE1ZMP087053"
+        assert c.try_mode01(0x42) is not None
+        c.close()
+
+
 # --- AI layer -------------------------------------------------------------------
 @pytest.mark.slow
 def test_report_validator():
@@ -1223,7 +1491,7 @@ def test_cell_sweep_skipped_when_battery_dids_are_refused(repo, tmp_path):
 
     class _RefusingConn:
         """Every functional probe answers NRC requestOutOfRange."""
-        def functional_probe(self, hexcmd, purpose):
+        def functional_probe(self, hexcmd, purpose, ecu=None):
             return {0x18DAF10A: bytes([0x7F, 0x22, 0x31])}
 
         def read_did(self, ecu, did):

@@ -188,8 +188,11 @@ def _strip_header(h: str) -> tuple[str, int | None]:
     """
     if len(h) % 2 == 1 and len(h) > 3:
         return h[3:], int(h[:3], 16)                # 11-bit header + frame
-    if len(h) % 2 == 0 and len(h) > 8 and h[:3] == "18D":
-        return h[8:], int(h[:8], 16)                # 29-bit header + frame
+    if len(h) % 2 == 0 and len(h) > 8 and h[:2] in ("18", "17"):
+        # 29-bit header + frame. '18' = ISO 15765-4 priority 6 (18DA/18DB);
+        # '17' = priority 5, used by VAG MEB module diagnostics (17FCxxxx
+        # requests / 17FExxxx responses / 1700xxxx modules).
+        return h[8:], int(h[:8], 16)
     return h, None                                  # header-off
 
 

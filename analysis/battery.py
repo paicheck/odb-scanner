@@ -101,7 +101,8 @@ def battery_overview(repo, days: int = 30, vehicle_id: int | None = None) -> dic
         "soc_range_pct": [min(socs), max(socs)] if len(socs) > 1 else None,
         "cell_delta": cell_delta_trend(repo, days, vehicle_id),
         "provenance_note": (
-            "soh_pct is ESTIMATED (CAC / nominal capacity), not a vehicle report"
+            "soh_pct is ESTIMATED (measured capacity or BMS-rated max energy "
+            "content vs the marketed nominal), not a vehicle report"
             if sohs else None
         ),
         "latest_raw": latest,

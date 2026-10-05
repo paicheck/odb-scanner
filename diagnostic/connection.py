@@ -42,17 +42,25 @@ class DiagnosticConnection:
         # read-only allow-list, so no caller -- including the ones that build
         # hex by hand -- can put a write service on the wire.
         uds.validate_request(hexcmd)
-        # Every request goes out FUNCTIONALLY: no ATSH/ATCRA is ever sent.
-        # The field clones refuse 29-bit headers, silently mis-apply 11-bit
-        # ones under a 29-bit protocol (a poison id nothing answers), and
-        # refuse the plain ATSH that would clear a bad header -- see
-        # Elm327Transport.set_header. With ATH1 every response frame carries
-        # its sender's CAN id, so per-ECU attribution happens at parse time
-        # (uds.payloads_by_source) instead of at addressing time. The `ecu`
-        # argument identifies the intended ECU for the tx log only.
+        # Addressing: functional by default (see Elm327Transport.set_header --
+        # field clones refuse 29-bit headers outright). When the transport
+        # negotiated VAG MEB addressing AND the ECU carries a module address,
+        # the request is sent physically to that module instead: ATCP/ATSH
+        # switch plus an ATCAF0 ISO-TP frame built by hand. Functional OBD-II
+        # reads switch back and stay on bare '0100'-style requests.
+        set_module = getattr(self.t, "set_module", None)
+        target = getattr(ecu, "tx29", None) if ecu is not None else None
+        meb = bool(getattr(self.t, "meb_addressing", False)) and target is not None
+        wire = hexcmd
+        if callable(set_module) and getattr(self.t, "meb_addressing", False):
+            if meb and set_module(target):
+                body = hexcmd
+                wire = (f"{len(body) // 2:02X}{body}" + "55" * 8)[:16]
+            else:
+                set_module(None)
         self.tx_logger(direction="TX", ecu=ecu.key if ecu else None,
                        payload=hexcmd, purpose=purpose)
-        lines = self.t.send_command(hexcmd)
+        lines = self.t.send_command(wire)
         payload = uds.parse_elm_lines(lines)
         self.tx_logger(direction="RX", ecu=ecu.key if ecu else None,
                        payload=payload.hex().upper() if payload else
@@ -60,15 +68,17 @@ class DiagnosticConnection:
                        purpose="response")
         return lines
 
-    def functional_probe(self, hexcmd: str,
-                         purpose: str) -> dict[int | None, bytes | None]:
-        """Send one functional request and reassemble answers per sender.
+    def functional_probe(self, hexcmd: str, purpose: str,
+                         ecu: ECUSpec | None = None) -> dict[int | None, bytes | None]:
+        """Send one request and reassemble answers per sender.
 
-        Returns reassembled payloads keyed by each responding ECU's CAN
-        header (uds.source_label renders them; None values mean a sender's
-        frames never formed a complete message).
+        With `ecu` given, _transmit routes it to that module when MEB
+        addressing is available; otherwise it goes out functionally. Returns
+        reassembled payloads keyed by each responding ECU's CAN header
+        (uds.source_label renders them; None values mean a sender's frames
+        never formed a complete message).
         """
-        return uds.payloads_by_source(self._transmit(hexcmd, None, purpose))
+        return uds.payloads_by_source(self._transmit(hexcmd, ecu, purpose))
 
     # -- UDS read ------------------------------------------------------------
     def read_did(self, ecu: ECUSpec, did: int) -> bytes:

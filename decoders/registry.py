@@ -91,10 +91,25 @@ class DIDRegistry:
         return [s for s in self._specs.values() if s.slow and s.did is not None]
 
 
-def build_default_registry() -> DIDRegistry:
+def build_default_registry(profile: str = "eup") -> DIDRegistry:
+    """Build the DID map for a vehicle profile.
+
+    eup  -- e-Up / OVMS-sourced map (the historical default; also what the
+            built-in simulator speaks for its e-Up persona).
+    meb  -- VW MEB map (ID.3/ID.4/Enyaq/Born): different addressing AND
+            different scale factors, e.g. pack voltage u16/4 (not /64) and
+            cell voltage u16/1000+1 (not /256). Selected per car via
+            vehicle.did_profile in config.yaml.
+    """
+    reg = DIDRegistry()
+    if profile == "meb":
+        from decoders import meb
+
+        meb.register_meb(reg)
+        return reg
+
     from decoders import battery, charging
 
-    reg = DIDRegistry()
     battery.register_battery(reg)
     battery.register_cell_specs(reg)
     charging.register_charging(reg)

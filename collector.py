@@ -14,7 +14,11 @@ import time
 
 from analysis import dtc as dtc_analysis
 from database.repository import Repository, utcnow
-from decoders.bms import NOMINAL_CAC_AH_58KWH, soh_pct_from_cac
+from decoders.bms import (
+    NOMINAL_CAC_AH_58KWH,
+    soh_pct_from_cac,
+    soh_pct_from_energy,
+)
 from decoders.registry import Provenance, build_default_registry
 from diagnostic import obd2, uds
 from diagnostic.connection import DiagnosticConnection
@@ -57,7 +61,8 @@ class Collector:
     def __init__(self, cfg, repo: Repository):
         self.cfg = cfg
         self.repo = repo
-        self.registry = build_default_registry()
+        self.registry = build_default_registry(
+            cfg.get("vehicle.did_profile", "eup"))
         self.conn = DiagnosticConnection(
             build_transport(cfg), tx_logger=repo.log_tx
         )
@@ -147,14 +152,17 @@ class Collector:
         return probes
 
     def discover_ecus(self) -> dict[str, str]:
-        """Probe ECUs functionally and attribute answers by CAN header.
+        """Probe ECUs and attribute answers by CAN header.
 
-        Physical addressing is not used (see Elm327Transport.set_header):
-        one functional request goes out and every ECU that answers is
-        identified by its response header (18DAF1xx on 29-bit buses, the
-        rx id on 11-bit ones). Each registry key is probed with the first
-        DID the decoder registry documents for it, so a positive answer
-        identifies the ECU that really holds that data.
+        Addressing follows the transport: functionally by default (see
+        Elm327Transport.set_header), or physically to the module when the
+        adapter negotiated VAG MEB addressing and the ECU has a tx29 (this is
+        the only way the ID.3 BMS answers). Either way the answer is
+        identified by its response header (18DAF1xx on 29-bit OBD buses,
+        17FExxxx for MEB modules, the rx id on 11-bit buses). Each registry
+        key is probed with the first DID the decoder registry documents for
+        it, so a positive answer identifies the ECU that really holds that
+        data.
 
         Statuses: responder | no-response | nrc-<code> |
         no-dids-registered. Never writes.
@@ -191,8 +199,10 @@ class Collector:
             try:
                 payloads = self.conn.functional_probe(
                     f"22{did:04X}",
-                    f"UDS 0x22 DID 0x{did:04X} functional discovery "
-                    f"probe ({key})")
+                    f"UDS 0x22 DID 0x{did:04X} discovery probe ({key}"
+                    + (f", module {spec.tx29:08X}" if spec.tx29 else
+                       ", functional") + ")",
+                    ecu=spec)
             except CommunicationError as exc:
                 log.debug("ECU %s probe failed: %s", key, exc)
                 payloads = {}
@@ -394,11 +404,18 @@ class Collector:
         energy_ch = energy.get("charged_kwh")
         energy_used = energy.get("used_kwh")
         cac_ah = val_json("soh_cac").get("battery_cac_ah")
+        # Prefer the capacity figure; fall back to the BMS-reported max energy
+        # content (MEB packs expose no CAC DID), else no SoH at all rather
+        # than a fabricated 0 %.
+        soh_basis = "cac_ah / nominal_cac"
         soh = soh_pct_from_cac(cac_ah, self.nominal_cac_ah)
+        if not soh:
+            soh = soh_pct_from_energy(val("hv_energy_max"))
+            soh_basis = "hv_energy_max / nominal_energy (rated vs marketed)"
         if soh:
             self.repo.record_measurement(
                 self.vehicle_id, ts, "soh_pct", "bat_mgmt", "calc", "-", "%",
-                Provenance.ESTIMATED.value, "cac_ah / nominal_cac",
+                Provenance.ESTIMATED.value, soh_basis,
                 "estimated", "", soh,
             )
         mode = val("charge_mode")

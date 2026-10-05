@@ -106,6 +106,93 @@ def _did_value(did: int) -> bytes | None:
         return None
 
 
+# --- MEB module persona ------------------------------------------------------
+# Real MEB modules answer only at their 29-bit address, reached with
+# ATCP <priority> + 6-digit ATSH. The simulator implements that so the MEB
+# addressing path (Elm327Transport.set_module / DiagnosticConnection._transmit)
+# can be exercised end to end without a car. Values are MEB-scaled -- the
+# point of the exercise is that the MEB decoder formulas reproduce sane
+# engineering values, not that the sim matches the e-Up persona above.
+_MEB_CELL_SLOTS = 108          # 0x1E40..0x1EAB
+_MEB_CELL_ACTIVE = 102         # slots 102..107 answer 0x0FFE (unpopulated)
+_MEB_MAX_ENERGY_WH = 53200.0   # rated HV energy content (SoH reference)
+_MEB_ODO_KM = 48123.0
+
+# request id -> (response id, responder tag)
+MEB_MODULES = {
+    0x17FC007B: "17FE007B",   # HV battery management
+    0x17FC00B9: "17FE00B9",   # DC/DC converter
+    0x17000710: "17FE0710",   # gateway energy information
+    0x17FC0076: "17FE0076",   # vehicle info (odo/gear/VIN)
+}
+
+
+def _meb_did_value(req29: int, did: int) -> bytes | None:
+    """MEB-scaled DID payload for one module, or None -> NRC 0x31."""
+    with _state_lock:
+        if req29 == 0x17FC007B:
+            if did == 0x028C:
+                return bytes([round(soc() * 2.5) & 0xFF])
+            if did == 0x1E3B:
+                return _enc_u16(pack_voltage() * 4)
+            if did == 0x1E3D:
+                return int(pack_current() * 100 + 150000).to_bytes(4, "big")
+            if did == 0x1E33:
+                return _enc_u16(max(cell_v(i) for i in range(4)) * 4096)
+            if did == 0x1E34:
+                return _enc_u16(min(cell_v(i) for i in range(4)) * 4096)
+            if did == 0x2A0B:
+                return bytes([round((battery_temp() + 40) * 2) & 0xFF])
+            if did == 0x1E0E:
+                return _enc_u16((battery_temp() + 1.25) * 64)
+            if did == 0x1E0F:
+                return _enc_u16((battery_temp() - 1.25) * 64)
+            if did == 0x1E1B:
+                return _enc_u16(213 * 5)
+            if did == 0x1E1C:
+                return _enc_u16(400 * 5)
+            if did == 0x1E32:
+                charged = int(24422.8 * 8583.07123641215)
+                used = -int(23447.5 * 8583.07123641215)
+                return (charged.to_bytes(4, "big")
+                        + (used & 0xFFFFFFFF).to_bytes(4, "big"))
+            if did == 0x7448:
+                # 0 standby / 1 driving / 4 AC charging / 6 DC charging
+                return bytes([4 if charge_mode() else 0])
+            if did == 0x743B:
+                return bytes([35])
+            if did == 0x0500:
+                return b"SIMHV0000000001"
+            if 0x1E40 <= did < 0x1E40 + _MEB_CELL_SLOTS:
+                i = did - 0x1E40
+                if i >= _MEB_CELL_ACTIVE:
+                    return _enc_u16(0x0FFE)      # unpopulated slot
+                return _enc_u16((cell_v(i) - 1.0) * 1000)
+            if 0x1EAE <= did <= 0x1EBD or did in (0x7425, 0x7426):
+                # u16 = (degC + 40) * 8
+                return _enc_u16((battery_temp() + 40) * 8)
+            return None
+        if req29 == 0x17000710:
+            if did == 0x2AB2:
+                return int(_MEB_MAX_ENERGY_WH * 1310.77).to_bytes(4, "big")
+            return None
+        if req29 == 0x17FC00B9:
+            if did == 0x465B:
+                return _enc_u16(14.1 * 16)
+            if did == 0x465D:
+                return _enc_u16(14.1 * 512)
+            return None
+        if req29 == 0x17FC0076:
+            if did == 0x295A:
+                return int(_MEB_ODO_KM).to_bytes(3, "big")
+            if did == 0x210E:
+                return bytes([0x00, 0x08])       # 08 = P
+            if did == 0xF802:
+                return VIN
+            return None
+    return None
+
+
 # --- protocol handling --------------------------------------------------------
 ECU_TABLE = {
     0x7E5: 0x7ED,   # BMS
@@ -198,7 +285,10 @@ class SimHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         self.request.settimeout(0.5)
         buf = b""
-        current_ecu = (0x7E0, 0x7E8)
+        self.cp = 0x18           # CAN id priority/priority byte (ATCP)
+        self.caf = 1            # CAN auto-formatting (ATCAF)
+        self.meb_module = None  # 29-bit MEB module id, or None = functional
+        self.current_ecu = (0x7E0, 0x7E8)
         while True:
             try:
                 chunk = self.request.recv(1024)
@@ -218,35 +308,63 @@ class SimHandler(socketserver.BaseRequestHandler):
                 cmd = line.decode("ascii", "replace").strip().upper()
                 if not cmd:
                     continue
-                if cmd.startswith("ATSH") and len(cmd) >= 7:
-                    try:
-                        tx = int(cmd[4:], 16) & 0x7FF
-                        if tx == 0x7DF:            # functional addressing
-                            current_ecu = (0x7DF, 0x7E8)
-                        elif tx in ECU_TABLE:
-                            current_ecu = (tx, ECU_TABLE[tx])
-                        else:                      # no ECU lives there
-                            current_ecu = None
-                    except ValueError:
-                        pass
+                if cmd.startswith("ATSH"):
+                    self._set_header(cmd)
                 else:
-                    out = self._handle_cmd(cmd, current_ecu)
+                    out = self._handle_cmd(cmd)
                     for text in out:
                         self.request.sendall((text + "\r").encode("ascii"))
                 self.request.sendall(b">")
 
-    def _handle_cmd(self, cmd: str, ecu) -> list[str]:  # noqa: C901
+    def _set_header(self, cmd: str) -> None:
+        """ATSH: 3-digit legacy (11-bit) or 6-digit MEB (with the CP byte).
+
+        The 6-digit form is what ELM327-class adapters accept for MEB module
+        addressing (ATCP supplies the priority byte); the completed 29-bit id
+        is (cp << 24) | value.
+        """
+        arg = cmd[4:].replace(" ", "")
+        if len(arg) == 6:
+            try:
+                hdr = (self.cp << 24) | int(arg, 16)
+            except ValueError:
+                return
+            self.meb_module = hdr if hdr in MEB_MODULES else None
+            self.current_ecu = (0x7E0, 0x7E8)      # nothing 11-bit behind it
+            return
+        try:
+            tx = int(arg, 16) & 0x7FF
+        except ValueError:
+            return
+        if tx == 0x7DF:                            # functional addressing
+            self.current_ecu = (0x7DF, 0x7E8)
+        elif tx in ECU_TABLE:
+            self.current_ecu = (tx, ECU_TABLE[tx])
+        else:                                      # no ECU lives there
+            self.current_ecu = None
+
+    def _handle_cmd(self, cmd: str) -> list[str]:  # noqa: C901
         import diagnostic.uds as uds
 
         if cmd.startswith("AT"):
             if cmd == "ATZ":
                 time.sleep(0.2)
+                self.cp, self.caf, self.meb_module = 0x18, 1, None
+                self.current_ecu = (0x7E0, 0x7E8)
                 return ["ELM327 v1.5 SIM"]
             if cmd == "ATI":
                 return ["SIM327 v1.5 (odb_scanner simulator)"]
+            c = cmd.replace(" ", "")
+            if c.startswith("ATCP") and len(c) == 6:
+                try:
+                    self.cp = int(c[4:6], 16)
+                except ValueError:
+                    return ["?"]
+                return ["OK"]
+            if c.startswith("ATCAF") and len(c) == 6:
+                self.caf = int(c[5:6])
+                return ["OK"]
             return ["OK"]
-        if ecu is None:
-            return ["NO DATA"]
         hexstr = uds.clean_hex(cmd)
         if len(hexstr) % 2:
             return ["?"]
@@ -254,14 +372,47 @@ class SimHandler(socketserver.BaseRequestHandler):
             req = bytes.fromhex(hexstr)
         except ValueError:
             return ["?"]
+        if self.meb_module is not None:
+            return self._meb_response(req)
+        ecu = self.current_ecu
+        if ecu is None:
+            return ["NO DATA"]
         # choose ECU: default functional/motor; ATSH already applied by adapter
         resp_frames = _build_response(req, ecu[0])
         if resp_frames is None:
             return ["NO DATA"]
-        lines = []
-        for f in resp_frames:
-            lines.append(f"{ecu[1]:03X}" + f.hex().upper())
-        return lines
+        return [f"{ecu[1]:03X}" + f.hex().upper() for f in resp_frames]
+
+    def _meb_response(self, req: bytes) -> list[str]:
+        """Answer as a physically addressed MEB module (8-digit header).
+
+        Under ATCAF0 the client builds the ISO-TP single frame itself, so the
+        PCI byte arrives here and is stripped. Frames go out with PCI bytes
+        included (that is what a real adapter does under ATH1 either way).
+        """
+        if not req:
+            return ["NO DATA"]
+        if not self.caf and (req[0] >> 4) == 0:
+            n = req[0] & 0x0F
+            req = req[1:1 + n]
+        if not req:
+            return ["NO DATA"]
+        req29 = self.meb_module
+        sid = req[0]
+        if sid == 0x22 and len(req) >= 3:
+            did = (req[1] << 8) | req[2]
+            val = _meb_did_value(req29, did)
+            if val is None:
+                return [MEB_MODULES[req29] + "037F2231"]
+            frames = _isotp_encode(bytes([0x62, req[1], req[2]]) + val)
+            return [MEB_MODULES[req29] + f.hex().upper() for f in frames]
+        if sid == 0x10:
+            frames = _isotp_encode(bytes([0x50, req[1] if len(req) > 1 else 0x01,
+                                           0x00, 0x19, 0x01, 0xF4]))
+            return [MEB_MODULES[req29] + f.hex().upper() for f in frames]
+        if sid == 0x3E:
+            return [MEB_MODULES[req29] + "027E00"]
+        return [MEB_MODULES[req29] + bytes([0x03, 0x7F, sid, 0x11]).hex().upper()]
 
 
 class SimServer:

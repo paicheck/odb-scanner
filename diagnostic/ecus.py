@@ -23,6 +23,12 @@ class ECUSpec:
     rx: int
     doc_status: str = "experimentally determined (OVMS e-Up / MEB-family)"
     notes: str = ""
+    # VAG MEB 29-bit module addressing on the diagnostic bus (reached with
+    # ATCP + 6-digit ATSH -- see Elm327Transport.set_module). When present
+    # and the transport negotiated MEB addressing, UDS reads go to the
+    # module physically instead of functionally.
+    tx29: int | None = None
+    rx29: int | None = None
 
 
 ECUS: dict[str, ECUSpec] = {
@@ -32,6 +38,7 @@ ECUS: dict[str, ECUSpec] = {
             "bat_mgmt", "HV battery management (BMS)", 0x7E5, 0x7ED,
             notes="Cell voltages, SOH, energy counters. On ID.3 the BMS may be "
                   "reachable directly or via gateway; verified during discovery.",
+            tx29=0x17FC007B, rx29=0x17FE007B,
         ),
         ECUSpec("chg_mgmt", "HV charge management", 0x765, 0x7CF,
                 notes="SOC normal, charge mode, CCS status, remaining time."),
@@ -42,6 +49,25 @@ ECUS: dict[str, ECUSpec] = {
         ECUSpec("eld", "Electric drive", 0x7E6, 0x7EE),
         ECUSpec("inf", "Information electronics (Infotainment)", 0x773, 0x7DD),
         ECUSpec("brk", "Brake electronics", 0x713, 0x77D),
+        ECUSpec(
+            "dcdc", "DC/DC converter (HV->12V)", 0x777, 0x777,
+            doc_status="experimentally determined (evDash/ABRP MEB community)",
+            notes="MEB module 0xB9: 12V charging current/voltage.",
+            tx29=0x17FC00B9, rx29=0x17FE00B9,
+        ),
+        ECUSpec(
+            "energy", "Gateway energy information", 0x710, 0x710,
+            doc_status="experimentally determined (evDash/ABRP MEB community)",
+            notes="MEB module 0x710: HV energy content (SoH source). "
+                  "Response id assumed 17FE0710; verified on vehicle.",
+            tx29=0x17000710, rx29=None,
+        ),
+        ECUSpec(
+            "veh_info", "Vehicle info (odometer/gear/VIN)", 0x76, 0x76,
+            doc_status="experimentally determined (evDash/ABRP MEB community)",
+            notes="MEB module 0x76: odometer, gear position, VIN.",
+            tx29=0x17FC0076, rx29=0x17FE0076,
+        ),
     ]
 }
 

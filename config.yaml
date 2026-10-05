@@ -10,6 +10,10 @@ vehicle:
   model: "ID.3"
   variant: "58 kWh (Pro)"
   year: 2021
+  # DID map to use: meb (ID.3/ID.4/Enyaq/Born, 108 cell slots, module
+  # addressing) or eup (e-Up / OVMS-sourced, 102 slots). Only affects decoding
+  # and which module a DID read is addressed to -- never read/write behaviour.
+  did_profile: meb
 
 adapter:
   # elm327_serial  -> USB ELM327 / OBDLink (pyserial)
