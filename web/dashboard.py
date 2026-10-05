@@ -39,6 +39,21 @@ def create_app(cfg: Config) -> FastAPI:
         row = repo.first_vehicle()
         return (dict(row) if row else {}), (row["id"] if row else None)
 
+    def bms_refusal():
+        """The bat_mgmt discovery status when it proves the battery DIDs are
+        refused through the OBD surface (NRC / no-response), else None. Pages
+        use it to explain WHY the battery data is empty instead of looking
+        broken -- on such cars the BMS sits on CAN-EV behind the gateway."""
+        _, vid = vehicle_and_id()
+        if not vid:
+            return None
+        for row in repo.list_ecus(vid):
+            if row["key"] == "bat_mgmt":
+                status = str(row["status"] or "")
+                if status.startswith("nrc-") or status == "no-response":
+                    return status
+        return None
+
     def render(name: str, request: Request, **extra):
         vehicle, _ = vehicle_and_id()
         ctx = {"vehicle": vehicle, "nav": ["Overview", "Battery", "Faults",
@@ -57,8 +72,14 @@ def create_app(cfg: Config) -> FastAPI:
         charging = (charging_analysis.session_comparison(repo, vid, charging_days)
                     if vid else {})
         anomalies = [dict(a) for a in repo.anomalies(vid, days)] if vid else []
+        latest = repo.latest_measurements(vid, max_age_s=86400) if vid else {}
+        lv = latest.get("lv_voltage_obd") or {}
+        speed = latest.get("vehicle_speed") or {}
+        live = {"lv_voltage_v": lv.get("value"), "lv_voltage_ts": lv.get("ts"),
+                "speed_kmh": speed.get("value")}
         return render("overview.html", request, battery=battery, dtcs=dtcs,
-                      charging=charging, anomalies=anomalies, days=days)
+                      charging=charging, anomalies=anomalies, days=days,
+                      live=live, bms_refusal=bms_refusal())
 
     @app.get("/battery", response_class=HTMLResponse)
     def battery_page(request: Request):
@@ -73,8 +94,13 @@ def create_app(cfg: Config) -> FastAPI:
         }
         trend = (battery_analysis.cell_delta_trend(repo, trend_days, vid)
                  if vid else {"status": "no vehicle"})
+        lv_rows = (repo.measurement_series(vid, "lv_voltage_obd", trend_days)
+                   if vid else [])
+        lv_chart = {"ts": [r["ts"] for r in lv_rows],
+                    "v": [r["value"] for r in lv_rows]}
         return render("battery.html", request, chart=chart, trend=trend,
-                      days=trend_days)
+                      days=trend_days, lv_chart=lv_chart,
+                      bms_refusal=bms_refusal())
 
     @app.get("/dtcs", response_class=HTMLResponse)
     def dtc_page(request: Request):

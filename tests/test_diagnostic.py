@@ -880,6 +880,46 @@ def test_first_vehicle_prefers_the_most_recent_row(repo):
     assert row["vin"] == "WVWZZZE1ZMP087053"
 
 
+def test_collect_once_records_speed_and_12v(repo, tmp_path):
+    """Regression: decoded OBD PIDs not in the recording table were silently
+    dropped -- vehicle speed (0x0D) was polled and decoded every cycle but
+    never stored. Both PIDs must land in measurements and the snapshot."""
+    from collector import Collector
+    from diagnostic.interface import CommunicationError
+    from diagnostic.uds import NegativeResponseError
+
+    cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
+                                "max_value_age_s": 900.0},
+                  "database": {"path": str(tmp_path / "c.db")}})
+
+    class _CarConn:
+        def functional_probe(self, hexcmd, purpose):
+            return {}
+
+        def read_did(self, ecu, did):
+            raise NegativeResponseError(0x22, 0x31)
+
+        def mode01(self, pid):
+            if pid == 0x0D:
+                return bytes([38])            # 38 km/h
+            if pid == 0x42:
+                return bytes([0x36, 0xB0])    # 14000 mV = 14.0 V
+            raise CommunicationError("unsupported")
+
+    col = Collector(cfg, repo)
+    col.conn = _CarConn()
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col._cells_readable = False
+    snap = col.collect_once()
+    assert snap.get("speed_kmh") == 38.0
+    assert snap.get("lv_voltage_v") == pytest.approx(14.0, abs=0.01)
+    keys = {r["key"] for r in repo.conn.execute(
+        "SELECT key FROM measurements WHERE success=1")}
+    assert {"vehicle_speed", "lv_voltage_obd"} <= keys
+    series = repo.measurement_series(col.vehicle_id, "vehicle_speed")
+    assert len(series) == 1 and series[0]["value"] == 38.0
+
+
 def test_concurrent_threads_do_not_lose_writes(repo):
     """The dashboard serves sync handlers on a threadpool while the collector
     thread writes.

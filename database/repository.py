@@ -268,6 +268,17 @@ class Repository:
         sql += " ORDER BY ts"
         return self.conn.execute(sql, args).fetchall()
 
+    def measurement_series(self, vehicle_id: int, key: str, days: int = 30):
+        """(ts, value) rows for one measurement key, successful reads only,
+        oldest first. For charting the non-battery signals (12 V system
+        voltage, vehicle speed) that live in `measurements` rather than in
+        the battery snapshots."""
+        return self.conn.execute(
+            "SELECT ts, value FROM measurements WHERE vehicle_id=? AND key=? "
+            "AND success=1 AND value IS NOT NULL AND ts>=? ORDER BY ts",
+            (vehicle_id, key, _iso_days_ago(days)),
+        ).fetchall()
+
     def vacuum(self) -> None:
         """Reclaim space after pruning. Needs no open transaction.
 

@@ -1,6 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>Battery</h2>
+{% if bms_refusal %}
+<div class="warn"><strong>Battery telemetry is not available through this
+car's OBD interface.</strong> Discovery recorded
+<code>bat_mgmt: {{ bms_refusal }}</code> — the BMS (J840) sits on the CAN-EV
+bus behind the gateway and refuses the battery DIDs from the diagnostic
+surface, so the pack/cell charts below stay empty by design, not by fault.
+The 12 V chart comes from standard OBD-II and does work. Battery-level data
+requires a CAN-EV tap (e.g. the preheat-harness hardware) — see events log.
+</div>
+{% endif %}
 <div class="cards">
   <div class="card"><h3>Current delta</h3><div class="big">{{ trend.current_mv if trend.current_mv is defined else '—' }} mV</div></div>
   <div class="card"><h3>{{ trend.window_days if trend.window_days is defined else days }}-day mean</h3><div class="big">{{ trend.mean_mv if trend.mean_mv is defined else '—' }} mV</div></div>
@@ -14,6 +24,9 @@
 </div>
 <div class="chartbox"><canvas id="deltaChart" height="90"></canvas></div>
 <div class="chartbox"><canvas id="socChart" height="90"></canvas></div>
+{% if lv_chart.ts %}
+<div class="chartbox"><canvas id="lvChart" height="70"></canvas></div>
+{% endif %}
 <p class="note">Cell delta is CALCULATED (max − min cell voltage). SOH is ESTIMATED. All values labelled in the database.</p>
 <script>
 const chart = {{ chart | tojson }};
@@ -34,5 +47,16 @@ new Chart(document.getElementById('socChart'), {
   ]},
   options: { scales: { y2: { position: 'right', grid: { drawOnChartArea: false } } } }
 });
+const lv = {{ lv_chart | tojson }};
+if (lv.ts && lv.ts.length) {
+  const lvts = lv.ts.map(t => t.replace('T', ' ').slice(0, 16));
+  new Chart(document.getElementById('lvChart'), {
+    type: 'line',
+    data: { labels: lvts, datasets: [
+      { label: '12 V system (V)', data: lv.v, borderColor: '#8e44ad', tension: .2, pointRadius: 1 }
+    ]},
+    options: { scales: { y: { suggestedMin: 11.5, suggestedMax: 15 } } }
+  });
+}
 </script>
 {% endblock %}

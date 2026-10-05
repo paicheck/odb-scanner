@@ -27,6 +27,16 @@ log = logging.getLogger(__name__)
 # standard OBD-II PIDs to poll on BEVs (0x42 = control module voltage ~12V)
 OBD_PIDS = (0x00, 0x0D, 0x42)
 
+# Which polled PIDs get persisted, as (measurement key, snapshot key, unit,
+# doc). PID 0x00 is the supported-bitmask handshake, not a value, so it is
+# deliberately absent. A decoded PID missing from this table would be
+# silently dropped -- which is how vehicle speed went unrecorded.
+OBD_PID_KEYS = {
+    0x0D: ("vehicle_speed", "speed_kmh", "km/h", "SAE J1979 PID 0x0D"),
+    0x42: ("lv_voltage_obd", "lv_voltage_v", "V",
+           "SAE J1979 PID 0x42 (control module voltage ~ 12 V system)"),
+}
+
 
 def build_transport(cfg):
     a = cfg
@@ -253,20 +263,23 @@ class Collector:
         ts = utcnow()
         snapshot: dict = {}
 
-        # standard OBD-II (12 V voltage comes from PID 0x42)
+        # standard OBD-II (12 V voltage comes from PID 0x42, speed from 0x0D)
         for pid in OBD_PIDS:
             try:
                 data = self.conn.mode01(pid)
             except CommunicationError:
                 continue
             decoded = obd2.decode_pid(pid, data)
-            if decoded and pid == 0x42:
-                self.repo.record_measurement(
-                    self.vehicle_id, ts, "lv_voltage_obd", "-", "OBD-01",
-                    "0x42", "V", "reported", "SAE J1979 PID 0x42",
-                    "documented", data.hex().upper(), decoded[0],
-                )
-                snapshot["lv_voltage_v"] = decoded[0]
+            if not decoded or pid not in OBD_PID_KEYS:
+                continue
+            key, snap_key, unit, doc = OBD_PID_KEYS[pid]
+            value = decoded[0]
+            self.repo.record_measurement(
+                self.vehicle_id, ts, key, "-", "OBD-01",
+                f"0x{pid:02X}", unit, "reported", doc,
+                "documented", data.hex().upper(), value,
+            )
+            snapshot[snap_key] = value
 
         # fast battery DIDs
         for spec in self.registry.fast():

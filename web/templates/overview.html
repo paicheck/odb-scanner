@@ -6,16 +6,22 @@
 {% endif %}
 <div class="cards">
   <div class="card"><h3>State of charge</h3>
-    <div class="big">{{ "%.0f"|format(battery.soc_latest_pct or 0) }}%</div>
-    <div class="note">window: {{ days }} days, {{ battery.samples }} snapshots</div></div>
+    <div class="big">{% set soc = battery.get('soc_latest_pct') %}{% if soc is not none %}{{ "%.0f"|format(soc) }}%{% else %}—{% endif %}</div>
+    <div class="note">{% if bms_refusal %}BMS not exposed via OBD ({{ bms_refusal }}) — see Battery page{% else %}window: {{ days }} days, {{ battery.get('samples', 0) }} snapshots{% endif %}</div></div>
   <div class="card"><h3>Pack voltage</h3>
-    <div class="big">{{ "%.1f"|format(battery.pack_voltage_latest_v or 0) }} V</div></div>
+    <div class="big">{% set pv = battery.get('pack_voltage_latest_v') %}{% if pv is not none %}{{ "%.1f"|format(pv) }} V{% else %}—{% endif %}</div></div>
   <div class="card"><h3>Cell delta trend</h3>
     <div class="big">{{ battery.cell_delta.current_mv if battery.cell_delta is mapping else '—' }} mV</div>
     <div class="note">{{ battery.cell_delta.get('trend', 'no data') if battery.cell_delta is mapping else 'no data' }}</div></div>
   <div class="card"><h3>SOH (estimated)</h3>
     <div class="big">{{ battery.soh_latest_pct if battery.soh_latest_pct else '—' }}%</div>
-    <div class="note">{{ battery.provenance_note or '' }}</div></div>
+    <div class="note">{{ battery.get('provenance_note') or '' }}</div></div>
+  <div class="card"><h3>12 V system</h3>
+    <div class="big">{% if live.get('lv_voltage_v') is not none %}{{ "%.2f"|format(live.lv_voltage_v) }} V{% else %}—{% endif %}</div>
+    <div class="note">OBD-II PID 0x42{% if live.get('lv_voltage_ts') %} · {{ live.lv_voltage_ts[11:19] }} UTC{% endif %}</div></div>
+  <div class="card"><h3>Speed</h3>
+    <div class="big">{% if live.get('speed_kmh') is not none %}{{ "%.0f"|format(live.speed_kmh) }} km/h{% else %}—{% endif %}</div>
+    <div class="note">OBD-II PID 0x0D (latest read)</div></div>
   <div class="card"><h3>DTCs</h3>
     <div class="big">{{ dtcs.get('total', 0) }}</div>
     {% for cat, n in dtcs.get('by_category', {}).items() %}
