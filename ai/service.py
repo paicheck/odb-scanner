@@ -37,8 +37,7 @@ class AnalysisService:
 
     def build_context(self, question: str) -> dict:
         days = int(self.cfg.get("analysis.trend_window_days", 30))
-        vehicle_row = self.repo.conn.execute(
-            "SELECT * FROM vehicles ORDER BY id LIMIT 1").fetchone()
+        vehicle_row = self.repo.first_vehicle()
         vehicle = dict(vehicle_row) if vehicle_row else {}
         vehicle_id = vehicle.get("id")
         overview = battery_analysis.battery_overview(self.repo, days, vehicle_id)
@@ -59,8 +58,7 @@ class AnalysisService:
         report = self.llm.generate(prompt, system=prompts.SYSTEM_PROMPT,
                                    temperature=self.cfg.get("ollama.temperature", 0.2))
         report, warnings = reports.validate_report(report)
-        vehicle_row = self.repo.conn.execute(
-            "SELECT id FROM vehicles ORDER BY id LIMIT 1").fetchone()
+        vehicle_row = self.repo.first_vehicle()
         if vehicle_row is None:
             # llm_reports.vehicle_id is NOT NULL REFERENCES vehicles(id), and an
             # empty database is reachable (fresh install, or a wiped DB). There

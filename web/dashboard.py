@@ -36,8 +36,7 @@ def create_app(cfg: Config) -> FastAPI:
     charging_days = int(cfg.get("analysis.charging_window_days", 90))
 
     def vehicle_and_id():
-        row = repo.conn.execute(
-            "SELECT * FROM vehicles ORDER BY id LIMIT 1").fetchone()
+        row = repo.first_vehicle()
         return (dict(row) if row else {}), (row["id"] if row else None)
 
     def render(name: str, request: Request, **extra):

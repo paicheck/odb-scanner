@@ -870,6 +870,16 @@ def test_concurrent_upserts_do_not_collide(repo):
         ("WVWZZZE1ZMP087053",)).fetchone()[0] == 1
 
 
+def test_first_vehicle_prefers_the_most_recent_row(repo):
+    """Regression: a corrupt-VIN row created by an old buggy run hijacked
+    the dashboard, the AI context and `analyze`, because they all picked
+    ORDER BY id LIMIT 1 -- the oldest row, with none of the data."""
+    repo.ensure_vehicle('WVW!ZZZE1ZM"P0870')    # stray artifact, created first
+    repo.ensure_vehicle("WVWZZZE1ZMP087053")    # the real vehicle, later
+    row = repo.first_vehicle()
+    assert row["vin"] == "WVWZZZE1ZMP087053"
+
+
 def test_concurrent_threads_do_not_lose_writes(repo):
     """The dashboard serves sync handlers on a threadpool while the collector
     thread writes.

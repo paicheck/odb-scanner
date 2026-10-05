@@ -163,6 +163,19 @@ class Repository:
             "SELECT * FROM ecus WHERE vehicle_id=? ORDER BY key", (vehicle_id,)
         ).fetchall()
 
+    def first_vehicle(self):
+        """The vehicle the single-vehicle tools operate on.
+
+        The dashboard, `analyze` and the AI context all assume one vehicle
+        per database. Pick the most recently first-seen row (newest id on
+        ties): an old stray row -- e.g. one created by a run that misdecoded
+        the VIN before the parser fix -- must not hijack them forever,
+        which ORDER BY id did.
+        """
+        return self.conn.execute(
+            "SELECT * FROM vehicles ORDER BY first_seen DESC, id DESC LIMIT 1"
+        ).fetchone()
+
     # -- tx log (safety manifest) --------------------------------------------
     def log_tx(self, ts: str | None = None, **kw) -> None:
         self.conn.execute(

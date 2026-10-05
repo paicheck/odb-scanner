@@ -112,7 +112,7 @@ def cmd_analyze(cfg) -> int:
     # `with` so the connection is released on every exit path, including the
     # "no vehicle in database" early return below.
     with Repository(cfg.db_path) as repo:
-        row = repo.conn.execute("SELECT id FROM vehicles LIMIT 1").fetchone()
+        row = repo.first_vehicle()
         if not row:
             print("No vehicle in database. Run 'seed' or 'collect' first.")
             return 1
