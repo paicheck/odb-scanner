@@ -9,9 +9,12 @@ NRC 0x31 (requestOutOfRange), which is the wall the dashboard reports.
 
 Provenance of the scale factors:
 
-  [evDash]  nickn17/evDash CarVWID3.cpp / CarMEB.cpp (community RE of the
-            MEB diagnostics, Apache-2.0 sources)
+  [evDash]  nickn17/evDash CarVWID3.cpp (community RE of the MEB diagnostics,
+            Apache-2.0 sources) -- the per-module command queues
   [ABRP]    iternio/ev-obd-pids MEB.json (independent implementation)
+  [spot]    spot2000/Volkswagen-MEB-EV-CAN-parameters CSV: the only source
+            that states ATCP/ATSH/ATCRA per DID, and the authority for the
+            11-bit modules (energy 0x710 -> 0x77A, climate 0x746 -> 0x7B0)
   [CS]      cross-checked byte-exact against a Car Scanner ELM OBD2 log of
             the actual vehicle (2026-10-05, ID.3 MY2021, 58 kWh):
               - SoC raw 0xCB (203) -> 81.2 % BMS / 83.63 % display
@@ -22,6 +25,15 @@ Provenance of the scale factors:
               - battery temp raw 120 -> 20.0 C (u8/2 - 40)
               - max energy content raw -> 53,200 Wh (u32/1310.77)
             Disagreements would have shown up as visibly wrong values; none did.
+
+            The same log settles the CURRENT SIGN, which the sources
+            contradict. Car Scanner reported +0.93 to +1.98 A while the car sat
+            parked, and over the same ~16 min window the accumulated-*charge*
+            counter was frozen at 24422.8195 kWh while accumulated-*discharge*
+            grew by 0.143 kWh, with HV energy content falling 41325 -> 41200
+            Wh. Energy left the pack while current read positive, so
+            positive = discharge. (spot2000's note claims the opposite; the
+            car's own counters are the stronger evidence.)
 
 Raw bytes are always preserved by the collector, so a wrong guess here costs
 nothing but a re-decode later.
@@ -37,9 +49,10 @@ from .registry import (
 )
 
 ECU_BAT = "bat_mgmt"      # MEB module 0x7B
-ECU_ENERGY = "energy"    # MEB module 0x710
+ECU_ENERGY = "energy"    # MEB module 0x710 (11-bit)
 ECU_DCDC = "dcdc"        # MEB module 0xB9
 ECU_VEH = "veh_info"     # MEB module 0x76
+ECU_CLIMATE = "climate"  # MEB module 0x746 (11-bit)
 
 _EXP = DocStatus.EXPERIMENTAL
 
@@ -85,7 +98,12 @@ def _pack_voltage(raw: bytes) -> float:
 
 
 def _pack_current(raw: bytes) -> float:
-    """Pack current in A; positive = discharging (evDash convention)."""
+    """Pack current in A; positive = discharging.
+
+    Settled from the car's own log, not from convention: parked with
+    +0.93..+1.98 A reported, the charge counter froze while the discharge
+    counter grew. See the module docstring.
+    """
     return (u32be(raw) - 150000) / 100.0
 
 
@@ -136,12 +154,52 @@ def _byte(raw: bytes) -> int:
     return raw[0]
 
 
+def _byte_over(raw: bytes, div: float) -> float:
+    return raw[0] / div
+
+
+def _coolant_temps(raw: bytes) -> dict:
+    """Cooling-circuit inlet/outlet in degC from one 4-byte DID.
+
+    Byte order was ambiguous between sources until they were compared: the
+    spot2000 row labelled "outlet" reads data bytes 0-1 and evDash's live
+    inlet line reads data bytes 2-3, so outlet = [0:2], inlet = [2:4].
+    """
+    return {"outlet_c": u16be(raw, 0) / 64.0, "inlet_c": u16be(raw, 2) / 64.0}
+
+
+def _amb_12v(raw: bytes) -> float:
+    """HV-pack view of the 12 V battery voltage (multi-frame DID 0x2AF7)."""
+    return u16be(raw) / 1024.0 + 4.26
+
+
+def _outdoor_temp(raw: bytes) -> float:
+    return raw[0] / 2.0 - 50.0
+
+
+def _cabin_temp(raw: bytes) -> float:
+    return u16be(raw) / 5.0 - 40.0
+
+
 # -- module decoders -------------------------------------------------------
 def _max_energy_wh(raw: bytes) -> float:
     """Rated (maximum) HV energy content in Wh -- the SoH reference value.
 
     53,200 Wh against a measured 108-cell pack gives the real SoH; Car
     Scanner reports the same field for the same vehicle.
+    """
+    return u32be(raw) / MAX_ENERGY_COUNT_WH
+
+
+def _energy_content_wh(raw: bytes) -> float:
+    """HV energy content right now, in Wh.
+
+    DIVISOR IS A HYPOTHESIS. No open source implements this DID (evDash
+    queues it commented out and never decodes it) and Car Scanner's export
+    gives only the decoded value. Same 1310.77 Wh/count as the max-energy
+    DID is the reasonable guess because the log's 41,200 Wh maps to a
+    plausible u32 on that scale; treat a displayed number as unverified
+    until a real capture pins it. Raw is preserved either way.
     """
     return u32be(raw) / MAX_ENERGY_COUNT_WH
 
@@ -185,7 +243,9 @@ def _register_bms(reg: DIDRegistry) -> None:
     reg.register(DIDSpec(
         "pack_current", ECU_BAT, 0x1E3D, "HV pack current", "A",
         decode=_pack_current, doc_status=_EXP,
-        notes="(u32-150000)/100, + = discharge [evDash; CS log: 150198 -> 1.98 A]",
+        notes="(u32-150000)/100, + = discharge [evDash; CS log: 150198 -> "
+              "1.98 A, corroborated by the discharge counter rising while "
+              "the car was parked]",
     ))
     reg.register(DIDSpec(
         "cell_voltage_max", ECU_BAT, 0x1E33, "Cell voltage max", "V",
@@ -243,6 +303,21 @@ def _register_bms(reg: DIDRegistry) -> None:
         decode=_byte, doc_status=_EXP, slow=True, notes="byte0 [evDash]",
     ))
     reg.register(DIDSpec(
+        "coolant_temps", ECU_BAT, 0x189D, "Battery cooling liquid", "degC",
+        decode=_coolant_temps, doc_status=_EXP,
+        notes="outlet = u16[0:2]/64, inlet = u16[2:4]/64 [spot; evDash]",
+    ))
+    reg.register(DIDSpec(
+        "ptc_current", ECU_BAT, 0x1620, "PTC heater battery current", "A",
+        decode=lambda raw: _byte_over(raw, 4.0), doc_status=_EXP,
+        notes="u8 / 4 [spot]",
+    ))
+    reg.register(DIDSpec(
+        "speed_kmh", ECU_BAT, 0xF40D, "Vehicle speed (BMS)", "km/h",
+        decode=_byte, doc_status=_EXP,
+        notes="byte0, km/h [evDash; CS log reports 0 while parked]",
+    ))
+    reg.register(DIDSpec(
         "battery_serial", ECU_BAT, 0x0500, "HV battery serial", "",
         doc_status=_EXP, slow=True, notes="raw ASCII; length per ECU",
     ))
@@ -273,7 +348,19 @@ def _register_modules(reg: DIDRegistry) -> None:
     reg.register(DIDSpec(
         "hv_energy_max", ECU_ENERGY, 0x2AB2, "Max HV energy content", "Wh",
         decode=_max_energy_wh, doc_status=_EXP, slow=True,
-        notes="u32 / 1310.77 [evDash CarMEB; CS log: 53200 Wh]",
+        notes="u32 / 1310.77 [evDash CarVWID3; CS log: 53200 Wh]",
+    ))
+    reg.register(DIDSpec(
+        "hv_energy_content", ECU_ENERGY, 0x2AB8, "HV energy content", "Wh",
+        decode=_energy_content_wh, doc_status=_EXP, slow=True,
+        notes="u32 / 1310.77 -- DIVISOR ASSUMED, UNVERIFIED: no open-source "
+              "implementation decodes this DID [evDash queues it commented "
+              "out; CS log: 41200-41325 Wh parked]",
+    ))
+    reg.register(DIDSpec(
+        "aux_12v_voltage", ECU_ENERGY, 0x2AF7, "12V battery voltage (BMS)", "V",
+        decode=_amb_12v, doc_status=_EXP, slow=True,
+        notes="u16 / 1024 + 4.26, first bytes of a multi-frame [evDash]",
     ))
     reg.register(DIDSpec(
         "dcdc_current", ECU_DCDC, 0x465B, "DC/DC charging current", "A",
@@ -298,5 +385,20 @@ def _register_modules(reg: DIDRegistry) -> None:
     reg.register(DIDSpec(
         "vin", ECU_VEH, 0xF802, "VIN (gateway)", "",
         decode=_vin, doc_status=_EXP, slow=True,
-        notes="raw ASCII [evDash CarMEB]",
+        notes="raw ASCII [evDash CarVWID3]",
+    ))
+    reg.register(DIDSpec(
+        "hv_aux_power", ECU_VEH, 0x0364, "HV auxiliary consumer power", "kW",
+        decode=lambda raw: _u16_over(raw, 10.0), doc_status=_EXP,
+        notes="u16 / 10 [spot]",
+    ))
+    reg.register(DIDSpec(
+        "outside_temp", ECU_CLIMATE, 0x2609, "Outside temperature", "degC",
+        decode=_outdoor_temp, doc_status=_EXP, slow=True,
+        notes="u8 / 2 - 50 [evDash CarVWID3]",
+    ))
+    reg.register(DIDSpec(
+        "inside_temp", ECU_CLIMATE, 0x2613, "Inside temperature", "degC",
+        decode=_cabin_temp, doc_status=_EXP, slow=True,
+        notes="u16 / 5 - 40 [evDash CarVWID3]",
     ))

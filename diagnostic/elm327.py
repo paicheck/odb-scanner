@@ -9,9 +9,12 @@ Initialization uses conservative, documented ELM327 AT commands:
     ATAT1  adaptive timing  ATSP7  ISO 15765-4 CAN 500 kbit/s 29-bit
     ATCAF1 CAN auto-formatting on
 
-Addressing is functional-only: no ATSH/ATCRA is ever sent (see
-set_header). Requests go out on the protocol's default functional id and
-each ECU's answer is attributed by its response header (18DAF1xx).
+Addressing is functional by default: requests go out on the protocol's
+default functional id and each ECU's answer is attributed by its response
+header (18DAF1xx) or, on the 11-bit bus, its rx id. When the adapter accepts
+it, VAG MEB module addressing (ATCP + 6-digit ATSH) is negotiated at init so
+reads can also be aimed at one ECU physically -- see set_module. No receive
+filter (ATCRA) is ever set to a narrow value; see set_receive_address.
 
 Note: multi-frame (ISO-TP) responses are reassembled by the ELM327 for
 *requests it sends itself* on good adapters; cheap clones emit the raw
@@ -66,6 +69,7 @@ class Elm327Transport(OBDInterface):
         self.meb_addressing = False
         self._meb_module: int | None = None   # None = functional addressing
         self._caf = 1                          # CAN auto-formatting on/off
+        self._proto = PINNED_PROTOCOL          # active ATSP protocol
 
     # -- lifecycle ----------------------------------------------------------
     @property
@@ -192,6 +196,7 @@ class Elm327Transport(OBDInterface):
                     f"ATSP{PINNED_PROTOCOL}", "ATCAF1"):
             self.send_command(cmd)
         self._caf = 1
+        self._proto = PINNED_PROTOCOL
         self._meb_module = None
 
     def initialize(self) -> str:
@@ -271,6 +276,10 @@ class Elm327Transport(OBDInterface):
         is restored (CP 18 + DB33F1) so OBD-II modes keep working; if that
         restore is refused the adapter is reset with ATZ. Failure of either
         probe just leaves the transport in functional-only mode.
+
+        Only the 29-bit half of MEB addressing is probed here. The 11-bit
+        modules (energy 0x710, climate 0x746) need protocol 6 and are reached
+        by set_module, which negotiates per module.
         """
         if any("?" in r for r in self.send_command("ATCP 17")):
             log.info("Adapter refused 'ATCP 17' - MEB physical addressing "
@@ -294,11 +303,46 @@ class Elm327Transport(OBDInterface):
 
     def _restore_functional(self) -> bool:
         """Point the adapter back at the functional OBD header (0x18DB33F1)."""
-        resp = self.send_command("ATCP 18") + self.send_command("ATSH DB33F1")
+        resp = self._set_protocol(PINNED_PROTOCOL)
+        resp += self.send_command("ATCP 18")
+        resp += self.send_command("ATSH DB33F1")
         if any("?" in r for r in resp):
             return False
         self._meb_module = None
         return True
+
+    def _set_protocol(self, proto: str) -> list[str]:
+        """Switch ISO 15765-4 frame format (ATSP). Silent no-op when already set.
+
+        Protocol 7 is 29-bit and protocol 6 is 11-bit, both at 500 kbit/s.
+        MEB modules in the 11-bit range (energy 0x710, climate 0x746) are only
+        reachable on protocol 6; going back to a 29-bit module needs 7 again.
+        """
+        if self._proto == proto:
+            return []
+        resp = self.send_command(f"ATSP{proto}")
+        if not any("?" in r for r in resp):
+            self._proto = proto
+        return resp
+
+    def _recover(self) -> bool:
+        """Clear a latched bad header with ATZ and re-negotiate addressing.
+
+        The clone latches a header it does not like (see set_header): only ATZ
+        brings it back to a usable state. A refused module switch therefore
+        costs one adapter reset, after which addressing capability is probed
+        again rather than assumed.
+
+        Always returns False: the caller must re-issue the request with
+        functional addressing, because the adapter is no longer aimed at the
+        module it asked for.
+        """
+        log.info("Adapter refused a module header -- resetting and re-negotiating")
+        self.send_command("ATZ")
+        time.sleep(0.3)
+        self._base_init()
+        self._negotiate_meb()
+        return False
 
     def set_module(self, tx29: int | None) -> bool:
         """Switch addressing between functional (None) and one MEB module.
@@ -306,25 +350,31 @@ class Elm327Transport(OBDInterface):
         Also flips CAN auto-formatting: module reads use ATCAF0 with a
         hand-built ISO-TP single frame (ABRP's proven wire form), while
         functional OBD-II stays on ATCAF1 where bare '0100' is expected.
-        Returns False when the switch was refused and the caller should
-        fall back to functional addressing.
+
+        `tx29` may be either MEB form: a 29-bit id (0x17FC007B) or an 11-bit
+        one (0x710). Both are programmed as ATCP <priority> + ATSH <6 hex
+        digits>, which is what the community tooling sends; the protocol is
+        chosen to match the id. Returns False when the switch was refused and
+        the caller should fall back to functional addressing.
         """
         if not self.meb_addressing:
             return tx29 is None
-        if tx29 == self._meb_module:
+        want_proto = "6" if tx29 is not None and tx29 <= 0x7FF else PINNED_PROTOCOL
+        if tx29 == self._meb_module and self._proto == want_proto:
             return True
         if tx29 is None:
             if not self._restore_functional():
-                return False
+                return self._recover()
             if self._caf != 1:
                 self.send_command("ATCAF1")
                 self._caf = 1
             return True
-        resp = self.send_command(f"ATCP {(tx29 >> 24) & 0xFF:02X}")
+        resp = self._set_protocol(want_proto)
+        resp += self.send_command(f"ATCP {(tx29 >> 24) & 0xFF:02X}")
         resp += self.send_command(f"ATSH {tx29 & 0xFFFFFF:06X}")
         if any("?" in r for r in resp):
             log.warning("Adapter refused module header %08X", tx29)
-            return False
+            return self._recover()
         if self._caf != 0:
             self.send_command("ATCAF0")
             self._caf = 0

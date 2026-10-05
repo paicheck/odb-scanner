@@ -76,13 +76,17 @@ def test_validate_request_fails_closed():
 
 
 def test_no_header_or_filter_commands_are_ever_sent():
-    """Every request must go out functionally: never ATSH, never ATCRA.
+    """Without negotiated MEB addressing, requests must go out functionally.
 
     Regression: the field clone accepted a 3-digit ATSH under the 29-bit
     protocol and applied it as 0x000007E5 -- a poison id nothing answers
     -- while refusing both the 8-digit ATSH a 29-bit id needs and the
     plain ATSH that would clear it, so once any header was set every
     later read (DID or OBD-II) died with NO DATA until ATZ.
+
+    This is the fallback path. When MEB addressing IS negotiated, set_module
+    deliberately sends ATCP/ATSH -- but always paired with the ATZ recovery
+    that a refused header needs, and never a narrow ATCRA filter.
     """
     from diagnostic.connection import DiagnosticConnection
     from diagnostic.ecus import get_ecu
@@ -212,6 +216,56 @@ def test_set_module_switches_header_and_caf_mode():
     assert "ATCAF1" in stub.sent, "OBD-II requests need auto-formatting back on"
 
 
+def test_set_module_switches_protocol_for_11bit_modules():
+    """MEB is not one bus: 11-bit modules need ATSP6, 29-bit ones ATSP7."""
+    stub = _StubTransport()
+    from diagnostic.elm327 import Elm327Transport
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t.meb_addressing = True
+    t._meb_module = None
+
+    assert t.set_module(0x00000710) is True          # energy module (11-bit)
+    assert "ATSP6" in stub.sent
+    # Addressed exactly the way evDash/spot2000 do it: ATCP 00 + 6-digit ATSH.
+    assert "ATCP 00" in stub.sent
+    assert "ATSH 000710" in stub.sent
+
+    stub.sent.clear()
+    assert t.set_module(0x00000746) is True          # another 11-bit module
+    assert "ATSP6" not in stub.sent, "already on protocol 6"
+    assert "ATSH 000746" in stub.sent
+
+    stub.sent.clear()
+    assert t.set_module(0x17FC0076) is True          # back to a 29-bit module
+    assert "ATSP7" in stub.sent
+    assert "ATSH FC0076" in stub.sent
+
+    # Leaving an 11-bit module for the functional 29-bit OBD-II header has to
+    # put the protocol back, or every later OBD-II read dies with NO DATA.
+    stub.sent.clear()
+    assert t.set_module(0x00000710) is True
+    stub.sent.clear()
+    assert t.set_module(None) is True
+    assert "ATSP7" in stub.sent
+    assert "ATSH DB33F1" in stub.sent
+
+
+def test_set_module_refusal_resets_adapter_and_reports_failure():
+    """A latched bad header needs ATZ; the caller must then read functionally."""
+    stub = _StubTransport(refusals={"ATSH 000710"})
+    from diagnostic.elm327 import Elm327Transport
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t.meb_addressing = True
+    t._meb_module = None
+
+    assert t.set_module(0x00000710) is False
+    assert "ATZ" in stub.sent, "only ATZ clears a header the clone latches"
+    # After the reset the transport must not claim it is still on the module.
+    assert t._meb_module is None
+
+
 def test_meb_did_read_routes_to_module_and_hand_frames_it():
     """A read for an ECU with a tx29 must go out as a CAF0 single frame."""
     stub = _StubTransport(reply=["17FE007B0662028CCBAAAA"])
@@ -297,6 +351,29 @@ def test_meb_decoders_match_car_scanner_values():
                    + (used_raw & 0xFFFFFFFF).to_bytes(4, "big"))
     assert counters["charged_kwh"] == pytest.approx(24422.82, rel=1e-6)
     assert counters["used_kwh"] == pytest.approx(23447.48, rel=1e-6)
+    # Coolant: the log showed 22 C inlet and 22 C outlet parked.
+    assert val("coolant_temps", "05800580") == \
+        {"outlet_c": pytest.approx(22.0), "inlet_c": pytest.approx(22.0)}
+    assert val("ptc_current", "00") == 0.0
+    assert val("speed_kmh", "00") == 0
+    assert val("outside_temp", "80") == pytest.approx(14.0)   # 14 C ambient
+    assert val("inside_temp", "0122") == pytest.approx(18.0)  # 18 C cabin
+    assert val("hv_aux_power", "0003") == pytest.approx(0.3)   # u16/10
+    # The DID's own resolution is 1/1024 V, so compare to that not to 1e-5.
+    assert val("aux_12v_voltage", "290A") == pytest.approx(14.52, abs=0.002)
+
+
+def test_meb_energy_content_divisor_is_declared_unverified():
+    """0x2AB8 has no published scale factor; the guess must be labelled.
+
+    If this ever becomes verified, the note has to change with it.
+    """
+    from decoders.registry import build_default_registry
+
+    spec = build_default_registry("meb").get("hv_energy_content")
+    assert "ASSUMED, UNVERIFIED" in spec.notes
+    assert spec.ecu_key == "energy"
+    assert spec.did == 0x2AB8
 
 
 def test_meb_registry_has_the_full_cell_bank():
@@ -338,8 +415,16 @@ def test_ecu_specs_carry_meb_module_addresses():
     bms = get_ecu("bat_mgmt")
     assert bms.tx29 == 0x17FC007B and bms.rx29 == 0x17FE007B
     assert get_ecu("dcdc").tx29 == 0x17FC00B9
-    assert get_ecu("energy").tx29 == 0x17000710
     assert get_ecu("veh_info").tx29 == 0x17FC0076
+    # The energy and climate modules are NOT on the 29-bit bus. They answer at
+    # plain 11-bit ids, addressed with ATCP 00 + ATSH 000710/000746 and
+    # replying at 0x77A / 0x7B0 -- a 29-bit guess here reaches nothing.
+    energy = get_ecu("energy")
+    assert energy.tx29 == 0x00000710 and energy.rx29 == 0x0000077A
+    assert energy.tx29 <= 0x7FF and energy.rx29 <= 0x7FF
+    climate = get_ecu("climate")
+    assert climate.tx29 == 0x00000746 and climate.rx29 == 0x000007B0
+    assert climate.tx29 <= 0x7FF and climate.rx29 <= 0x7FF
     # ECUs with no MEB module address keep functional-only addressing.
     assert get_ecu("chg_mgmt").tx29 is None
 
@@ -1341,7 +1426,7 @@ def test_simulator_end_to_end():
 @pytest.mark.slow
 def test_simulator_meb_addressing_end_to_end():
     """The whole MEB path against the simulated adapter: negotiate ATCP/ATSH,
-    read BMS DIDs at 0x17FC007B, other modules at their own addresses, and
+    read BMS DIDs at 0x17FC007B, the 11-bit modules at their own ids, and
     check functional OBD-II still works afterwards."""
     from simulator.vehicle import SimServer
     from diagnostic.elm327 import Elm327Transport
@@ -1353,32 +1438,53 @@ def test_simulator_meb_addressing_end_to_end():
     with SimServer("127.0.0.1", 35124):
         t = Elm327Transport(host="127.0.0.1", tcp_port=35124, timeout=5.0)
         c = DiagnosticConnection(t)
-        c.open()
-        assert t.meb_addressing is True, "simulator must accept MEB addressing"
+        try:
+            c.open()
+            assert t.meb_addressing is True, "simulator must accept MEB addressing"
 
-        bms = get_ecu("bat_mgmt")
-        reg = DIDRegistry()
-        register_meb(reg)
-        soc = reg.get("soc_abs").decode_value(c.read_did(bms, 0x028C))
-        assert 50.0 < soc < 80.0, soc
-        volt = reg.get("pack_voltage").decode_value(c.read_did(bms, 0x1E3B))
-        assert 300.0 < volt < 400.0, volt
+            reg = DIDRegistry()
+            register_meb(reg)
+            bms = get_ecu("bat_mgmt")
+            soc = reg.get("soc_abs").decode_value(c.read_did(bms, 0x028C))
+            assert 50.0 < soc < 80.0, soc
+            volt = reg.get("pack_voltage").decode_value(c.read_did(bms, 0x1E3B))
+            assert 300.0 < volt < 400.0, volt
 
-        # A second module: physical address switches, then answers.
-        energy = reg.get("hv_energy_max").decode_value(
-            c.read_did(get_ecu("energy"), 0x2AB2))
-        assert energy == pytest.approx(53200.0, rel=0.01)
-        odo = reg.get("odometer_km").decode_value(
-            c.read_did(get_ecu("veh_info"), 0x295A))
-        assert odo > 0
-        dcdc_v = reg.get("dcdc_voltage").decode_value(
-            c.read_did(get_ecu("dcdc"), 0x465D))
-        assert 10.0 < dcdc_v < 16.0, dcdc_v
+            # A second module: physical address switches, then answers.
+            energy = reg.get("hv_energy_max").decode_value(
+                c.read_did(get_ecu("energy"), 0x2AB2))
+            assert energy == pytest.approx(53200.0, rel=0.01)
+            # Reaching the 11-bit energy module means leaving the 29-bit bus.
+            assert t._proto == "6", "an 11-bit module must switch to protocol 6"
+            odo = reg.get("odometer_km").decode_value(
+                c.read_did(get_ecu("veh_info"), 0x295A))
+            assert odo > 0
+            dcdc_v = reg.get("dcdc_voltage").decode_value(
+                c.read_did(get_ecu("dcdc"), 0x465D))
+            assert 10.0 < dcdc_v < 16.0, dcdc_v
 
-        # Functional reads must still work after all that module switching.
-        assert c.read_vin() == "WVWZZZE1ZMP087053"
-        assert c.try_mode01(0x42) is not None
-        c.close()
+            # The 11-bit modules: ATCP 00 + ATSH 000710/000746, answering at
+            # 0x77A / 0x7B0.
+            content = reg.get("hv_energy_content").decode_value(
+                c.read_did(get_ecu("energy"), 0x2AB8))
+            assert content == pytest.approx(41200.0, rel=0.01)
+            outside = reg.get("outside_temp").decode_value(
+                c.read_did(get_ecu("climate"), 0x2609))
+            assert outside == pytest.approx(14.0, abs=0.2)
+
+            # Back onto the 29-bit bus for the BMS, protocol included.
+            coolant = reg.get("coolant_temps").decode_value(
+                c.read_did(bms, 0x189D))
+            assert coolant["outlet_c"] > coolant["inlet_c"]
+            assert t._proto == "7", "the 29-bit bus needs protocol 7 back"
+
+            # Functional reads must still work after all that module switching.
+            assert c.read_vin() == "WVWZZZE1ZMP087053"
+            assert c.try_mode01(0x42) is not None
+        finally:
+            # Always drop the socket: a failed assertion must not leave the
+            # simulator's connection thread parked in recv().
+            c.close()
 
 
 # --- AI layer -------------------------------------------------------------------

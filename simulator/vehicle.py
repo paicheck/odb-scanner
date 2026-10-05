@@ -107,23 +107,30 @@ def _did_value(did: int) -> bytes | None:
 
 
 # --- MEB module persona ------------------------------------------------------
-# Real MEB modules answer only at their 29-bit address, reached with
+# Real MEB modules answer only at their physical address, reached with
 # ATCP <priority> + 6-digit ATSH. The simulator implements that so the MEB
 # addressing path (Elm327Transport.set_module / DiagnosticConnection._transmit)
 # can be exercised end to end without a car. Values are MEB-scaled -- the
 # point of the exercise is that the MEB decoder formulas reproduce sane
 # engineering values, not that the sim matches the e-Up persona above.
+#
+# Not all MEB modules are on the 29-bit bus: the energy and climate modules
+# sit at plain 11-bit ids (evDash/spot2000), so their response headers are
+# 3 hex digits, not 8.
 _MEB_CELL_SLOTS = 108          # 0x1E40..0x1EAB
 _MEB_CELL_ACTIVE = 102         # slots 102..107 answer 0x0FFE (unpopulated)
 _MEB_MAX_ENERGY_WH = 53200.0   # rated HV energy content (SoH reference)
+_MEB_CONTENT_WH = 41200.0      # energy content parked at ~81 % SoC
 _MEB_ODO_KM = 48123.0
+_MEB_12V_V = 14.52
 
-# request id -> (response id, responder tag)
+# request id -> response id header as the adapter prints it
 MEB_MODULES = {
     0x17FC007B: "17FE007B",   # HV battery management
     0x17FC00B9: "17FE00B9",   # DC/DC converter
-    0x17000710: "17FE0710",   # gateway energy information
+    0x00000710: "77A",        # gateway energy information (11-bit)
     0x17FC0076: "17FE0076",   # vehicle info (odo/gear/VIN)
+    0x00000746: "7B0",        # climate control (11-bit)
 }
 
 
@@ -161,6 +168,14 @@ def _meb_did_value(req29: int, did: int) -> bytes | None:
                 return bytes([4 if charge_mode() else 0])
             if did == 0x743B:
                 return bytes([35])
+            if did == 0x1620:
+                return bytes([0])                 # no PTC draw when parked
+            if did == 0x189D:
+                # outlet = u16[0:2]/64, inlet = u16[2:4]/64
+                return _enc_u16((battery_temp() + 2.0) * 64) + \
+                       _enc_u16((battery_temp() + 0.0) * 64)
+            if did == 0xF40D:
+                return bytes([0])                 # parked
             if did == 0x0500:
                 return b"SIMHV0000000001"
             if 0x1E40 <= did < 0x1E40 + _MEB_CELL_SLOTS:
@@ -172,9 +187,13 @@ def _meb_did_value(req29: int, did: int) -> bytes | None:
                 # u16 = (degC + 40) * 8
                 return _enc_u16((battery_temp() + 40) * 8)
             return None
-        if req29 == 0x17000710:
+        if req29 == 0x00000710:
             if did == 0x2AB2:
                 return int(_MEB_MAX_ENERGY_WH * 1310.77).to_bytes(4, "big")
+            if did == 0x2AB8:
+                return int(_MEB_CONTENT_WH * 1310.77).to_bytes(4, "big")
+            if did == 0x2AF7:
+                return _enc_u16((_MEB_12V_V - 4.26) * 1024)
             return None
         if req29 == 0x17FC00B9:
             if did == 0x465B:
@@ -187,8 +206,16 @@ def _meb_did_value(req29: int, did: int) -> bytes | None:
                 return int(_MEB_ODO_KM).to_bytes(3, "big")
             if did == 0x210E:
                 return bytes([0x00, 0x08])       # 08 = P
+            if did == 0x0364:
+                return _enc_u16(0.45 * 10)       # ~0.45 kW of auxiliaries
             if did == 0xF802:
                 return VIN
+            return None
+        if req29 == 0x00000746:
+            if did == 0x2609:
+                return bytes([round((14.0 + 50) * 2) & 0xFF])
+            if did == 0x2613:
+                return _enc_u16((18.5 + 40) * 5)
             return None
     return None
 
@@ -415,6 +442,21 @@ class SimHandler(socketserver.BaseRequestHandler):
         return [MEB_MODULES[req29] + bytes([0x03, 0x7F, sid, 0x11]).hex().upper()]
 
 
+class _SimTCPServer(socketserver.ThreadingTCPServer):
+    """Threading server whose handler threads cannot hold the process open.
+
+    socketserver.ThreadingTCPServer defaults to non-daemon handler threads, so
+    any client that connects and then goes away without closing (a failed
+    assertion, a crashed caller, Ctrl-C) leaves a thread parked in recv() and
+    the interpreter never exits. allow_reuse_address is set here rather than
+    by mutating socketserver.ThreadingTCPServer, which would leak into every
+    other TCP server in the process.
+    """
+
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 class SimServer:
     def __init__(self, host: str, port: int):
         self.host, self.port = host, port
@@ -422,9 +464,7 @@ class SimServer:
         self._thread = None
 
     def start(self) -> None:
-        allow_reuse = socketserver.ThreadingTCPServer
-        allow_reuse.allow_reuse_address = True
-        self._srv = allow_reuse((self.host, self.port), SimHandler)
+        self._srv = _SimTCPServer((self.host, self.port), SimHandler)
         self._thread = threading.Thread(target=self._srv.serve_forever, daemon=True)
         self._thread.start()
 

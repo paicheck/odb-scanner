@@ -9,6 +9,14 @@ community PID documentation for the VW e-Up / MEB-family VAG ECUs. The
 same UDS-on-CAN addressing convention applies to the ID.3, but whether a
 given ECU answers directly or only via the gateway (J533) must be verified
 per vehicle in the discovery phase (`main.py discover`).
+
+MEB physical addressing is NOT uniform. The battery, DC/DC and vehicle-info
+modules sit on the 29-bit diagnostic bus (0x17FC007B, 0x17FC00B9, 0x17FC0076
+request -> 0x17FExxxx response), while the energy, climate and GPS modules
+sit on plain 11-bit ids (0x710 -> 0x77A, 0x746 -> 0x7B0, 0x767 -> 0x7D1).
+`tx29` holds either form and the transport picks the protocol accordingly
+(Elm327Transport.set_module); source: spot2000/Volkswagen-MEB-EV-CAN-parameters
+and nickn17/evDash CarVWID3.cpp, both of which drive exactly these ids.
 """
 from __future__ import annotations
 
@@ -56,11 +64,20 @@ ECUS: dict[str, ECUSpec] = {
             tx29=0x17FC00B9, rx29=0x17FE00B9,
         ),
         ECUSpec(
-            "energy", "Gateway energy information", 0x710, 0x710,
+            "energy", "Gateway energy information", 0x710, 0x77A,
             doc_status="experimentally determined (evDash/ABRP MEB community)",
             notes="MEB module 0x710: HV energy content (SoH source). "
-                  "Response id assumed 17FE0710; verified on vehicle.",
-            tx29=0x17000710, rx29=None,
+                  "NOTE: unlike the BMS/DC-DC/vehicle-info modules this one "
+                  "is NOT on the 29-bit bus -- it is addressed 11-bit with "
+                  "ATCP 00 + ATSH 000710 and answers at 0x77A.",
+            tx29=0x00000710, rx29=0x0000077A,
+        ),
+        ECUSpec(
+            "climate", "Climate control", 0x746, 0x7B0,
+            doc_status="experimentally determined (evDash/ABRP MEB community)",
+            notes="MEB module 0x746: cabin and ambient temperature. Also "
+                  "11-bit addressed (ATCP 00 + ATSH 000746 -> 0x7B0).",
+            tx29=0x00000746, rx29=0x000007B0,
         ),
         ECUSpec(
             "veh_info", "Vehicle info (odometer/gear/VIN)", 0x76, 0x76,
