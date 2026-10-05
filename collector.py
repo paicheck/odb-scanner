@@ -78,6 +78,11 @@ class Collector:
         # full adapter.timeout on every cycle otherwise, and the stored-DTC
         # set rarely changes within a run.
         self._dtc_snapshots: dict[str, dict] = {}
+        # Set False by discover_ecus() when the battery DIDs are refused on
+        # this vehicle's OBD surface (BMS not exposed through the gateway,
+        # e.g. NRC-31): the per-cell sweep would otherwise re-collect 102
+        # guaranteed failures on every slow phase.
+        self._cells_readable = True
 
     def _adopt_open_session(self) -> None:
         """Continue a session a previous run left open.
@@ -198,6 +203,20 @@ class Collector:
                 "functional discovery: " + ", ".join(
                     f"{k}@{uds.source_label(v)}"
                     for k, v in sorted(self.ecu_addresses.items())))
+        # Battery DIDs refused or unanswered on this vehicle's OBD surface?
+        # The per-cell sweep can only produce the same verdicts 102 times
+        # per slow phase -- skip it and say why.
+        bat = results.get("bat_mgmt", "")
+        if self._cells_readable and (bat.startswith("nrc-")
+                                     or bat == "no-response"):
+            self._cells_readable = False
+            log.info("Cell sweep disabled: battery DIDs answer %r on this "
+                     "vehicle (BMS not exposed via the OBD surface)", bat)
+            self.repo.add_event(
+                self.vehicle_id, utcnow(), "note",
+                f"Cell sweep disabled this run: battery DID probe answered "
+                f"'{bat}' -- the BMS is not reachable through the gateway's "
+                f"OBD surface on this vehicle")
         log.info("ECU discovery: %s", results)
         return results
 
@@ -281,7 +300,8 @@ class Collector:
         # it runs on its own cadence (collector.slow_poll_interval) rather than
         # on every fast poll.
         if self._slow_phase_due():
-            if self.cfg.get("collector.read_cell_voltages", True):
+            if self.cfg.get("collector.read_cell_voltages", True) \
+                    and self._cells_readable:
                 self._sweep_cells(ts)
             self._slow_pass(ts, snapshot)
         self._battery_snapshot(ts, snapshot)

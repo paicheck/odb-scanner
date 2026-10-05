@@ -1157,6 +1157,51 @@ def test_stale_charge_mode_is_not_used_to_close_a_session(repo, tmp_path):
     assert open_rows == 0
 
 
+def test_cell_sweep_skipped_when_battery_dids_are_refused(repo, tmp_path):
+    """Real-car finding (ID.3, 2026-10): battery DIDs answer NRC-31 through
+    the gateway's OBD surface -- the BMS is not exposed. The 102-DID cell
+    sweep must then be skipped instead of re-collecting guaranteed failures
+    on every slow phase, and the reason must be recorded as an event.
+    """
+    from collector import Collector
+    from diagnostic.interface import CommunicationError
+    from diagnostic.uds import NegativeResponseError
+
+    cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
+                                "max_value_age_s": 900.0},
+                  "database": {"path": str(tmp_path / "c.db")}})
+
+    class _RefusingConn:
+        """Every functional probe answers NRC requestOutOfRange."""
+        def functional_probe(self, hexcmd, purpose):
+            return {0x18DAF10A: bytes([0x7F, 0x22, 0x31])}
+
+        def read_did(self, ecu, did):
+            raise NegativeResponseError(0x22, 0x31)
+
+        def mode01(self, pid):
+            raise CommunicationError("no data")
+
+    col = Collector(cfg, repo)
+    col.conn = _RefusingConn()
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+
+    results = col.discover_ecus()
+    assert results["bat_mgmt"] == "nrc-31"
+    assert col._cells_readable is False
+    notes = [r["description"] for r in repo.conn.execute(
+        "SELECT description FROM diagnostic_events WHERE vehicle_id=? "
+        "AND kind='note'", (col.vehicle_id,)).fetchall()]
+    assert any("Cell sweep disabled" in n for n in notes), notes
+
+    # ...and one collection pass must not touch a single cell DID
+    polled: list[str] = []
+    col.poll_did = lambda spec, ts: polled.append(spec.key)
+    col.collect_once()
+    assert polled, "slow pass should still poll non-cell DIDs"
+    assert not [k for k in polled if k.startswith("cell_v_")], polled
+
+
 def test_collector_cadence_matches_the_configured_period():
     """The period must be the configured one, not the interval plus the work."""
     import time as _time
