@@ -55,6 +55,19 @@ class DiagnosticConnection:
         if callable(set_module) and getattr(self.t, "meb_addressing", False):
             if meb and set_module(target):
                 body = hexcmd
+                # Single-frame ISO-TP: one length byte then up to 7 data
+                # bytes. The slicing below would silently drop anything past
+                # that, so refuse instead. validate_request caps the request
+                # at the same 7 bytes, so this is unreachable via _transmit --
+                # it is here because a truncated frame produces an ECU error
+                # rather than anything recognisable, and the cost of checking
+                # is one comparison.
+                if len(body) // 2 > 7:
+                    raise CommunicationError(
+                        f"Refusing to send a {len(body) // 2}-byte MEB request: "
+                        f"the single-frame ISO-TP path carries at most 7 data "
+                        f"bytes. Multi-frame is not implemented."
+                    )
                 wire = (f"{len(body) // 2:02X}{body}" + "55" * 8)[:16]
             else:
                 set_module(None)

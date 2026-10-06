@@ -102,10 +102,22 @@ MIN_REQUEST_BYTES: dict[int, int] = {
     0x3E: 2,
 }
 
-# Nothing this tool sends is longer than a single read request; ISO-TP caps a
-# CAN frame at 8 bytes and every allow-listed service here is shorter still.
-# A cap costs nothing and stops an over-long payload reaching the wire.
-MAX_REQUEST_BYTES = 15
+# Nothing this tool sends is longer than a single read request, and this is the
+# longest one that can actually be framed.
+#
+# 7, not 15. ISO-TP puts at most 7 data bytes in a single CAN frame, and the
+# MEB addressing path in connection.py builds that frame by hand:
+#     wire = (f"{len(body)//2:02X}{body}" + "55"*8)[:16]
+# which hard-truncates at 16 hex chars. At a 15-byte cap the validator would
+# approve a request whose trailing bytes were silently dropped in transit, and
+# the ECU would answer 0x13 incorrectMessageLengthOrInvalidFormat -- a
+# correctness bug at best, and a request the safety manifest recorded in full
+# while the vehicle received a fragment of it at worst.
+#
+# The longest request actually sent is 6 bytes (1904<DTC>FF, a DTC snapshot
+# for one status mask). Raising this means implementing ISO-TP multi-frame
+# first, and until that exists the honest cap is what one frame holds.
+MAX_REQUEST_BYTES = 7
 
 NRC = {
     0x10: "generalReject",

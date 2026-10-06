@@ -1551,6 +1551,81 @@ def test_a_zero_reading_is_not_treated_as_missing(repo):
     assert _first_number(0, 0) == 0
 
 
+def test_concurrent_writers_do_not_duplicate_an_anomaly(repo):
+    """add_anomaly was a check-then-write, so parallel scans duplicated rows.
+
+    The old form did SELECT (autocommit, no transaction) and then branched to
+    an INSERT that opened one. The gap between the two is unprotected, and the
+    anomaly scan fans out over metrics in a thread pool -- so two threads
+    working the same (ts, metric) both saw "no existing row" and both inserted.
+    Four threads over sixty identical writes made four rows.
+
+    SQLite serialises writers at the statement level, so two single-statement
+    operations cannot interleave; the fix is to make the upsert two atomic
+    statements instead of a select followed by a write.
+    """
+    import threading
+
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    ts = "2026-09-01T10:00:00+00:00"
+    THREADS = 4
+    PER_THREAD = 60
+    barrier = threading.Barrier(THREADS)
+    errors: list[BaseException] = []
+
+    def writer():
+        try:
+            barrier.wait(timeout=10)      # maximise the overlap
+            for _ in range(PER_THREAD):
+                repo.add_anomaly(vid, ts, "cell_delta_mv", 42.0, 10.0, 2.0,
+                                 16.0, "high", "cell delta above baseline")
+        except BaseException as exc:      # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer) for _ in range(THREADS)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, f"writer thread failed: {errors}"
+    rows = repo.conn.execute(
+        "SELECT COUNT(*) c FROM anomalies WHERE vehicle_id=? AND ts=? "
+        "AND metric=?", (vid, ts, "cell_delta_mv")).fetchone()["c"]
+    assert rows == 1, (
+        f"{THREADS} threads x {PER_THREAD} identical writes produced "
+        f"{rows} rows, expected 1")
+
+
+def test_the_validator_cannot_approve_a_request_one_frame_cannot_hold():
+    """MAX_REQUEST_BYTES was 15, but the MEB path builds a single CAN frame.
+
+    connection.py pads the request into an ISO-TP single frame by slicing to
+    16 hex chars, so anything past 7 data bytes was truncated in transit after
+    the validator had approved it. The vehicle would answer 0x13
+    incorrectMessageLengthOrInvalidFormat, and the safety manifest would have
+    recorded the full request while the car received a fragment of it.
+    """
+    from diagnostic.uds import MAX_REQUEST_BYTES, ReadOnlyViolationError
+
+    assert MAX_REQUEST_BYTES == 7, (
+        f"cap is {MAX_REQUEST_BYTES} bytes but the single-frame ISO-TP path "
+        "carries 7 data bytes; multi-frame is not implemented")
+
+    # The longest request the tool actually sends: 1904<DTC>FF, 6 bytes.
+    uds.validate_request("19041A2B3CFF")
+
+    # 7 bytes is the boundary and must still be allowed.
+    uds.validate_request("22223AB7FFF100")
+
+    with pytest.raises(ReadOnlyViolationError):
+        uds.validate_request("22223AB7FFF10001")    # 8 bytes
+    with pytest.raises(ReadOnlyViolationError):
+        uds.validate_request("221E3BFFFC1011AB")    # 8 bytes: the multi-DID shape
+    with pytest.raises(ReadOnlyViolationError):
+        uds.validate_request("221E3BFFFC1011ABCD01")  # 10 bytes
+
+
 def test_the_tx_log_records_the_bytes_that_went_on_the_wire():
     """tx_log is the safety manifest, so it must describe what was sent.
 

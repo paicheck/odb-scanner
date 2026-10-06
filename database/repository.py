@@ -720,24 +720,32 @@ class Repository:
         # example. Inserting unconditionally duplicated rows until the table was
         # mostly copies. A given metric can only be anomalous at a given
         # timestamp, so upsert on that key and let a rescan refresh the numbers.
-        existing = self.conn.execute(
-            "SELECT id FROM anomalies WHERE vehicle_id=? AND ts=? AND metric=?",
-            (vehicle_id, ts, metric),
-        ).fetchone()
-        if existing:
-            self.conn.execute(
-                "UPDATE anomalies SET value=?, baseline_mean=?, baseline_std=?, "
-                "zscore=?, direction=?, description=? WHERE id=?",
-                (value, mean, std, z, direction, description, existing["id"]),
-            )
-        else:
-            self.conn.execute(
-                "INSERT INTO anomalies(vehicle_id, ts, metric, value, "
-                "baseline_mean, baseline_std, zscore, direction, description) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
-                (vehicle_id, ts, metric, value, mean, std, z, direction,
-                 description),
-            )
+        #
+        # UPDATE first, then INSERT ... WHERE NOT EXISTS, rather than SELECT
+        # then branch. The previous form was a check-then-write: with
+        # sqlite3's default isolation_level="", a SELECT runs in autocommit and
+        # only the following write opens a transaction, so the gap between them
+        # is unprotected. The anomaly scan fans out over metrics in a thread
+        # pool, so two threads working the same (ts, metric) both saw "no
+        # existing row" and both inserted. The two statements below are each
+        # atomic on their own, and SQLite serialises writers at the statement
+        # level, so exactly one thread's INSERT sees the row the other just
+        # wrote. This also needs no schema change, so it does not put existing
+        # databases at risk of a migration failure.
+        self.conn.execute(
+            "UPDATE anomalies SET value=?, baseline_mean=?, baseline_std=?, "
+            "zscore=?, direction=?, description=? "
+            "WHERE vehicle_id=? AND ts=? AND metric=?",
+            (value, mean, std, z, direction, description, vehicle_id, ts, metric),
+        )
+        self.conn.execute(
+            "INSERT INTO anomalies(vehicle_id, ts, metric, value, "
+            "baseline_mean, baseline_std, zscore, direction, description) "
+            "SELECT ?,?,?,?,?,?,?,?,? WHERE NOT EXISTS "
+            "(SELECT 1 FROM anomalies WHERE vehicle_id=? AND ts=? AND metric=?)",
+            (vehicle_id, ts, metric, value, mean, std, z, direction,
+             description, vehicle_id, ts, metric),
+        )
         self.conn.commit()
 
     def anomalies(self, vehicle_id: int, days: int = 30):
