@@ -1500,6 +1500,105 @@ def test_backup_produces_a_readable_consistent_snapshot(tmp_path):
     repo.close()
 
 
+def test_logs_rotate_instead_of_growing_without_bound(tmp_path, monkeypatch):
+    """A detached collector's only record was a scrollback buffer nobody reads,
+    and the launcher's capture file only ever grew (182 KB after a day). main.py
+    now owns a rotating log per component."""
+    import logging
+    import logging.handlers
+
+    import main as main_mod
+
+    monkeypatch.setattr(main_mod, "LOG_ROTATE_BYTES", 4096)
+    monkeypatch.setattr(main_mod, "LOG_BACKUP_COUNT", 2)
+    monkeypatch.setenv("ODB_STDERR_CAPTURED", "1")
+
+    root_logger = logging.getLogger()
+    saved = list(root_logger.handlers)
+    root_logger.handlers.clear()
+    try:
+        main_mod.configure_logging("collector", log_dir=tmp_path / "logs")
+        handlers = root_logger.handlers
+        rotating = [h for h in handlers
+                    if isinstance(h, logging.handlers.RotatingFileHandler)]
+        assert rotating, f"expected a rotating handler, got {handlers}"
+        assert rotating[0].maxBytes == 4096
+        assert rotating[0].backupCount == 2
+        assert rotating[0].baseFilename.endswith("collector.log")
+
+        # No console handler when the launcher already captured stderr, so the
+        # same lines are not written twice.
+        assert not [h for h in handlers
+                    if isinstance(h, logging.StreamHandler)
+                    and not isinstance(h, logging.handlers.RotatingFileHandler)]
+
+        # Write well past the limit and prove the file stays bounded and rolls.
+        for i in range(400):
+            logging.getLogger("t").info("x" * 200 + f" {i}")
+        for h in list(handlers):
+            h.flush()
+
+        path = Path(rotating[0].baseFilename)
+        assert path.stat().st_size <= 4096, "log file exceeded its rotation limit"
+        rolled = sorted(p.name for p in path.parent.glob("collector.log.*"))
+        assert rolled, "nothing rolled over"
+        assert len(rolled) <= 2, f"backup count ignored: {rolled}"
+        # Total on-disk log size stays bounded too, not just the current file.
+        total = sum(p.stat().st_size for p in path.parent.glob("collector.log*"))
+        assert total <= 4096 * 3, f"logs unbounded overall: {total} bytes"
+    finally:
+        for h in list(root_logger.handlers):
+            h.close()
+        root_logger.handlers.clear()
+        for h in saved:
+            root_logger.addHandler(h)
+
+
+def test_logging_survives_an_unwritable_log_directory(tmp_path, monkeypatch):
+    """A read-only install or a locked file must not stop the collector."""
+    import logging
+
+    import main as main_mod
+
+    monkeypatch.delenv("ODB_STDERR_CAPTURED", raising=False)
+    root_logger = logging.getLogger()
+    saved = list(root_logger.handlers)
+    root_logger.handlers.clear()
+    # Collected by hand rather than via caplog: the warning goes to the root
+    # logger through root.warning(), which caplog does not intercept once
+    # configure_logging has replaced the handler chain underneath it.
+    warnings: list[str] = []
+    capture = logging.Handler()
+    capture.emit = lambda record: warnings.append(record.getMessage())
+    root_logger.addHandler(capture)
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("i am a file", encoding="utf-8")
+    try:
+        main_mod.configure_logging("collector", log_dir=blocker)
+        # A console handler must still be there, and the failure must be said
+        # out loud rather than swallowed.
+        assert [h for h in root_logger.handlers
+                if isinstance(h, logging.StreamHandler)
+                and not isinstance(h, logging.FileHandler)], "console logging lost"
+        assert any("log file" in w.lower() for w in warnings), (
+            f"failure not reported: {warnings}")
+    finally:
+        for h in list(root_logger.handlers):
+            h.close()
+        root_logger.handlers.clear()
+        for h in saved:
+            root_logger.addHandler(h)
+
+
+def test_command_names_map_to_the_documented_log_files():
+    """The .bat shortcuts and start_scanner tell users to look at
+    data/logs/collector.log; renaming them would break that."""
+    import main as main_mod
+    assert main_mod.LOG_COMPONENT["collect"] == "collector"
+    assert main_mod.LOG_COMPONENT["serve"] == "web"
+    assert main_mod.LOG_COMPONENT["simulate"] == "simulator"
+
+
 def test_backup_dir_is_configurable_and_gitignored(tmp_path):
     root = Path(__file__).resolve().parents[1]
     ignored = (root / ".gitignore").read_text(encoding="utf-8")

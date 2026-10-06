@@ -17,9 +17,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+import logging.handlers
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Keep each log file to a size you can actually scroll, with enough history to
+# see when a fault started. 2 MB is roughly a week of continuous collecting at
+# the default 5 s cycle; three backups is a fortnight.
+LOG_ROTATE_BYTES = 2 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
 
 from config import load_config
 from database.repository import Repository
@@ -350,10 +358,76 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Log file names per command. These are NOT simply the command name: the
+# launcher and the .bat shortcuts tell users to look in
+# data/logs/collector.log, web.log and simulator.log, and renaming them to
+# collect.log/serve.log/simulate.log would break that muscle memory for no
+# benefit.
+LOG_COMPONENT = {
+    "collect": "collector",
+    "serve": "web",
+    "simulate": "simulator",
+    "discover": "discover",
+    "doctor": "doctor",
+    "guard-test": "maintenance",
+    "analyze": "analyze",
+    "report": "report",
+    "prune": "maintenance",
+    "backup": "maintenance",
+    "migrate": "maintenance",
+    "seed": "maintenance",
+}
+
+
+def configure_logging(component: str, log_dir: Path | None = None) -> None:
+    """Log to the console AND to a bounded file in data/logs/.
+
+    Console-only logging is fine right up to the moment it matters: an
+    always-on collector started detached writes to a scrollback buffer nobody
+    will ever read, so the record of why a collection run misbehaved is simply
+    gone by the time anyone looks. tools/start_scanner.py already appended the
+    child process's output to data/logs/<name>.log, but with no rotation, so
+    that file only ever grew -- 182 KB after a day's use, and unbounded after
+    that, which makes it useless for diagnosis long before it threatens the
+    disk.
+
+    Rotating on write fixes that at the source and covers every entry point
+    (collect, serve, analyze) rather than just the launcher. STDERR_CAPTURED
+    suppresses the console handler when a launcher is already teeing stderr
+    into a file it manages, so the same lines are not written twice.
+    """
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+    if not os.environ.get("ODB_STDERR_CAPTURED"):
+        console = logging.StreamHandler()
+        console.setFormatter(fmt)
+        root.addHandler(console)
+
+    try:
+        # `log_dir` is injectable so tests can prove rotation without writing
+        # into the developer's real data/logs/ -- which holds the actual record
+        # of past collection runs, and is not the test suite's to overwrite.
+        log_dir = Path(log_dir) if log_dir is not None else (
+            Path(__file__).resolve().parent / "data" / "logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        rotating = logging.handlers.RotatingFileHandler(
+            log_dir / f"{component}.log", maxBytes=LOG_ROTATE_BYTES,
+            backupCount=LOG_BACKUP_COUNT, encoding="utf-8")
+        rotating.setFormatter(fmt)
+        root.addHandler(rotating)
+    except OSError as exc:
+        # A read-only install or a locked file must not stop the collector: the
+        # console handler above is still there, and losing the file is far
+        # better than losing the run.
+        root.warning("Could not open a log file in data/logs/ (%s). "
+                     "Continuing with console logging only.", exc)
+
+
 def main() -> int:
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = build_parser().parse_args()
+    configure_logging(LOG_COMPONENT.get(args.command, args.command))
 
     if args.command == "guard-test":
         return cmd_guard_test()

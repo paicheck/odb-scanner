@@ -280,6 +280,19 @@ never pruned — and neither is `tx_log`, the safety manifest that records every
 request ever sent to the vehicle. That record exists to be kept, so neither
 prune mode touches it.
 
+### Logs
+
+`data/logs/<component>.log` rotates at 2 MB with three backups kept, so a
+collector left running for months cannot fill the disk and the recent past is
+always still on disk. The names match what the shortcuts tell you to look at:
+`collector.log`, `web.log`, `simulator.log`, `discover.log`. Short-lived
+commands (`guard-test`, `prune`, `backup`) share `maintenance.log`.
+
+`tools/start_scanner.py` separately captures each detached process's raw
+output — tracebacks and uvicorn's own handler — to `data/logs/<name>.out`,
+which it archives rather than appends to forever. The two are deliberately not
+the same file: the rotating log is the one to read.
+
 ### Backups
 
 Nothing here backs itself up, so run `python main.py backup` before doing

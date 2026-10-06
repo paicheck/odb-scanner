@@ -35,6 +35,11 @@ from config import load_config  # noqa: E402
 LOG_DIR = ROOT / "data" / "logs"
 STATE = LOG_DIR / "stack.json"
 LOCK = LOG_DIR / "start.lock"
+
+# Ceiling for the raw output files (tracebacks, uvicorn) that this launcher
+# captures itself. The real logs are rotated by main.py; these only need a
+# bound so a long-lived component cannot fill the disk.
+RAW_LOG_MAX_BYTES = 2 * 1024 * 1024
 LOCK_STALE_S = 60.0
 
 
@@ -98,11 +103,26 @@ def _spawn(name: str, args: list[str]) -> int:
     flags = 0
     if os.name == "nt":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    log = (LOG_DIR / f"{name}.log").open("ab")
+    # Archive the previous run's raw output rather than appending forever. This
+    # file only holds what Python's logging does NOT own -- tracebacks, and
+    # uvicorn's own handler output -- because main.py now writes the real log
+    # itself with rotation on write. Appending here meant collector.log grew
+    # without bound and every run buried the last one.
+    raw = LOG_DIR / f"{name}.out"
+    if raw.exists() and raw.stat().st_size > RAW_LOG_MAX_BYTES:
+        archive = raw.with_suffix(f".{time.strftime('%Y%m%dT%H%M%S')}.log")
+        try:
+            raw.replace(archive)
+        except OSError:
+            raw.unlink(missing_ok=True)
+    log = raw.open("ab")
     try:
         proc = subprocess.Popen(
             [_python(), *args], cwd=str(ROOT), stdin=subprocess.DEVNULL,
-            stdout=log, stderr=subprocess.STDOUT, creationflags=flags)
+            stdout=log, stderr=subprocess.STDOUT, creationflags=flags,
+            # Tells main.py that stderr already goes to a file we manage, so it
+            # does not add a console handler and write every line twice.
+            env={**os.environ, "ODB_STDERR_CAPTURED": "1"})
     finally:
         log.close()
     return proc.pid
