@@ -58,8 +58,17 @@ class DiagnosticConnection:
                 wire = (f"{len(body) // 2:02X}{body}" + "55" * 8)[:16]
             else:
                 set_module(None)
+        # Record what goes on the wire, not merely what was asked for. They are
+        # the same for a functional read, but an MEB-addressed request is
+        # reframed into a padded ISO-TP single frame first. tx_log is
+        # described in README.md as the safety manifest -- the record of every
+        # request this tool ever put on the vehicle's diagnostic port -- so for
+        # every MEB read it was understating what was actually sent.
+        #
+        # hexcmd is not lost: it is a literal substring of the frame, and the
+        # frame is the validated request plus a length byte and 0x55 padding.
         self.tx_logger(direction="TX", ecu=ecu.key if ecu else None,
-                       payload=hexcmd, purpose=purpose)
+                       payload=wire, purpose=purpose)
         lines = self.t.send_command(wire)
         payload = uds.parse_elm_lines(lines)
         self.tx_logger(direction="RX", ecu=ecu.key if ecu else None,

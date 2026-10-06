@@ -44,6 +44,19 @@ DEAD_CYCLE_MIN_ATTEMPTS = 3
 RECONNECT_BACKOFF_S = 5.0
 RECONNECT_MAX_BACKOFF_S = 300.0
 
+# Pacing when a cycle raises rather than merely finds no data. Short, because
+# the commonest cause is transient -- SQLite's busy timeout expiring while the
+# dashboard reads, or a transient I/O error -- and stopping collection for a
+# minute to retry a write is worse than the error. Backs off to a minute so a
+# genuinely full or corrupt disk does not spin a core all day.
+COLLECT_ERROR_BACKOFF_S = 2.0
+COLLECT_ERROR_MAX_BACKOFF_S = 60.0
+
+# How many consecutive failed cycles to report before going quiet. The log gets
+# one line per failure with a traceback; past this it repeats once and then only
+# logs when the count changes, so a long outage stays readable.
+CYCLE_FAIL_REPORT_EVERY = 10
+
 # Which polled PIDs get persisted, as (measurement key, snapshot key, unit,
 # doc). PID 0x00 is the supported-bitmask handshake, not a value, so it is
 # deliberately absent. A decoded PID missing from this table would be
@@ -121,6 +134,8 @@ class Collector:
         self._cycle_attempts = 0
         self._cycle_failures = 0
         self._dead_cycles = 0
+        self._failed_cycles = 0
+        self._reported_cycle_failures = 0
 
     def _attempt(self, ok: bool) -> None:
         """Count one read attempt and whether it produced data."""
@@ -651,7 +666,43 @@ class Collector:
         # form ran every ~6.1 s against a 5 s setting.
         next_due = time.monotonic()
         while max_cycles is None or cycles < max_cycles:
-            snap = self.collect_once()
+            try:
+                snap = self.collect_once()
+            except Exception as exc:
+                # A cycle must not be able to end collection. collect_once()
+                # swallows CommunicationError per read, but nothing above it
+                # caught a storage failure: "database is locked" after the
+                # busy timeout, SQLITE_FULL, an I/O error, or a TypeError from
+                # the timestamp arithmetic in close_session() would all
+                # propagate out of cmd_collect and kill the process. Nothing
+                # restarts it, so the collector dies silently and the dashboard
+                # just goes stale -- you lose the rest of the drive with no
+                # error anywhere a user would look.
+                #
+                # Back off so a permanently broken store does not spin a core,
+                # and let a normal cycle clear it. Reconnecting is NOT
+                # attempted: the adapter is usually fine, and an ATZ storm
+                # would only make a full disk worse.
+                self._failed_cycles += 1
+                pause = min(COLLECT_ERROR_MAX_BACKOFF_S,
+                            COLLECT_ERROR_BACKOFF_S * self._failed_cycles)
+                if (self._failed_cycles <= 3
+                        or self._failed_cycles % CYCLE_FAIL_REPORT_EVERY == 0):
+                    log.error("Collection cycle %d failed (%s: %s); retrying in "
+                              "%.0fs. Collection continues -- this is not fatal.",
+                              cycles + 1, type(exc).__name__, exc, pause,
+                              exc_info=True)
+                    self._reported_cycle_failures = self._failed_cycles
+                elif self._failed_cycles == self._reported_cycle_failures + 1:
+                    log.error("...still failing (%d consecutive cycle failures, "
+                              "last: %s: %s)", self._failed_cycles,
+                              type(exc).__name__, exc)
+                    self._reported_cycle_failures = self._failed_cycles
+                self._note_cycle_failed(exc)
+                time.sleep(pause)
+                next_due = time.monotonic()
+                continue
+            self._failed_cycles = 0
             cycles += 1
             if self._cycle_is_dead(snap):
                 # Do not record a DTC pass on a dead link, and do not log a
@@ -678,6 +729,30 @@ class Collector:
                     # catch up with back-to-back cycles, which would only make
                     # the adapter busier.
                     next_due = time.monotonic()
+
+    def _note_cycle_failed(self, exc: BaseException) -> None:
+        """Record the first failed cycle as an event, once per outage.
+
+        A cycle that raises is different from a cycle that finds nothing: the
+        adapter is probably fine and the failure is in storage or in code. The
+        distinction matters when someone reads the dashboard's "what happened"
+        view months later, so it is written down and not just logged -- a
+        failing database means nothing at all is being recorded, including this.
+        """
+        if self.vehicle_id is None or self._failed_cycles != 1:
+            return
+        log.error("Collection is failing and is being retried, not abandoned. "
+                  "If this persists, nothing is being recorded: check free "
+                  "disk space and that nothing else has the database open.")
+        try:
+            self.repo.add_event(
+                self.vehicle_id, utcnow(), "adapter",
+                f"Collection cycle raised {type(exc).__name__}: {exc}. "
+                "Retried with backoff; the adapter was not reset."
+            )
+        except Exception:
+            # The store is probably the thing that is broken.
+            log.debug("could not record cycle-failure event", exc_info=True)
 
     def _note_adapter_lost(self) -> None:
         """Record the first dead cycle as an event, once per outage.

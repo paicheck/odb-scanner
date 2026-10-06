@@ -1551,6 +1551,260 @@ def test_a_zero_reading_is_not_treated_as_missing(repo):
     assert _first_number(0, 0) == 0
 
 
+def test_the_tx_log_records_the_bytes_that_went_on_the_wire():
+    """tx_log is the safety manifest, so it must describe what was sent.
+
+    _transmit() logged `hexcmd` while transmitting `wire`. Those are identical
+    for a functional read, but an MEB-addressed request is reframed into a
+    padded ISO-TP single frame (length byte + payload + 0x55 filler) before it
+    goes out, so the manifest understated the transmission for every MEB read
+    -- which is most of the interesting ones.
+    """
+    from diagnostic.connection import DiagnosticConnection
+    from diagnostic.ecus import ECUS
+    from diagnostic.interface import CommunicationError
+
+    logged: list[dict] = []
+
+    class _MebLink:
+        meb_addressing = True
+
+        def __init__(self):
+            self.sent: list[str] = []
+
+        def set_module(self, target):
+            return target is not None
+
+        def send_command(self, wire):
+            self.sent.append(wire)
+            return ["NO DATA"]
+
+    link = _MebLink()
+    conn = DiagnosticConnection(link, tx_logger=lambda **kw: logged.append(kw))
+
+    # The link answers NO DATA, so read_did raises. What is under test is the
+    # TX row written before that, not the decoding failure.
+    with pytest.raises(CommunicationError):
+        conn.read_did(ECUS["bat_mgmt"], 0x2AB7)
+
+    tx = [r for r in logged if r["direction"] == "TX"]
+    assert tx, "no TX row recorded"
+    sent = tx[0]["payload"]
+    assert sent == link.sent[0], (
+        f"manifest records {sent!r} but {link.sent[0]!r} was transmitted")
+    # It is the framed form, not the bare request: length byte then payload.
+    assert sent.startswith("03222AB7"), sent
+    assert sent != "222AB7", "the bare request was logged, not the wire bytes"
+
+
+def test_a_database_error_does_not_end_collection(tmp_path, monkeypatch):
+    """One storage failure used to kill the collector for good.
+
+    collect_once() swallows CommunicationError per read, but nothing above it
+    caught a database failure. "database is locked" after the 30 s busy
+    timeout, SQLITE_FULL, an I/O error or a TypeError from close_session() all
+    propagated out of cmd_collect and exited the process. Nothing restarts it,
+    so the collector dies silently and the dashboard just goes stale -- you lose
+    the rest of the drive with no error anywhere a user would look.
+
+    The unit under test is run()'s handling of a cycle that raises, so
+    collect_once() is stubbed: what it raises from is not the point, and
+    standing up a live adapter to raise it from the storage layer would only
+    test the link instead.
+    """
+    import collector as collector_mod
+    from collector import Collector
+
+    cfg = load_config()
+    cfg._data["database"]["path"] = str(tmp_path / "flaky.db")
+    cfg._data["adapter"]["type"] = "elm327_tcp"
+    cfg._data["adapter"]["tcp_port"] = 39990
+    cfg._data["collector"]["poll_interval"] = 0.05
+    repo = Repository(cfg._data["database"]["path"])
+    col = Collector(cfg, repo)
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.vin = "WVWZZZE1ZMP087053"
+
+    calls = {"n": 0}
+
+    def flaky_cycle():
+        calls["n"] += 1
+        if calls["n"] <= 2:          # the first two cycles explode on storage
+            raise sqlite3.OperationalError("database is locked")
+        repo.record_measurement(
+            col.vehicle_id, utcnow(), "pack_voltage_v", "bat_mgmt", "22",
+            "2AB7", "V", "MEB", "u16/100", "assumed", "x", value=355.0)
+        return {"charging": False, "pack_voltage_v": 355.0}
+
+    monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMP087053")
+    monkeypatch.setattr(col, "discover_ecus", lambda: {})
+    monkeypatch.setattr(col, "collect_once", flaky_cycle)
+    monkeypatch.setattr(col, "read_and_store_dtcs", lambda: None)
+    monkeypatch.setattr("collector.time.sleep", lambda s: None)
+    # raising=False so that against code without the constant this test fails
+    # for the reason it is about -- the uncaught OperationalError -- rather
+    # than on the patch itself.
+    monkeypatch.setattr(collector_mod, "COLLECT_ERROR_BACKOFF_S", 0.0,
+                        raising=False)
+
+    col.run(max_cycles=2)
+
+    assert calls["n"] == 4, (
+        f"expected 2 failures then 2 good cycles, got {calls['n']} -- "
+        "collection stopped at the first database error")
+    assert repo.conn.execute(
+        "SELECT COUNT(*) c FROM measurements WHERE success=1"
+    ).fetchone()["c"] == 2, "no data recorded after recovering from the errors"
+
+    # And the outage is on record, not just in the log file.
+    events = [r["description"] for r in repo.conn.execute(
+        "SELECT description FROM diagnostic_events WHERE kind='adapter'")]
+    assert any("OperationalError" in d for d in events), (
+        f"the failure was not recorded as an event: {events}")
+    repo.close()
+
+
+class _StopAfter(Exception):
+    """Breaks out of a run() loop that would otherwise never end."""
+
+
+def test_a_failing_cycle_is_logged_and_backed_off_not_spun_on(tmp_path,
+                                                              monkeypatch, caplog):
+    """A permanently broken store must not busy-loop a core all day."""
+    import logging
+
+    import collector as collector_mod
+    from collector import Collector
+
+    cfg = load_config()
+    cfg._data["database"]["path"] = str(tmp_path / "broken.db")
+    cfg._data["adapter"]["type"] = "elm327_tcp"
+    cfg._data["adapter"]["tcp_port"] = 39991
+    cfg._data["adapter"]["timeout"] = 0.2
+    cfg._data["collector"]["read_cell_voltages"] = False
+    repo = Repository(cfg._data["database"]["path"])
+    col = Collector(cfg, repo)
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.vin = "WVWZZZE1ZMP087053"
+
+    def always(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    repo.record_measurement = always
+    monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMP087053")
+    monkeypatch.setattr(col, "discover_ecus", lambda: {})
+
+    slept: list[float] = []
+
+    def fake_sleep(seconds):
+        slept.append(seconds)
+        if len(slept) >= 5:
+            raise _StopAfter()
+
+    monkeypatch.setattr("collector.time.sleep", fake_sleep)
+    monkeypatch.setattr(collector_mod, "COLLECT_ERROR_BACKOFF_S", 1.0,
+                        raising=False)
+
+    with caplog.at_level(logging.ERROR, logger="collector"):
+        with pytest.raises(_StopAfter):
+            col.run(max_cycles=None)   # never ends on its own
+
+    assert len(slept) == 5, f"expected 5 retries, got {len(slept)}"
+    assert all(s > 0 for s in slept), f"busy-looped on a broken store: {slept}"
+    assert slept == sorted(slept), f"backoff did not grow: {slept}"
+    assert slept[-1] > slept[0], f"backoff never increased: {slept}"
+    assert "not fatal" in caplog.text, "failure was not logged"
+    repo.close()
+
+
+def test_close_session_survives_a_naive_timestamp_and_a_missing_id(repo):
+    """A naive stamp used to raise TypeError out of the collector.
+
+    Subtracting an aware stamp from a naive one raises. The exception escaped
+    collect_once() and killed the run, and even without that the session stayed
+    status='open' for ever, where charging_sessions() -- which filters on
+    'completed' -- could never see it again. _adopt_open_session exists to
+    prevent exactly that orphan but can only adopt one, never close it.
+    """
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    # A hand-written or imported start stamp: naive, no offset.
+    sid = repo.open_session(vid, "2026-09-01T10:00:00", "AC")
+    repo.add_charging_sample(sid, "2026-09-01T10:30:00", voltage_v=230.0,
+                             current_a=16.0, power_kw=3.6)
+    repo.close_session(sid, "2026-09-01T11:00:00+00:00")
+
+    row = repo.conn.execute(
+        "SELECT status, duration_s, energy_estimate_kwh FROM charging_sessions "
+        "WHERE id=?", (sid,)).fetchone()
+    assert row["status"] == "completed", "session left open and invisible"
+    assert row["duration_s"] == 3600.0, row["duration_s"]
+
+    # Closing an id that does not exist used to raise TypeError on None[...].
+    repo.close_session(9999, "2026-09-01T11:00:00+00:00")
+
+
+def test_latest_measurements_means_latest_in_time_not_latest_inserted(repo):
+    """id is insertion order; ts is time.
+
+    After a backfill -- tools/seed_demo_data.py writes 30 days of history, and
+    any import does the same -- the highest id is the OLDEST row. MAX(id) was
+    therefore returning a January value as "latest". The collector passed
+    max_age_s so its age clause hid it, but analysis/battery.py calls this with
+    no bound and ships the result to the LLM as latest_raw.
+    """
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+
+    def add(ts, value):
+        repo.record_measurement(vid, ts, "pack_voltage_v", "bat_mgmt", "22",
+                                "2AB7", "V", "MEB", "u16/100", "assumed",
+                                "x", value=value)
+
+    add(utcnow(), 355.0)                          # live row, lowest id here
+    add("2026-01-01T00:00:00+00:00", 300.0)      # backfill: highest id, oldest time
+    repo.conn.commit()
+
+    latest = repo.latest_measurements(vid)
+    assert latest["pack_voltage_v"]["value"] == 355.0, (
+        "returned the backfilled row as 'latest': "
+        f"{latest['pack_voltage_v']}")
+
+    # An age bound must still exclude the backfilled row. (The bound itself is
+    # pre-existing behaviour and unchanged; what is under test here is that
+    # the "newest row per key" choice still respects it.)
+    fresh = repo.latest_measurements(vid, max_age_s=3600)
+    assert fresh["pack_voltage_v"]["value"] == 355.0, fresh
+
+
+def test_dtc_correlation_windows_its_occurrences_too(repo):
+    """All-time occurrences were counted beside a windowed session list.
+
+    sessions came from charging_sessions(days) but occurrences from
+    dtc_occurrences(vehicle_id) with since=None, so an occurrence older than
+    `days` was compared against a window it can never fall inside. It can only
+    fail to link, but it still inflated dtc_occurrences_considered -- which sits
+    in the LLM evidence packet next to a windowed sessions_considered. Two
+    counts over different windows presented as one finding.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from analysis.charging import correlate_dtc_with_sessions
+
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    now = datetime.now(timezone.utc)
+
+    # One ancient occurrence, far outside any sensible window.
+    repo.upsert_dtc(vid, (now - timedelta(days=400)).isoformat(
+        timespec="seconds"), "0x7E", "0AAAAA", description="old", categories=[])
+    # One inside the window.
+    repo.upsert_dtc(vid, (now - timedelta(days=1)).isoformat(
+        timespec="seconds"), "0x7E", "0BBBBB", description="new", categories=[])
+
+    result = correlate_dtc_with_sessions(repo, vid, days=90)
+    assert result["dtc_occurrences_considered"] == 1, (
+        "all-time occurrences counted against a 90-day window: "
+        f"{result['dtc_occurrences_considered']}")
+
+
 def test_concurrent_upserts_do_not_collide(repo):
     """Two threads reaching ensure_vehicle/upsert_dtc at once must not raise.
 

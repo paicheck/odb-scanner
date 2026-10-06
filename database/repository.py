@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .models import SCHEMA_SQL, SCHEMA_VERSION
+
+log = logging.getLogger(__name__)
 
 
 def utcnow() -> str:
@@ -25,7 +28,19 @@ def _iso_days_ago(days: float) -> str:
 
 
 def _parse_ts(ts: str) -> datetime:
-    return datetime.fromisoformat(ts)
+    """Parse a stored stamp, normalising naive ones to UTC.
+
+    Every writer in production uses utcnow(), which is aware, so this coercion
+    never fires on rows this code wrote. It matters for rows it did not: a
+    timestamp backfilled by hand, or written by an importer, arrives naive, and
+    subtracting an aware stamp from a naive one raises TypeError. In
+    close_session() that exception used to escape the collector entirely and
+    leave the session stuck at status='open', where charging_sessions() (which
+    filters on 'completed') can never see it again -- _adopt_open_session can
+    adopt it but nothing could ever close it.
+    """
+    parsed = datetime.fromisoformat(ts)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
 class SchemaMismatchError(RuntimeError):
@@ -237,23 +252,38 @@ class Repository:
         Timestamps are all produced by utcnow() (fixed +00:00 offset, second
         resolution), so the lexicographic comparison below is chronological.
         """
-        params: list = [vehicle_id, vehicle_id]
-        age_clause = ""
-        if max_age_s is not None:
+        # "Latest" is MAX(ts), not MAX(id). id is insertion order, which only
+        # matches time for rows written by a single forward-moving collector.
+        # After a backfill -- tools/seed_demo_data.py writes 30 days of history,
+        # and any import or manual insert does the same -- the highest id is the
+        # OLDEST row, and this returned that as "latest". The collector's own
+        # call passes max_age_s so the age clause hid it, but
+        # analysis/battery.py calls this with no bound and ships the result to
+        # the LLM as latest_raw.
+        #
+        # ts alone can tie, so order by ts DESC then id DESC: on a tie the
+        # later-inserted row is the one that most recently confirmed the value.
+        if max_age_s is None:
+            cutoff = None
+            inner_age = ""
+            args: tuple = (vehicle_id,)
+        else:
             cutoff = (datetime.now(timezone.utc)
                       - timedelta(seconds=max_age_s)).isoformat(
                           timespec="seconds")
-            age_clause = "AND ts >= ?"
-            # SQL placeholder order: outer vehicle_id, outer cutoff,
-            # inner vehicle_id, inner cutoff.
-            params = [vehicle_id, cutoff, vehicle_id, cutoff]
+            inner_age = "AND m2.ts >= ?"
+            args = (vehicle_id, cutoff, cutoff)
         rows = self.conn.execute(
             "SELECT key, value, text_value, unit, provenance, ts, doc_status "
-            "FROM measurements m WHERE vehicle_id=? AND success=1 "
-            f"{age_clause} AND id IN "
-            "(SELECT MAX(id) FROM measurements WHERE vehicle_id=? AND success=1 "
-            f"{age_clause} GROUP BY key)",
-            tuple(params),
+            "FROM measurements m "
+            "WHERE vehicle_id=? AND success=1 "
+            + ("" if cutoff is None else "AND m.ts >= ? ")
+            + "AND id = (SELECT m2.id FROM measurements m2 "
+            "             WHERE m2.vehicle_id = m.vehicle_id "
+            "               AND m2.key = m.key AND m2.success=1 "
+            + inner_age +
+            "             ORDER BY m2.ts DESC, m2.id DESC LIMIT 1)",
+            args,
         ).fetchall()
         return {r["key"]: dict(r) for r in rows}
 
@@ -459,6 +489,11 @@ class Repository:
         sess = self.conn.execute(
             "SELECT * FROM charging_sessions WHERE id=?", (session_id,)
         ).fetchone()
+        if sess is None:
+            # Subscripting None raised TypeError, which escaped the collector and
+            # killed the run. Closing a session that does not exist is a no-op.
+            log.warning("close_session: no session with id %s", session_id)
+            return
         samples = self.conn.execute(
             "SELECT ts, power_kw, battery_temp_c FROM charging_samples "
             "WHERE session_id=? ORDER BY ts", (session_id,)
