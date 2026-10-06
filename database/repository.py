@@ -312,6 +312,16 @@ class Repository:
         truncating checkpoint the file on disk appears to have grown -- the
         new copy sits beside the old pages until the WAL is folded back in.
         """
+        # Discard rather than commit any transaction left open by a caller.
+        # sqlite3 opens a transaction implicitly on the first INSERT/UPDATE/
+        # DELETE and, crucially, a FAILED statement does not close it. Setting
+        # isolation_level=None below is a commit() in disguise, so a failed
+        # prune() left deletions 1..k-1 pending and this call silently
+        # persisted them -- half a prune, with nothing in the returned dict to
+        # show for it. There was no rollback() anywhere in the codebase. If
+        # some caller still holds pending work, it is incomplete by definition.
+        if self.conn.in_transaction:
+            self.conn.rollback()
         self.conn.isolation_level = None
         try:
             self.conn.execute("VACUUM")
@@ -343,9 +353,17 @@ class Repository:
         port, and the only evidence that the read-only guarantee held. Deleting
         it would destroy the audit trail that exists precisely to be kept, and
         `--hard` used to do exactly that while main.py's own summary line went
-        on claiming that only "sessions, DTCs and reports" were protected. A
-        vehicle's diagnostic history is also small next to the measurement
-        stream, so there is nothing to gain by reclaiming it.
+        on claiming that only "sessions, DTCs and reports" were protected.
+
+        That leaves tx_log the largest table in the database, which is the
+        honest cost of the decision rather than a reason to reverse it.
+        diagnostic/connection.py logs one TX row and one RX row per request
+        while each DID read yields exactly one measurement row, so the manifest
+        is structurally ~2x the measurement stream: measured at 2.02x the rows
+        and 1.79x the bytes over 12 collector cycles, i.e. roughly 861k rows a
+        day at the default 5 s interval. Reclaiming it is the operator's call
+        via `backup` and a manual archive, not something --hard may do for
+        them.
         """
         cutoff = _iso_days_ago(days)
         # Every table below carries a `ts` column holding an ISO-8601 UTC stamp,
@@ -363,17 +381,30 @@ class Repository:
         # Reported so the CLI can state plainly that the safety manifest was
         # left intact rather than silently omitting it from the totals.
         removed["tx_log_kept"] = True
-        if keep_raw:
-            cur = self.conn.execute(
-                "UPDATE measurements SET raw_response=NULL "
-                "WHERE ts < ? AND raw_response IS NOT NULL", (cutoff,))
-            removed["measurements_raw"] = cur.rowcount
-        else:
-            for table in tables:
-                cur = self.conn.execute(f"DELETE FROM {table} WHERE ts < ?",
-                                        (cutoff,))
-                removed[table] = cur.rowcount
-        self.conn.commit()
+        # All-or-nothing. The connection is left at sqlite3's default
+        # isolation_level="", which opens a transaction implicitly on the first
+        # write but does NOT close it when a statement raises -- so a failure
+        # partway through the DELETE loop left the earlier tables' rows deleted
+        # and pending. Any later commit() on this connection (an unrelated
+        # log_tx(), or the vacuum() that main.py runs straight afterwards)
+        # persisted that half-prune, and the dict returned to the caller was
+        # never produced at all. Pruning destroys data, so it either completes
+        # or leaves nothing behind.
+        try:
+            if keep_raw:
+                cur = self.conn.execute(
+                    "UPDATE measurements SET raw_response=NULL "
+                    "WHERE ts < ? AND raw_response IS NOT NULL", (cutoff,))
+                removed["measurements_raw"] = cur.rowcount
+            else:
+                for table in tables:
+                    cur = self.conn.execute(f"DELETE FROM {table} WHERE ts < ?",
+                                            (cutoff,))
+                    removed[table] = cur.rowcount
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
         return removed
 
     def _table_exists(self, name: str) -> bool:
@@ -499,6 +530,14 @@ class Repository:
             # 5 s interval one continuous fault reported thousands of
             # "occurrences". Only count it again once it has been absent long
             # enough to count as a genuinely new sighting.
+            #
+            # NOTE: this gate cannot fire in practice. last_seen is refreshed
+            # on every poll, so the gap never exceeds one poll interval, and
+            # nothing in the collector ever reports a DTC as cleared (the
+            # 0x14 clear service is blocked by design, so there is no way to
+            # observe the transition). It is kept because it is correct if a
+            # caller ever does report absence, but the occurrence row below
+            # must NOT depend on it alone -- see the freeze-frame check.
             try:
                 gap = (_parse_ts(ts) - _parse_ts(row["last_seen"])).total_seconds()
             except (TypeError, ValueError):
@@ -524,10 +563,40 @@ class Repository:
             dtc_id = self.conn.execute(
                 "SELECT id FROM dtcs WHERE vehicle_id=? AND ecu=? AND code=?",
                 (vehicle_id, ecu, code)).fetchone()["id"]
-        self.conn.execute(
-            "INSERT INTO dtc_occurrences(dtc_id, ts, freeze_frame) VALUES (?,?,?)",
-            (dtc_id, ts, json.dumps(freeze_frame) if freeze_frame else None),
-        )
+            increment = True
+
+        # Write an occurrence row only when the sighting carries new evidence.
+        # It used to be written unconditionally, once per poll: a single stored
+        # DTC produced ~17,000 rows a day at the configured 5 s interval, each
+        # with a near-identical freeze frame, and dtc_occurrences is absent
+        # from prune() so none of it could ever be reclaimed. latest_freeze_
+        # frames() scanned the whole table on every /dtcs page, /charging page
+        # and AI question, growing without bound.
+        #
+        # "New evidence" means a genuine re-arm, or a freeze frame that differs
+        # from the last one stored for this DTC. A continuously-present fault
+        # whose snapshot has not moved now costs exactly one row.
+        if increment or freeze_frame:
+            if not increment:
+                previous = self.conn.execute(
+                    "SELECT freeze_frame FROM dtc_occurrences WHERE dtc_id=? "
+                    "ORDER BY id DESC LIMIT 1", (dtc_id,)
+                ).fetchone()
+                unchanged = False
+                if previous is not None and previous["freeze_frame"]:
+                    try:
+                        unchanged = json.loads(previous["freeze_frame"]) == freeze_frame
+                    except ValueError:
+                        unchanged = False   # unparseable: treat as changed
+                else:
+                    unchanged = previous is not None and not freeze_frame
+                increment = not unchanged
+            if increment:
+                self.conn.execute(
+                    "INSERT INTO dtc_occurrences(dtc_id, ts, freeze_frame) "
+                    "VALUES (?,?,?)",
+                    (dtc_id, ts, json.dumps(freeze_frame) if freeze_frame else None),
+                )
         self.conn.commit()
         return dtc_id
 

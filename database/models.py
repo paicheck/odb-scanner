@@ -123,6 +123,16 @@ CREATE TABLE IF NOT EXISTS dtc_occurrences (
     ts TEXT NOT NULL,
     freeze_frame TEXT              -- JSON, when available
 );
+-- No index here, and that is a measured decision rather than an oversight.
+-- latest_freeze_frames() reads every row for the vehicle and json.loads each
+-- one, so it is O(rows) whatever the index does; adding ix_occ_dtc_ts made it
+-- 43% SLOWER (2439 ms -> 3492 ms over 518k rows, measured) by turning a
+-- sequential scan into random I/O, while speeding up the 500-row
+-- dtc_occurrences() read from 178 ms to 67 ms. The cost was on the query that
+-- runs on every /dtcs page, /charging page and AI question; the benefit was on
+-- one that was already fast. The actual fix is upstream in upsert_dtc(), which
+-- stopped writing a row per poll: one continuously-stored fault now costs one
+-- row instead of 17,280 a day.
 
 CREATE TABLE IF NOT EXISTS diagnostic_events (
     id INTEGER PRIMARY KEY,

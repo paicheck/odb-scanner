@@ -1222,6 +1222,158 @@ def test_dtc_occurrence_count_is_not_a_poll_count(repo):
                              (vid,)).fetchone()["occurrence_count"] == 2
 
 
+def test_a_continuous_dtc_does_not_write_a_row_per_poll(repo):
+    """dtc_occurrences grew without bound and could never be pruned.
+
+    The row was inserted unconditionally on every upsert_dtc, while the
+    rearm gate only guarded occurrence_count. read_and_store_dtcs() runs every
+    cycle, so one stored DTC produced ~17,280 rows a day at the configured 5 s
+    poll interval -- each with a near-identical freeze frame, none of them
+    reclaimable by prune(), and latest_freeze_frames() scanned the lot on every
+    /dtcs page, /charging page and AI question.
+    """
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    from datetime import datetime, timedelta, timezone
+    t0 = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
+    frame = {"speed": 0, "coolant_c": 20.0}
+    kw = dict(description="test", categories=["powertrain"], status="confirmed",
+              freeze_frame=frame)
+    repo.upsert_dtc(vid, t0.isoformat(timespec="seconds"), "0x7E", "1A2B3C", **kw)
+
+    def occurrences():
+        return repo.conn.execute(
+            "SELECT COUNT(*) c FROM dtc_occurrences WHERE dtc_id="
+            "(SELECT id FROM dtcs WHERE vehicle_id=? AND ecu=? AND code=?)",
+            (vid, "0x7E", "1A2B3C")).fetchone()["c"]
+
+    # 200 polls, 5 s apart, all reporting the same frozen snapshot.
+    for i in range(1, 200):
+        repo.upsert_dtc(vid, (t0 + timedelta(seconds=5 * i)).isoformat(
+            timespec="seconds"), "0x7E", "1A2B3C", **kw)
+    assert occurrences() == 1, (
+        f"{occurrences()} occurrence rows for one continuous fault with an "
+        "unchanged freeze frame")
+
+    # A freeze frame that has actually moved is new evidence and is kept.
+    moved = dict(frame, speed=57)
+    repo.upsert_dtc(vid, (t0 + timedelta(seconds=1000)).isoformat(
+        timespec="seconds"), "0x7E", "1A2B3C",
+        description="test", categories=["powertrain"], status="confirmed",
+        freeze_frame=moved)
+    assert occurrences() == 2, "a changed freeze frame was discarded"
+
+    # The latest one is what a reader gets back.
+    latest = repo.latest_freeze_frames(vid)
+    assert latest[("0x7E", "1A2B3C")] == moved, (
+        f"stale freeze frame returned: {latest}")
+
+
+def test_dtc_occurrences_carry_no_index_on_purpose(repo):
+    """An index was added here on audit advice and then removed by measurement.
+
+    latest_freeze_frames() reads and json.loads every row for the vehicle, so it
+    is O(rows) regardless of indexing, and an index on (dtc_id, ts) turned its
+    sequential scan into random I/O: 2439 ms -> 3492 ms over 518k rows, on the
+    query that runs on every /dtcs page, /charging page and AI question. It did
+    help the 500-row dtc_occurrences() read (178 ms -> 67 ms), but paying 43% on
+    the hot path to speed up the cold one is a regression, not a fix. The real
+    repair is that upsert_dtc() no longer writes a row per poll.
+
+    This test exists so nobody "helpfully" adds it back without measuring.
+    """
+    names = {r[1] for r in repo.conn.execute("PRAGMA index_list(dtc_occurrences)")}
+    assert names == set(), (
+        f"unexpected index on dtc_occurrences: {names}. If you added one, "
+        "re-run the EXPLAIN QUERY PLAN and timing comparison in the comment in "
+        "database/models.py first -- an index here measurably slowed the hot "
+        "path.")
+
+
+def test_a_failed_prune_deletes_nothing(repo):
+    """Pruning destroys data, so a half-applied prune is worse than none.
+
+    The connection sits at sqlite3's default isolation_level="", which opens a
+    transaction implicitly on the first DELETE but does not close it when a
+    statement raises. There was no rollback() anywhere, so the deletions from
+    the tables before the failing one stayed pending -- and the vacuum() that
+    main.py runs immediately afterwards committed them, because switching
+    isolation_level is a commit in disguise. The caller got an exception and a
+    pruned database, with no way to tell the two apart.
+    """
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    old = "2020-01-01T00:00:00+00:00"
+    repo.record_measurement(vid, old, "pack_voltage_v", "bat_mgmt", "22", "2AB7",
+                            "V", "MEB profile", "u16/100", "assumed",
+                            "6202AB7F4", value=1.0)
+    repo.record_measurement(vid, old, "pack_current_a", "bat_mgmt", "22", "2AB8",
+                            "A", "MEB profile", "i16/10", "assumed",
+                            "6202AB80C8", value=1.0)
+    # cell_voltages is deleted third, so the trigger below aborts the prune
+    # *after* measurements has already been emptied within the transaction.
+    repo.record_cell_voltages(vid, old, [3.9, 3.95], [7, 8])
+    repo.conn.commit()
+    assert repo.conn.execute(
+        "SELECT COUNT(*) c FROM measurements").fetchone()["c"] == 2
+
+    # A real SQLite failure rather than a monkeypatch: RAISE(ABORT) inside a
+    # trigger aborts the statement the way a disk error or constraint would.
+    repo.conn.execute(
+        "CREATE TRIGGER block_cell_delete BEFORE DELETE ON cell_voltages "
+        "BEGIN SELECT RAISE(ABORT, 'simulated I/O failure'); END")
+    repo.conn.commit()
+    try:
+        with pytest.raises(sqlite3.DatabaseError):
+            repo.prune(days=0, keep_raw=False)
+    finally:
+        repo.conn.execute("DROP TRIGGER IF EXISTS block_cell_delete")
+        repo.conn.commit()
+
+    # Nothing deleted, and no transaction left open for a later commit() to
+    # finish off.
+    assert repo.conn.execute(
+        "SELECT COUNT(*) c FROM measurements").fetchone()["c"] == 2, \
+        "a partial prune was left pending"
+    assert repo.conn.execute(
+        "SELECT COUNT(*) c FROM cell_voltages").fetchone()["c"] == 2
+    assert not repo.conn.in_transaction, "an open transaction survived a failure"
+
+    # And vacuum must not resurrect it either way.
+    repo.vacuum()
+    assert repo.conn.execute(
+        "SELECT COUNT(*) c FROM measurements").fetchone()["c"] == 2, \
+        "vacuum committed a partial prune"
+
+
+def test_a_zero_reading_is_not_treated_as_missing(repo):
+    """`or` cannot be used to pick a fallback column.
+
+    A flat battery is 0 %, not "no data". The trend chart and the LLM battery
+    overview both fell back to the absolute SoC whenever the normalised figure
+    was 0, which is precisely when the number must not be fudged.
+    """
+    from analysis.battery import battery_overview
+
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    old = "2020-01-01T00:00:00+00:00"
+    # Normalised genuinely 0, absolute 64 -- the two disagree, so a silent
+    # fallback is detectable rather than harmless.
+    repo.record_battery_snapshot(vid, old, soc_normal_pct=0.0,
+                                 soc_abs_pct=64.0, pack_voltage_v=300.0)
+    repo.conn.commit()
+
+    rows = repo.battery_history(3650, vid)
+    assert rows, "fixture not stored"
+    overview = battery_overview(repo, 3650, vid)
+    assert overview["soc_latest_pct"] == 0.0, \
+        "a real 0 % SoC was replaced by the fallback column"
+
+    from web.dashboard import _first_number
+    assert _first_number(0.0, 64.0) == 0.0
+    assert _first_number(None, 64.0) == 64.0
+    assert _first_number(None, None) is None
+    assert _first_number(0, 0) == 0
+
+
 def test_concurrent_upserts_do_not_collide(repo):
     """Two threads reaching ensure_vehicle/upsert_dtc at once must not raise.
 

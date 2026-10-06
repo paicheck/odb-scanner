@@ -498,10 +498,19 @@ class Collector:
                                 "Charging ended")
             self._active_session_id = None
         elif charging and self._active_session_id:
+            # `or` here would drop a genuine 0 A reading -- which is exactly
+            # what a session that has finished, or a charger that has tripped,
+            # looks like -- in favour of whatever the other column said.
+            def _pick(*values):
+                for v in values:
+                    if v is not None:
+                        return v
+                return None
+
             self.repo.add_charging_sample(
                 self._active_session_id, ts,
-                voltage_v=snap.get("ac_voltage") or snap.get("dc_voltage"),
-                current_a=snap.get("ac_current") or snap.get("dc_current"),
+                voltage_v=_pick(snap.get("ac_voltage"), snap.get("dc_voltage")),
+                current_a=_pick(snap.get("ac_current"), snap.get("dc_current")),
                 power_kw=snap.get("pack_power_kw"),
                 soc=snap.get("soc_normal"),
                 battery_temp_c=snap.get("battery_temp"),

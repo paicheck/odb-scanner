@@ -87,8 +87,13 @@ def cell_delta_trend(repo, days: int = 30, vehicle_id: int | None = None,
 def battery_overview(repo, days: int = 30, vehicle_id: int | None = None) -> dict:
     """Aggregate battery health statistics for dashboard / LLM context."""
     hist = repo.battery_history(days, vehicle_id)
-    socs = [r["soc_normal_pct"] or r["soc_abs_pct"] for r in hist
-            if (r["soc_normal_pct"] or r["soc_abs_pct"]) is not None]
+    # `or` on a numeric column treats a real 0 % as absent. An empty battery is
+    # exactly when this number has to be right.
+    def _soc(row):
+        return row["soc_normal_pct"] if row["soc_normal_pct"] is not None \
+            else row["soc_abs_pct"]
+
+    socs = [_soc(r) for r in hist if _soc(r) is not None]
     volts = [r["pack_voltage_v"] for r in hist if r["pack_voltage_v"] is not None]
     sohs = [r["soh_pct"] for r in hist if r["soh_pct"] is not None]
     latest = repo.latest_measurements(vehicle_id) if vehicle_id else {}

@@ -41,6 +41,19 @@ _templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 MAX_QUESTION_CHARS = 1000
 
 
+def _first_number(*values):
+    """First value that is not None.
+
+    `a or b` is wrong for anything a sensor can legitimately report as zero:
+    a flat battery is 0 %, a fully open contactor is 0 A. Those are facts, not
+    missing data, and the fallback hides them.
+    """
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     """Build the dashboard.
 
@@ -139,7 +152,11 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         chart = {
             "ts": [r["ts"] for r in rows],
             "delta_mv": [r["cell_delta_mv"] for r in rows],
-            "soc": [r["soc_normal_pct"] or r["soc_abs_pct"] for r in rows],
+            # `or` would treat a genuine 0 % SoC as missing and silently fall
+            # back to the absolute figure, which is the one number on this page
+            # that must never be fudged.
+            "soc": [_first_number(r["soc_normal_pct"], r["soc_abs_pct"])
+                    for r in rows],
             "pack_v": [r["pack_voltage_v"] for r in rows],
             "temp": [r["battery_temp_c"] for r in rows],
         }
