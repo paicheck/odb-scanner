@@ -594,11 +594,31 @@ Car Scanner 431.25–431.75 V band, across ≥3 readings. Then expand.
 
 ## 11. Immediate blocker
 
-**COM3 is held.** `OSError(22) … WinError 121 (semaphore timeout)` after ~5.2 s.
-Windows Bluetooth SPP keeps the port bound even after disconnecting in the
-phone app; the Veepeak device must be *removed* from Windows Settings → Bluetooth
-& devices, then re-paired. Until then `doctor.py` cannot get past stage 3 and no
-experiment can run.
+**The adapter is not paired to Windows.** It was removed from Bluetooth to
+release COM3, which also removed the virtual serial port — `pyserial` now reports
+*no serial ports at all*, there are no `HARDWARE\DEVICEMAP\SERIALCOMM` entries,
+and no Veepeak device appears in PnP.
+
+To resume:
+
+1. Plug the Veepeak into the OBD socket (it needs the car's 12 V for its radio).
+   Ignition on.
+2. Pairing mode — hold the dongle's button ~5 s until the LED flashes rapidly.
+3. Windows → Settings → Bluetooth & devices → Add device.
+4. Verify the port: `python -c "import serial.tools.list_ports as l; [print(p.device, p.description) for p in l.comports()]"`.
+   **Do not assume COM3.** Windows assigns the lowest free port, so it may be a
+   different number; `config.yaml` says `COM3` and will need updating if so.
+5. Then, from `C:\odb_scanner`:
+
+```
+python tools\diagnose_meb_path.py            # the matrix
+python tools\doctor.py                       # independent sanity check
+python main.py collect --cycles 5            # real collection
+```
+
+The matrix is verified end to end (7), so whatever it prints is about the car,
+not about the harness. Read the first arm that answers, or the first one whose
+baseline was silent.
 
 ---
 
