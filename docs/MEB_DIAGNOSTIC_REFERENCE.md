@@ -157,13 +157,158 @@ not on paper. Our own note records that the car's own counters settle the
 growing, energy content falling ⇒ **positive = discharge**. ABRP's `*-1` agrees
 with that.
 
-### 2.3 OVMS — `vehicle_vweup`
+### 2.3 spot2000 — `Volkswagen-MEB-EV-CAN-parameters` (the one ecus.py calls authoritative)
 
-e-Up rather than ID.3, but the same DID family (`0x1E3B`, `0x1E3D`, `0x028C`,
-`0x2A0B`, `0x1E32`) with its own scales, and it states plainly: "All
-communication with the car is read-only."
+193 rows, 13 columns, `Status | group | Popular name | Unit | type | Request
+package | ATCP | ATSH | data send | Response package | ATCRA | datareceived |
+Calculation | info`. It is the only source that states **`ATCP`, `ATSH` and
+`ATCRA` per DID** — exactly what `ecus.py:17` claims when it cites it. It was
+read after the first draft of this document, which cited it second-hand.
 
-### 2.4 Car Scanner's own custom-PID model
+It independently confirms our wire form, character for character:
+
+```
+0x17fc007b 03 22 1e 40 55 55 55 55     <- request
+0x17fe007b 05 62 1e 40 XX YY aa aa     <- response
+```
+
+`03` = ISO-TP single-frame length, `22` + DID, then `0x55` padding to 7 data
+bytes. That is precisely what `_transmit` builds, so framing is now confirmed by
+two independent sources (this and ABRP) and is not the fault.
+
+**Addresses, all matching `ecus.py`:**
+
+| module | request id | ATCP | ATSH | ATCRA | response |
+|---|---|---|---|---|---|
+| BMS | `0x17fc007b` | `17` | `17fc007b` | `17fe007b` | 145 SIDs |
+| DC/DC | `0x17fc00b9` | `17` | `17fc00b9` | `17fe00b9` | 2 SIDs |
+| Vehicle info | `0x17fc0076` | `17` | `17fc0076` | `17fe0076` | 4 SIDs |
+| Energy | `0x00000710` | `00` | `00000710` | (not stated) | 4 SIDs |
+| Climate | `0x00000746` | `00` | `00000746` | `000007b0` | 11 SIDs |
+| GPS | `0x00000767` | `00` | `00000767` | `000007d1` | 8 SIDs |
+
+GPS is absent from `ecus.py` entirely, and its response id is `0x7D1`, not the
+`0x767` evDash addresses. Not needed for the objective; recorded because it
+means `ecus.py` is not exhaustive.
+
+**`ATCRA` is stated per module.** Our `ATCRA0` (see 5.1) is not what any
+reference sends. The correct value per module is the response id in the table
+above. Still to be decided whether to change it — see 5.1.
+
+### 2.4 Every decoder scale is confirmed by a second independent source
+
+spot2000's `Calculation` column agrees with `decoders/meb.py` on all sixteen
+DIDs it documents:
+
+| DID | spot2000 | ours | |
+|---|---|---|---|
+| `028C` | `XX/2,5` | `u8/2.5` | ✓ |
+| `1E3B` | `(XX*2^8+YY)/4` | `u16/4` | ✓ |
+| `1E3D` | `(WW*2^32+…+ZZ-150000)/100` | `(u32-150000)/100` | ✓ |
+| `2A0B` | `XX/2-40` | `u8/2-40` | ✓ |
+| `1E32` | `/8583,07123641215`, `signed()` on discharge | same, s32 | ✓ |
+| `1E0E` / `1E0F` | `(WW*2^8+XX)/64` | `u16/64` | ✓ |
+| `189D` | outlet `[0:2]/64`, inlet `[2:4]/64` | same | ✓ |
+| `1E1B` | `(XX*2^8+YY)/5` | `u16/5` | ✓ |
+| `F40D` | `XX` | `u8` | ✓ |
+| `295A` | `(XX*2^16+YY*2^8+ZZ)` | 3-byte BE | ✓ |
+| `1E40…` | `(XX*2^8+YY)/1000+1` | `u16/1000+1` | ✓ |
+| `465B` | `(XX*2^8+YY)/16` | `u16/16` | ✓ |
+| `465D` | `(XX*2^8+YY)/512` | `u16/512` | ✓ |
+| `0364` | `(XX*2^8+YY)/10` | `u16/10` | ✓ |
+| `2609` | `XX/2-50` | `u8/2-50` | ✓ |
+| `2613` | `(XX*2^8+YY)/5-40` | `u16/5-40` | ✓ |
+
+Phase 11 is therefore answered for these: the ~10 uncertain scale factors are
+not uncertain because they were guessed, they are `DocStatus.EXPERIMENTAL`
+because they came from reverse engineering rather than a VW document. No change
+needed; the notes' provenance claims should cite spot2000 as a second source.
+
+Response shapes worth knowing, because they tell us what arrives to parse:
+`1E33`/`1E34`/`1E0E`/`1E1C`/`189D` return 4 data bytes (a `u16` plus a `u16`
+cell-or-sensor index — `ZZ is the cell #`), which `read_did()` strips the DID
+echo from correctly.
+
+### 2.5 `0x2AB8` cannot be derived from any public source — now confirmed twice
+
+spot2000 lists both energy DIDs with **`[equation missing]`**:
+
+```
+[equation missing] HV Battery energy content     0x00000710 03 22 2a b8 55 55 55 55
+[equation missing] HV Battery max energy content 0x00000710 03 22 2a b2 55 55 55 55
+```
+
+The author has the addressing and the request and lacks the equation. That is
+the same position evDash is in (queued, commented out). So
+`decoders/meb.py`'s "DIVISOR ASSUMED, UNVERIFIED — no open-source
+implementation decodes this DID" is now corroborated by a second independent
+source, and `1310.77` must stay labelled a hypothesis until a raw capture pins
+it. The Car Scanner export gives the target values (41200–41325 Wh,
+max 53200 Wh) but contains no raw bytes, so it cannot supply the divisor.
+
+### 2.6 `0x2AF7` is the whole 12 V block, not just a voltage — the Phase 12 lead
+
+This is the single most actionable new fact. spot2000 attributes **12V Battery
+SoC to DID `0x2AF7`** — the same DID we decode for 12 V voltage — and lists
+`0x2AF7` with `Response package: multiframe`. It also lists `12V Battery current`
+with **no request package at all**, i.e. not yet located.
+
+So `0x2AF7` returns a multi-frame payload holding the 12 V battery block:
+voltage (our `u16/1024 + 4.26`, the first two bytes), and inside the rest,
+SoC, current, temperature, capacity and aging — which is exactly the
+`[19.Gate]` 12 V field set Car Scanner reports and which we currently import
+only as `gate_*` keys with no DID.
+
+This makes `[19.Gate]` completion tractable without new DID discovery: read
+`0x2AF7` as multi-frame, keep the raw bytes, and locate the sub-fields by
+fitting against the seven simultaneous Car Scanner readings already in the
+import (SoC 93–97 %, current 0.612–0.681 A, temp 22/25 °C, capacity 49 Ah,
+aging 89 %, total charge/discharge 1275/1209 Ah). One raw capture plus eight
+known target values is enough to solve the offsets.
+
+It also means our current `aux_12v_voltage` decoder is correct but silently
+discards the rest of the frame — `reassemble()` already returns the whole
+multi-frame payload, so nothing needs changing to *get* the bytes; only the
+sub-field decoders are missing.
+
+### 2.7 Current sign: a genuine 2-against-1 conflict, unresolved
+
+spot2000's `info` column for `0x1E3D` states: *"Negative value is out from
+battery (consumption) and positive value is into battery (charging or regen)."*
+ABRP agrees, via the `)*-1` on its equation. evDash does not negate, and we
+follow evDash.
+
+| source | discharge reads as |
+|---|---|
+| evDash, and this project | positive |
+| ABRP | negative (`*-1`) |
+| spot2000 | negative (stated) |
+
+Our `decoders/meb.py` argues the sign from the car's own counters: parked,
+Car Scanner showed +0.93…+1.98 A, the charge counter froze, the discharge
+counter grew, and energy content fell 41325 → 41200 Wh. Energy left the pack
+while current read positive, hence positive = discharge.
+
+That reasoning is sound *about Car Scanner's sign*, which is what matters for
+matching Car Scanner — but it does not establish the DID's own convention, and
+two of three sources say the opposite. Car Scanner also reports two currents,
+`DC Battery Current` (+0.56…+1.98 A) and `DC Battery Current #2`
+(−0.95…−1.99 A), opposite in sign and similar in magnitude, which suggests a
+bipolar pair rather than one sensor read two ways.
+
+If this is wrong, `pack_current` is inverted, and that inverts charging
+detection, pack-power sign, and the regen-vs-discharge history. **Must be settled
+with a raw capture during charge and discharge, not on paper.** Flagged rather
+than changed.
+
+### 2.8 OVMS — read, but it is the wrong car
+
+`vehicle_vweup` documents the **e-Up**, not the ID.3, and is largely a metrics
+and configuration reference ("All communication with the car is read-only", plus
+SOH methodology). It contributes nothing to MEB addressing or transport and was
+overweighted in the first draft of this document.
+
+### 2.9 Car Scanner's own custom-PID model
 
 From carscanner.info: a PID is a `Command` (`Mode+PID`), an optional `Header`,
 and a `Formula` over the *data* bytes. Car Scanner skips header bytes, the ISO-TP
@@ -271,6 +416,22 @@ So this clone ignores `ATCRA0` rather than deafening itself. Recorded because th
 comment is actively misleading and a future adapter may honour it — at which
 point it would silently kill every response. Replace with plain `ATCRA` (no
 argument) or drop it.
+
+spot2000 (2.3) states the value each module wants, and none of them is `0`:
+
+```
+ATCP 17  ATSH 17fc007b  ATCRA 17fe007b     BMS
+ATCP 17  ATSH 17fc00b9  ATCRA 17fe00b9     DC/DC
+ATCP 17  ATSH 17fc0076  ATCRA 17fe0076     vehicle info
+ATCP 00  ATSH 00000746  ATCRA 000007b0     climate
+ATCP 00  ATSH 00000767  ATCRA 000007d1     GPS
+```
+
+i.e. the module's own response id. Setting it would be a behaviour change to
+addressing we currently cannot observe, so it is deferred until the experiments
+run — but the correct value is now known rather than guessed, and
+`set_receive_address()` is already a deliberate no-op that exists for exactly
+this reason.
 
 ### 5.2 `ATSTFH` — absent here, present in neither reference
 
@@ -425,15 +586,35 @@ experiment can run.
 
 ## 12. Open questions this document does not answer
 
+**Answered since the first draft:**
+
+- Which DIDs sit behind Car Scanner's `[19.Gate]` 12 V block? **`0x2AF7`**,
+  multi-frame, holding the whole block (2.6). Not new DID discovery at all.
+- Is the `0x2AB8` divisor derivable from public sources? **No** — evDash and
+  spot2000 independently have the addressing and no equation (2.5).
+- Are the ~10 "unverified" decoder scales sound? **Yes**, all sixteen that
+  spot2000 documents agree with `decoders/meb.py` (2.4).
+- Which SoC fit? evDash `byte/2.5` and display `raw*0.4425-6.1947`, now backed
+  by spot2000's `XX/2,5` (2-against-1 over ABRP's `1.12*A/2.5-7.16`), and the
+  Car Scanner pair 81.2 / 83.63 % reproduces evDash exactly from `raw = 203`.
+
+**Still open:**
+
 1. Does the Veepeak clone support CAN-FD at all, and does the MEB diagnostic bus
-   need it? (exp 13)
-2. Is `ATBI` the actual blocker? (exp 6)
-3. Does this MY2021 58 kWh ID.3 expose the BMS on the OBD connector at all, or
-   only via gateway routing? Both evDash and Car Scanner read it through the OBD
-   port, so the answer is yes — but the *path* differs.
-4. Which SoC fit is correct for this car — evDash's or ABRP's? Only the car can
-   settle it; the export's 81.2 % / 83.63 % pair matches evDash's
-   `raw/2.5 = 81.2` and `raw*0.4425-6.1947 = 83.63` with `raw = 203`, which
-   favours evDash, but ABRP's fit was never cross-checked against this car.
-5. What are the DIDs behind Car Scanner's `[19.Gate]` 12 V SoC / current /
-   reserve / consumption fields? Unknown; imported as `gate_*` keys only.
+   need it? (exp 13). Nothing in the three references requires CAN-FD, so
+   classical CAN is the target.
+2. Is `ATBI` the actual blocker? (exp 6). Top candidate: both evDash and ABRP
+   send it and we do not.
+3. **Which adapter did Car Scanner use on this car?** Not established. The
+   configured adapter is a Veepeak BLE+ (`config.yaml`), but nothing records
+   that the earlier Car Scanner session used the same one over the same OBD
+   connector. If it was a different or CAN-FD adapter, question 1 becomes the
+   whole investigation.
+4. **Current sign, positive or negative on discharge** (2.7). evDash and this
+   project say positive; ABRP and spot2000 say negative. Settle with a raw
+   capture during charge and discharge. Until then `pack_current`'s sign is
+   carried from evDash on the strength of Car Scanner's own counters, and is the
+   project's single most consequential unverified assumption.
+5. Why does the car report two opposite-signed currents (`DC Battery Current`
+   and `DC Battery Current #2`)? A bipolar pair, or one sensor read two ways?
+   Affects whether we need a second current DID.
