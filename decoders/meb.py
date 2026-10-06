@@ -27,13 +27,30 @@ Provenance of the scale factors:
             Disagreements would have shown up as visibly wrong values; none did.
 
             The same log settles the CURRENT SIGN, which the sources
-            contradict. Car Scanner reported +0.93 to +1.98 A while the car sat
-            parked, and over the same ~16 min window the accumulated-*charge*
-            counter was frozen at 24422.8195 kWh while accumulated-*discharge*
-            grew by 0.143 kWh, with HV energy content falling 41325 -> 41200
-            Wh. Energy left the pack while current read positive, so
-            positive = discharge. (spot2000's note claims the opposite; the
-            car's own counters are the stronger evidence.)
+            contradict -- and the contradiction is now 2 against 1. evDash
+            does not negate, so it reads positive on discharge, and this log
+            follows it. spot2000 states in prose that "Negative value is out
+            from battery (consumption) and positive value is into battery", and
+            ABRP's equation negates for the same reason. Car Scanner reported
+            +0.93 to +1.98 A while the car sat parked, and over the same ~16 min
+            window the accumulated-*charge* counter was frozen at 24422.8195 kWh
+            while accumulated-*discharge* grew by 0.143 kWh, with HV energy
+            content falling 41325 -> 41200 Wh. Energy left the pack while
+            current read positive, so positive = discharge.
+
+            That reasoning is sound about CAR SCANNER's sign, which is what
+            matters for matching it, but it does not establish the DID's own
+            convention. If it is wrong then pack_current is inverted, and that
+            inverts charging detection, pack-power sign and the regen history.
+            Settle it with a raw capture during charge and discharge; do not
+            settle it on paper. See docs/MEB_DIAGNOSTIC_REFERENCE.md 2.7.
+
+            Independently confirmed: spot2000's per-DID `Calculation` column
+            agrees with this module on all sixteen equations it documents
+            (028C, 1E3B, 1E3D, 2A0B, 1E32, 1E0E/1E0F, 189D, 1E1B, F40D, 295A,
+            1E40+, 465B, 465D, 0364, 2609, 2613). So the EXPERIMENTAL flags
+            below record where the knowledge came from -- reverse engineering,
+            not a VW document -- not a doubt about the arithmetic.
 
 Raw bytes are always preserved by the collector, so a wrong guess here costs
 nothing but a re-decode later.

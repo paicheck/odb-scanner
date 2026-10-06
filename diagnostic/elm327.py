@@ -389,7 +389,29 @@ class Elm327Transport(OBDInterface):
             return
         self.meb_addressing = True
         self._meb_module = 0x17FC007B
-        self.send_command("ATCRA0")     # best-effort accept-all filter
+        # ATCRA0 IS NOT AN ACCEPT-ALL FILTER. Per the ELM327 command set, plain
+        # `ATCRA` (no argument) restores the receive filters to their default,
+        # and `ATCRA <id>` pins the filter to that one id -- so `ATCRA0` pins it
+        # to CAN id 0x000. An earlier comment here called it a "best-effort
+        # accept-all filter", which was simply wrong.
+        #
+        # It is nevertheless harmless on this adapter, and that is measured
+        # rather than assumed: this is issued during initialize(), and the OBD
+        # warm-up immediately after still returns live frames
+        # (18DAF10506410098180001 ...), which a filter on 0x000 would suppress.
+        # So this clone ignores CRA outright. An earlier field note records that
+        # it refuses the plain `ATCRA` that clears a filter, which is consistent
+        # with that: neither form is implemented.
+        #
+        # The per-module values that DO reach this bus, per spot2000 (the only
+        # source that states ATCRA per DID), are the module's own response id:
+        # BMS 17fe007b, DC/DC 17fe00b9, vehicle info 17fe0076, climate
+        # 000007b0, GPS 000007d1. Those are NOT applied here: they change
+        # addressing behaviour that cannot currently be observed against the
+        # car, so setting them blind would trade a harmless ignored command for
+        # a deaf one. Deliberately deferred -- see
+        # docs/MEB_DIAGNOSTIC_REFERENCE.md 5.1.
+        self.send_command("ATCRA0")
         if not self._restore_functional():
             log.warning("Functional header restore refused - resetting adapter")
             self.send_command("ATZ")
