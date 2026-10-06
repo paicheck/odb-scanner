@@ -26,6 +26,14 @@ from diagnostic.elm327 import PINNED_PROTOCOL, Elm327Transport
 from diagnostic.uds import (
     payloads_by_source,
 )
+from tools import experiment_record as record
+
+# The arm currently running, so its actual response and interpretation land in
+# the right place in the structured record.
+_current: record.Arm | None = None
+
+# (command, first response line) for the running arm.
+_captured: list[tuple[str, str]] = []
 
 
 def log(msg: str) -> None:
@@ -43,12 +51,55 @@ _baseline_answered: set[int] = set()
 def claim(interpretation: str, did: int, answered: bool) -> None:
     """Report a variant's result, crediting it only against a silent baseline."""
     if not answered:
+        if _current and not _current.interpret:
+            _current.interpret = (
+                "No response, so nothing here is attributable to this arm. "
+                "Compare against whether EXP-5 was silent for the same DID.")
         return
     if did in _baseline_answered:
         print("  (baseline EXP-5 already answered this DID, so nothing here "
               "is attributable to this arm)")
+        if _current:
+            _current.interpret = (
+                "Nothing attributable: the baseline answered this DID, so the "
+                "BMS path worked without this arm.")
         return
     print(f"  INTERPRETATION: {interpretation}")
+    if _current:
+        _current.interpret = interpretation
+
+
+def begin(exp_id: str) -> None:
+    """Mark which arm is starting, closing out the previous one.
+
+    Every response the arm produces is captured by send_raw() in between, and
+    summarised into the record when the next arm begins or the run ends. An arm
+    that ran and was silent is a result and is recorded as such, which is not
+    the same as an arm nobody has performed yet.
+    """
+    finish()
+    global _current
+    try:
+        _current = record.by_id(exp_id)
+    except KeyError:
+        _current = None
+    _captured.clear()
+
+
+def finish() -> None:
+    """Summarise what the running arm actually returned."""
+    global _current
+    if _current is None:
+        return
+    if not _captured:
+        # Configuration-only arms (EXP-4, EXP-13) send no DID request, so there
+        # is no data response to record. Left unset, they keep rendering as not
+        # run rather than claiming a result they never measured.
+        _current = None
+        return
+    data = [line for cmd, line in _captured if not cmd.startswith("AT")]
+    _current.actual = "; ".join(data)[:400]
+    _current = None
 
 
 def send_raw(t: Elm327Transport, cmd: str, desc: str = "") -> list[str]:
@@ -58,6 +109,11 @@ def send_raw(t: Elm327Transport, cmd: str, desc: str = "") -> list[str]:
         lines = t.send_command(cmd)
         for ln in lines:
             print(f"  RX: {ln}")
+        # Capture the first line per command. AT* commands configure the
+        # adapter and are excluded from the recorded response; a DID frame's
+        # first line is the thing that distinguishes an answer from silence.
+        if lines and not cmd.startswith("AT"):
+            _captured.append((cmd, lines[0]))
         return lines
     except Exception as e:
         print(f"  ERROR: {e}")
@@ -66,12 +122,14 @@ def send_raw(t: Elm327Transport, cmd: str, desc: str = "") -> list[str]:
 
 def test_functional_0100(t: Elm327Transport) -> None:
     """EXP-1: Basic CAN bus health - functional 0100"""
+    begin("EXP-1")
     log("=== EXP-1: Functional 0100 (bus health) ===")
     send_raw(t, "0100", "supported PIDs")
 
 
 def test_functional_1001(t: Elm327Transport) -> None:
     """EXP-2: Functional UDS default session"""
+    begin("EXP-2")
     log("=== EXP-2: Functional 10 01 (default session) ===")
     lines = send_raw(t, "1001", "UDS default session")
     for src, payload in payloads_by_source(lines).items():
@@ -81,6 +139,7 @@ def test_functional_1001(t: Elm327Transport) -> None:
 
 def test_functional_22F190(t: Elm327Transport) -> None:
     """EXP-3: Functional VIN read via DID F190"""
+    begin("EXP-3")
     log("=== EXP-3: Functional 22 F190 (VIN) ===")
     lines = send_raw(t, "22F190", "VIN by DID")
     for src, payload in payloads_by_source(lines).items():
@@ -90,6 +149,7 @@ def test_functional_22F190(t: Elm327Transport) -> None:
 
 def test_meb_addressing_negotiation(t: Elm327Transport) -> bool:
     """EXP-4: Verify ATCP 17 + ATSH FC007B negotiation"""
+    begin("EXP-4")
     log("=== EXP-4: MEB addressing negotiation ===")
     # ATCP 17
     lines = send_raw(t, "ATCP 17", "set priority byte 0x17")
@@ -107,6 +167,7 @@ def test_meb_addressing_negotiation(t: Elm327Transport) -> bool:
 
 def test_meb_bms_did(t: Elm327Transport, did: int, name: str) -> None:
     """EXP-5: Read BMS DID with MEB physical addressing"""
+    begin("EXP-5")
     log(f"=== EXP-5: BMS DID 0x{did:04X} ({name}) with MEB addressing ===")
     # Switch to BMS module
     send_raw(t, "ATCP 17", "priority")
@@ -147,6 +208,7 @@ def test_meb_bms_with_atbi(t: Elm327Transport, did: int, name: str) -> None:
     ATBI is adapter-local configuration and reaches no ECU, so it is not a
     vehicle request and needs no validate_request().
     """
+    begin("EXP-6")
     log(f"=== EXP-6: BMS DID 0x{did:04X} ({name}) with ATBI ===")
     send_raw(t, "ATBI", "bypass initialization - stay on ATSP7")
 
@@ -176,6 +238,7 @@ def test_meb_bms_with_atbi_session_tp(
     The belt-and-braces arm. If the BMS only answers once a session is
     established AND the adapter is told not to re-detect, this finds it.
     """
+    begin("EXP-8")
     log(f"=== EXP-8: BMS DID 0x{did:04X} full sequence (ATBI+10 01+3E 00) ===")
     send_raw(t, "ATBI", "bypass init")
     send_raw(t, "ATCP 17", "priority")
@@ -213,6 +276,7 @@ def test_meb_bms_with_flow_control(t: Elm327Transport, did: int, name: str) -> N
 
     Adapter-local; reaches no ECU.
     """
+    begin("EXP-14")
     log(f"=== EXP-14: BMS DID 0x{did:04X} ({name}) with ATCF 17FE7 ===")
     send_raw(t, "ATCF 17FE7", "flow control send header")
     send_raw(t, "ATCP 17", "priority")
@@ -242,6 +306,7 @@ def test_meb_bms_with_atcra(t: Elm327Transport, did: int, name: str) -> None:
     deliberate no-op because the field clone refuses the plain ATCRA that clears
     a filter -- only ATZ recovers.
     """
+    begin("EXP-15")
     log(f"=== EXP-15: BMS DID 0x{did:04X} ({name}) with ATCRA 17FE007B ===")
     send_raw(t, "ATCP 17", "priority")
     send_raw(t, "ATSH FC007B", "BMS header")
@@ -267,6 +332,7 @@ def test_meb_bms_everything(t: Elm327Transport, did: int, name: str) -> None:
     not, the path needs several of them together and each will need isolating
     against the log rather than by bisection on the car.
     """
+    begin("EXP-16")
     log(f"=== EXP-16: BMS DID 0x{did:04X} everything at once ===")
     send_raw(t, "ATBI", "bypass init")
     send_raw(t, "ATCF 17FE7", "flow control send header")
@@ -294,6 +360,7 @@ def test_meb_bms_everything(t: Elm327Transport, did: int, name: str) -> None:
 
 def test_meb_bms_with_session(t: Elm327Transport, did: int, name: str) -> None:
     """EXP-7: BMS DID with default session first"""
+    begin("EXP-7")
     log(f"=== EXP-7: BMS DID 0x{did:04X} ({name}) with 10 01 session ===")
     # Switch to BMS
     send_raw(t, "ATCP 17", "priority")
@@ -317,6 +384,7 @@ def test_meb_bms_with_session(t: Elm327Transport, did: int, name: str) -> None:
 
 def test_meb_bms_with_tester_present(t: Elm327Transport, did: int, name: str) -> None:
     """EXP-7b: BMS DID with periodic tester present"""
+    begin("EXP-7b")
     log(f"=== EXP-7b: BMS DID 0x{did:04X} with 3E 00 tester present ===")
     send_raw(t, "ATCP 17", "priority")
     send_raw(t, "ATSH FC007B", "BMS header")
@@ -340,6 +408,7 @@ def test_meb_bms_with_tester_present(t: Elm327Transport, did: int, name: str) ->
 
 def test_energy_module_11bit(t: Elm327Transport) -> None:
     """EXP-9: Energy module (0x710 -> 0x77A) on 11-bit addressing"""
+    begin("EXP-9")
     log("=== EXP-9: Energy module 0x710 (11-bit) ===")
     # Protocol 6 = 11-bit 500k
     send_raw(t, "ATSP6", "11-bit protocol")
@@ -368,6 +437,7 @@ def test_energy_module_11bit(t: Elm327Transport) -> None:
 
 def test_dcdc_module_29bit(t: Elm327Transport) -> None:
     """EXP-10: DC/DC module (0x17FC00B9) on 29-bit addressing"""
+    begin("EXP-10")
     log("=== EXP-10: DC/DC module 0x17FC00B9 (29-bit) ===")
     send_raw(t, f"ATSP{PINNED_PROTOCOL}", "29-bit protocol")
     send_raw(t, "ATCP 17", "priority")
@@ -387,6 +457,7 @@ def test_dcdc_module_29bit(t: Elm327Transport) -> None:
 
 def test_gateway_routing(t: Elm327Transport) -> None:
     """EXP-11: Try gateway routing - functional request to gateway (0x7E0) for BMS data"""
+    begin("EXP-11")
     log("=== EXP-11: Gateway routing (functional to 0x7E0) ===")
     # Functional addressing (default)
     send_raw(t, f"ATSP{PINNED_PROTOCOL}", "29-bit")
@@ -403,6 +474,7 @@ def test_gateway_routing(t: Elm327Transport) -> None:
 
 def test_11bit_bat_mgmt(t: Elm327Transport) -> None:
     """EXP-12: Try BMS on 11-bit addressing (0x7E5 -> 0x7ED)"""
+    begin("EXP-12")
     log("=== EXP-12: BMS on 11-bit (0x7E5) ===")
     send_raw(t, "ATSP6", "11-bit protocol")
     send_raw(t, "ATCP 00", "priority")
@@ -421,6 +493,7 @@ def test_11bit_bat_mgmt(t: Elm327Transport) -> None:
 
 def test_canfd_check(t: Elm327Transport) -> None:
     """EXP-13: Check if adapter reports CAN-FD capability"""
+    begin("EXP-13")
     log("=== EXP-13: CAN-FD capability check ===")
     send_raw(t, "AT@", "adapter description")
     send_raw(t, "ATRV", "voltage")
@@ -522,8 +595,41 @@ def run_all_experiments(tcp=None):
         test_canfd_check(t)
 
     finally:
+        # Close out the last arm and write the record, so a run against the car
+        # leaves behind something readable a week later rather than a log file.
+        finish()
+        _write_record(cfg, tcp)
         t.close()
         log("Done")
+
+
+def _write_record(cfg, tcp) -> None:
+    """Persist the record, refusing to let a simulator run write a car result.
+
+    The record is the evidence this whole investigation rests on. A harness
+    self-test landing in the same file as a real run would make `docs/` look
+    like the BMS had answered, and nothing in the file would say otherwise --
+    which is the one failure mode the record exists to prevent. So a --tcp run
+    must name its own destination, and the checked-in path stays reserved for
+    the car.
+    """
+    configured = cfg.get("adapter.record_path") or ""
+    if tcp:
+        out = configured or str(ROOT / "docs" / "experiment_record_sim.md")
+        note = ("SIMULATOR run -- harness self-test, not vehicle evidence")
+    else:
+        out = configured or str(ROOT / "docs" / "experiment_record_results.md")
+        note = ""
+    try:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(record.render_markdown(
+            preamble=note) if note else record.render_markdown(),
+            encoding="utf-8")
+        log(f"Experiment record written to {out}")
+    except OSError as exc:
+        # A failed write must not lose the run: the console output above is
+        # still the primary result, and the record can be regenerated.
+        log(f"WARNING: could not write experiment record: {exc}")
 
 
 def main() -> int:

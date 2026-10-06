@@ -15,3 +15,10 @@ venv/
 .ruff_cache/
 config.local.yaml
 
+# Generated experiment records. These are run output, not source: one holds a
+# simulator self-test, the other whatever the last real run produced. Both are
+# evidence about a specific run, and neither belongs in history -- committing
+# them would let a stale file be mistaken for the current state of the BMS.
+docs/experiment_record_results.md
+docs/experiment_record_sim.md
+
