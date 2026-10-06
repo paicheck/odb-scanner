@@ -186,13 +186,18 @@ def run_web_checks(cfg: Config) -> None:
     except Exception as exc:  # pragma: no cover - optional test dependency
         check("web dashboard", None, f"test client unavailable: {exc}")
         return
+    # bind_host="127.0.0.1" is explicit because config.yaml ships 0.0.0.0 so a
+    # tablet can reach the dashboard, and a network-reachable bind now demands
+    # an access token. The smoke test runs in-process against a loopback client
+    # and has no use for the token, so it asks for the loopback behaviour
+    # directly rather than minting a credential it would only discard.
     try:
         from web.dashboard import create_app
-        client = TestClient(create_app(cfg))
-        for path in ("/", "/battery", "/charging", "/dtcs", "/ai"):
-            response = client.get(path)
-            check(f"web {path}", response.status_code == 200,
-                  f"HTTP {response.status_code}, {len(response.content)} bytes")
+        with TestClient(create_app(cfg, bind_host="127.0.0.1")) as client:
+            for path in ("/", "/battery", "/charging", "/dtcs", "/ai"):
+                response = client.get(path)
+                check(f"web {path}", response.status_code == 200,
+                      f"HTTP {response.status_code}, {len(response.content)} bytes")
     except Exception as exc:
         check("web dashboard", False, f"{type(exc).__name__}: {exc}")
 
