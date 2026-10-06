@@ -203,15 +203,28 @@ class Repository:
         self.conn.commit()
         return cur.lastrowid
 
-    def measurement_series(self, key: str, since: str, vehicle_id: int | None = None):
-        sql = ("SELECT ts, value, unit, provenance FROM measurements "
-               "WHERE key=? AND ts>=? AND success=1 AND value IS NOT NULL")
-        args: list = [key, since]
-        if vehicle_id:
-            sql += " AND vehicle_id=?"
-            args.append(vehicle_id)
-        sql += " ORDER BY ts"
-        return self.conn.execute(sql, args).fetchall()
+    def measurement_series(self, vehicle_id: int, key: str, days: int = 30):
+        """(ts, value) rows for one measurement key, successful reads only,
+        oldest first.
+
+        For charting and anomaly-scanning the non-battery signals (12 V system
+        voltage, vehicle speed) that live in `measurements` rather than in the
+        battery snapshots.
+
+        This method was previously defined TWICE in this class -- once as
+        (key, since, vehicle_id) and once as (vehicle_id, key, days). Python
+        keeps the last definition, so analysis/anomaly.py, which used the
+        first form, was silently binding its metric name to `vehicle_id` and
+        its ISO timestamp to `key`. Every query it issued matched no rows and
+        non-battery anomaly detection reported zero findings, always, with no
+        error. There is now exactly one definition; the (key, since, ...)
+        form has no callers left.
+        """
+        return self.conn.execute(
+            "SELECT ts, value FROM measurements WHERE vehicle_id=? AND key=? "
+            "AND success=1 AND value IS NOT NULL AND ts>=? ORDER BY ts",
+            (vehicle_id, key, _iso_days_ago(days)),
+        ).fetchall()
 
     def latest_measurements(self, vehicle_id: int,
                             max_age_s: float | None = None) -> dict:
@@ -267,17 +280,6 @@ class Repository:
             args.append(vehicle_id)
         sql += " ORDER BY ts"
         return self.conn.execute(sql, args).fetchall()
-
-    def measurement_series(self, vehicle_id: int, key: str, days: int = 30):
-        """(ts, value) rows for one measurement key, successful reads only,
-        oldest first. For charting the non-battery signals (12 V system
-        voltage, vehicle speed) that live in `measurements` rather than in
-        the battery snapshots."""
-        return self.conn.execute(
-            "SELECT ts, value FROM measurements WHERE vehicle_id=? AND key=? "
-            "AND success=1 AND value IS NOT NULL AND ts>=? ORDER BY ts",
-            (vehicle_id, key, _iso_days_ago(days)),
-        ).fetchall()
 
     def vacuum(self) -> None:
         """Reclaim space after pruning. Needs no open transaction.

@@ -168,18 +168,60 @@ def _analyze(repo, vid: int, cfg) -> int:
 
 
 def cmd_guard_test() -> int:
-    """Verify the UDS read-only guard."""
+    """Verify the UDS read-only guard.
+
+    Checks the service byte AND the sub-function byte. A service on the
+    allow-list is not enough on its own: `1002` (programmingSession) and
+    `190A` (stopResponseOnEvent) both use allow-listed service ids while
+    changing ECU state, and were let through until the guard started
+    looking past byte one.
+    """
     from diagnostic import uds
     from diagnostic.uds import ReadOnlyViolationError
-    blocked = [0x14, 0x27, 0x2E, 0x31, 0x2F, 0x34, 0x36]
+
+    blocked_services = [0x14, 0x27, 0x2E, 0x31, 0x2F, 0x34, 0x36]
+    blocked_requests = [
+        ("1002", "0x10 0x02 programmingSession"),
+        ("1003", "0x10 0x03 extendedDiagnosticSession"),
+        ("190A", "0x19 0x0A stopResponseOnEvent"),
+        ("2E0102FFFF", "0x2E WriteDataByIdentifier"),
+        ("31010001", "0x31 RoutineControl"),
+        ("14FFFFFF", "0x14 ClearDiagnosticInformation"),
+        ("2F0102", "0x2F InputOutputControlByIdentifier"),
+        ("3501", "0x35 RequestUpload"),
+    ]
+    allowed_requests = [
+        ("1001", "0x10 0x01 defaultSession"),
+        ("221E3B", "0x22 ReadDataByIdentifier"),
+        ("190208", "0x19 0x02 ReadDTCInformation"),
+        ("3E00", "0x3E TesterPresent"),
+        ("0100", "OBD-II mode 01 (read-only)"),
+        ("0902", "OBD-II mode 09 (read-only)"),
+    ]
     ok = True
-    for sid in blocked:
+    for sid in blocked_services:
         try:
             uds.validate_service(sid)
             print(f"FAIL: service 0x{sid:02X} was allowed")
             ok = False
         except ReadOnlyViolationError:
             print(f"OK: service 0x{sid:02X} blocked")
+    for payload, why in blocked_requests:
+        try:
+            uds.validate_request(payload)
+            print(f"FAIL: request {payload} ({why}) was allowed")
+            ok = False
+        except ReadOnlyViolationError:
+            print(f"OK: {payload} blocked -- {why}")
+    for payload, why in allowed_requests:
+        try:
+            uds.validate_request(payload)
+            print(f"OK: {payload} allowed -- {why}")
+        except ReadOnlyViolationError as exc:
+            print(f"FAIL: {payload} ({why}) wrongly blocked: {exc}")
+            ok = False
+    print("\nREAD-ONLY guarantee verified." if ok
+          else "\nREAD-ONLY GUARANTINE COMPROMISED -- do not connect to a vehicle.")
     return 0 if ok else 1
 
 

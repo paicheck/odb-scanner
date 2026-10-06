@@ -5,10 +5,18 @@ SAFETY ARCHITECTURE
 This module is the only place in the codebase that constructs UDS requests.
 The request builders refuse any service outside the read allow-list:
 
-    0x10  DiagnosticSessionControl (default session only, sub-function 0x01)
+    0x10  DiagnosticSessionControl (default session ONLY, sub-function 0x01)
     0x22  ReadDataByIdentifier
-    0x19  ReadDTCInformation
+    0x19  ReadDTCInformation (read sub-functions 0x01-0x09 ONLY)
     0x3E  TesterPresent
+    0x01/0x03/0x09  read-only OBD-II modes
+
+The allow-list is enforced on the WHOLE request, not just the service byte:
+a service whose sub-functions include a state-changing one is narrowed to
+the read sub-functions. `0x10 0x02` (programmingSession) and `0x10 0x03`
+(extendedDiagnosticSession) both change ECU behaviour and gate writes, and
+`0x19 0x0A` (stopResponseOnEvent) is a control operation -- all three are
+now refused even though `0x10` and `0x19` themselves are allow-listed.
 
 Blocked (raises ReadOnlyViolationError): 0x14 ClearDiagnosticInformation,
 0x27 SecurityAccess, 0x2E WriteDataByIdentifier, 0x31 RoutineControl,
@@ -61,6 +69,44 @@ BLOCKED_SERVICES = {
     0x87: "LinkControl - BLOCKED",
 }
 
+# Sub-functions permitted for services that carry one. A service being on the
+# read-only list is NOT sufficient: several of them also have sub-functions
+# that change ECU state, and allowing the service byte alone let those
+# through. Each entry is the complete set of sub-functions this tool may send.
+#
+#   0x10 sub-functions (ISO 14229-1):
+#     0x01 defaultSession              READ-ONLY, the only one sent here
+#     0x02 programmingSession          BLOCKED - opens the ECU for flashing
+#     0x03 extendedDiagnosticSession   BLOCKED - changes security level and
+#                                              diagnostic behaviour
+#     0x04 safetySystemDiagnosticSess  BLOCKED
+#     0x40-0x4F are session variants with the same effects: blocked by
+#     omission (fail-closed), not by an explicit range.
+#
+#   0x19 sub-functions: 0x01-0x09 all report stored information (pure reads).
+#     0x0A stopResponseOnEvent is a CONTROL operation that changes when the
+#     ECU transmits event data, so the list stops at 0x09 rather than being a
+#     blanket "allow 0x19".
+READ_SUBFUNCTIONS: dict[int, set[int]] = {
+    0x10: {0x01},
+    0x19: {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09},
+}
+
+# Sub-function-bearing services whose request must carry the sub-function byte
+# plus at least one operand. `0x22 F1 90` is the shortest genuine DID read;
+# `0x3E 00` the shortest tester-present.
+MIN_REQUEST_BYTES: dict[int, int] = {
+    0x10: 2,
+    0x22: 3,
+    0x19: 2,
+    0x3E: 2,
+}
+
+# Nothing this tool sends is longer than a single read request; ISO-TP caps a
+# CAN frame at 8 bytes and every allow-listed service here is shorter still.
+# A cap costs nothing and stops an over-long payload reaching the wire.
+MAX_REQUEST_BYTES = 15
+
 NRC = {
     0x10: "generalReject",
     0x11: "serviceNotSupported",
@@ -112,17 +158,47 @@ def validate_service(service: int) -> None:
         )
 
 
+def _validate_subfunction(hexed: str, service: int) -> None:
+    """Refuse a state-changing sub-function of an allow-listed service."""
+    allowed = READ_SUBFUNCTIONS.get(service)
+    if allowed is None:
+        return
+    # A service with a sub-function list but no operands cannot be well formed.
+    if len(hexed) < 4:
+        raise ReadOnlyViolationError(
+            f"Refusing to transmit {hexed!r}: service 0x{service:02X} requires a "
+            "sub-function byte. This system is strictly READ-ONLY."
+        )
+    try:
+        sub = int(hexed[2:4], 16)
+    except ValueError as exc:  # pragma: no cover - clean_hex already filtered
+        raise ReadOnlyViolationError(
+            f"Refusing to transmit {hexed!r}: sub-function is not a hex byte."
+        ) from exc
+    # Bit 7 of a sub-function is suppressPosRspMsgIndicationBit, which only
+    # silences the positive response. Masking it is what lets a request built
+    # from a DID whose high bit happens to be set still validate.
+    if (sub & 0x7F) not in allowed:
+        raise ReadOnlyViolationError(
+            f"Refusing to transmit {hexed!r}: sub-function 0x{sub:02X} of service "
+            f"0x{service:02X} is not a read. This tool may only send "
+            f"{sorted(f'0x{s:02X}' for s in allowed)}. This system is strictly "
+            "READ-ONLY."
+        )
+
+
 def validate_request(payload: str | bytes) -> int:
-    """Validate the service byte of an *outgoing* request. Returns the service.
+    """Validate a whole outgoing request. Returns the service id.
 
     This is the enforcement point for the read-only guarantee. `validate_service`
     on its own was not enough: it was only ever called from the build_* helpers,
     which production code does not use, so DiagnosticConnection._transmit could
-    put any hex string on the wire. Everything that reaches the vehicle's
+    put any hex string on the wire. And a service byte on its own was not enough
+    either -- see READ_SUBFUNCTIONS. Everything that reaches the vehicle's
     diagnostic port must pass through here first.
 
-    Fails closed: anything that is not a well-formed, allow-listed service is
-    rejected rather than sent.
+    Fails closed: anything that is not a well-formed request whose service AND
+    sub-function are both allow-listed is rejected rather than sent.
     """
     hexed = clean_hex(payload) if isinstance(payload, str) else payload.hex()
     if len(hexed) < 2:
@@ -137,6 +213,22 @@ def validate_request(payload: str | bytes) -> int:
             f"Refusing to transmit {hexed!r}: first byte is not a service id."
         ) from exc
     validate_service(service)
+    if len(hexed) % 2:
+        raise ReadOnlyViolationError(
+            f"Refusing to transmit {hexed!r}: odd number of hex digits."
+        )
+    if len(hexed) // 2 > MAX_REQUEST_BYTES:
+        raise ReadOnlyViolationError(
+            f"Refusing to transmit {hexed!r}: {len(hexed) // 2} bytes exceeds the "
+            f"{MAX_REQUEST_BYTES}-byte maximum for a read request."
+        )
+    minimum = MIN_REQUEST_BYTES.get(service)
+    if minimum is not None and len(hexed) // 2 < minimum:
+        raise ReadOnlyViolationError(
+            f"Refusing to transmit {hexed!r}: service 0x{service:02X} needs at "
+            f"least {minimum} bytes, got {len(hexed) // 2}."
+        )
+    _validate_subfunction(hexed, service)
     return service
 
 

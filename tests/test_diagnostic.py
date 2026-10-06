@@ -75,6 +75,69 @@ def test_validate_request_fails_closed():
             uds.validate_request(bad)
 
 
+# --- read-only enforcement on SUB-functions ------------------------------------
+# Regression: validate_request checked only the service byte, so any
+# sub-function of an allow-listed service went out. 0x10 0x02 opens the ECU
+# for programming and 0x10 0x03 changes its diagnostic/security level; both
+# defeat the read-only guarantee without ever using a "write" service id.
+@pytest.mark.parametrize("payload", [
+    "1002",          # programmingSession
+    "1003",          # extendedDiagnosticSession
+    "1004",          # safetySystemDiagnosticSession
+    "1040",          # session variant in the 0x40 sub-function range
+    "1002AB",        # programmingSession with operands
+])
+def test_blocked_session_subfunctions(payload):
+    with pytest.raises(ReadOnlyViolationError):
+        uds.validate_request(payload)
+
+
+@pytest.mark.parametrize("payload", ["190A", "1900", "190B", "19FF"])
+def test_blocked_dtc_subfunctions(payload):
+    """0x19 0x0A stopResponseOnEvent is a control operation, not a read."""
+    with pytest.raises(ReadOnlyViolationError):
+        uds.validate_request(payload)
+
+
+@pytest.mark.parametrize("payload", ["1001", "1001A7", "221E3B", "22F190",
+                                     "190208", "190404ABCD12FF", "3E00"])
+def test_allowed_subfunctions(payload):
+    uds.validate_request(payload)  # must not raise
+
+
+def test_multi_did_read_is_allowed():
+    """0x22 may carry several consecutive DIDs; all of it is still a read."""
+    uds.validate_request("221E3BFFFC")
+
+
+@pytest.mark.parametrize("payload", ["10", "19", "22", "3E"])
+def test_truncated_reads_are_refused(payload):
+    """A service byte with no operands is not a well-formed read request."""
+    with pytest.raises(ReadOnlyViolationError):
+        uds.validate_request(payload)
+
+
+def test_overlong_request_is_refused():
+    with pytest.raises(ReadOnlyViolationError):
+        uds.validate_request("22" + "11" * 32)
+
+
+def test_odd_length_request_is_refused():
+    with pytest.raises(ReadOnlyViolationError):
+        uds.validate_request("221E3")
+
+
+def test_transmit_refuses_state_changing_subfunctions():
+    """The choke point must reject them too, not just the module function."""
+    from diagnostic.connection import DiagnosticConnection
+    for payload in ("1002", "1003", "190A"):
+        t = _RecordingTransport()
+        conn = DiagnosticConnection(t)
+        with pytest.raises(ReadOnlyViolationError):
+            conn._transmit(payload, None, "test")
+        assert payload not in t.written, f"{payload} reached the transport"
+
+
 def test_no_header_or_filter_commands_are_ever_sent():
     """Without negotiated MEB addressing, requests must go out functionally.
 
@@ -1086,6 +1149,35 @@ def test_config_rejects_unusable_intervals(tmp_path, body, expect):
     with pytest.raises(ConfigError) as e:
         load_config(base, tmp_path / "none.yaml")
     assert expect in str(e.value)
+
+
+def test_non_battery_anomaly_scan_finds_a_real_outlier(repo):
+    """Regression: Repository.measurement_series was defined twice in the same
+    class with different signatures, and the second definition silently won.
+
+    analysis/anomaly.py used the (key, since, vehicle_id) form, so every call
+    bound a metric NAME to the vehicle_id column and an ISO TIMESTAMP to the
+    key column. The query matched nothing, returned no rows, and reported zero
+    anomalies -- silently, for every non-battery metric, forever. A 900 km/h
+    reading against a 50 km/h baseline must now be flagged.
+    """
+    from analysis.anomaly import scan_metric
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    for i in range(40):
+        # 39 normal readings and one impossible one.
+        value = 50.0 if i < 39 else 900.0
+        repo.record_measurement(
+            vid, f"2026-10-05T10:{i:02d}:00+00:00", "vehicle_speed", "-",
+            "OBD-01", "0x0D", "km/h", "reported", "SAE J1979 PID 0x0D",
+            "documented", "00", value)
+    found = scan_metric(repo, vid, "vehicle_speed", "vehicle speed",
+                        days=3650, battery_field=False)
+    assert found == 1
+    stored = repo.conn.execute(
+        "SELECT value, zscore FROM anomalies WHERE metric='vehicle_speed'"
+    ).fetchall()
+    assert len(stored) == 1
+    assert stored[0]["value"] == 900.0
 
 
 def test_anomaly_rescan_does_not_duplicate_rows(repo):
