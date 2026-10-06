@@ -1551,6 +1551,55 @@ def test_a_zero_reading_is_not_treated_as_missing(repo):
     assert _first_number(0, 0) == 0
 
 
+def test_an_llm_report_is_stored_against_the_vehicle_it_was_built_from(tmp_path):
+    """ask() resolved the vehicle twice, and generate() sits between the two.
+
+    build_context() read first_vehicle() to assemble the evidence packet, then
+    ask() called first_vehicle() again after generate() returned to decide
+    where to store the report. Generation takes minutes on a real model, so a
+    second vehicle appearing in that window -- the collector registering one, or
+    an import -- meant the report was filed against a vehicle whose data it had
+    never seen.
+    """
+    from ai.service import AnalysisService
+
+    cfg = load_config()
+    cfg._data["database"]["path"] = str(tmp_path / "ai.db")
+
+    class _RegisteringOllama:
+        """Registers a second vehicle while the report is being generated."""
+
+        model = "fake-model"
+
+        def __init__(self, repo):
+            self.repo = repo
+
+        def generate(self, prompt, system=None, temperature=None):
+            self.repo.ensure_vehicle("WVWZZZE1ZMP00000")
+            return "No fault codes recorded.\n\nLIMITATIONS\n- none"
+
+    with Repository(cfg._data["database"]["path"]) as r:
+        first = r.ensure_vehicle("WVWZZZE1ZMP087053")
+        svc = AnalysisService(cfg, r)
+        svc.llm = _RegisteringOllama(r)
+
+        result = svc.ask("Give me a health report.")
+
+        assert len(r.conn.execute("SELECT id FROM vehicles").fetchall()) == 2, \
+            "fixture did not exercise the race"
+
+        stored = r.conn.execute(
+            "SELECT vehicle_id FROM llm_reports").fetchall()
+        assert len(stored) == 1, f"expected 1 stored report, got {len(stored)}"
+        assert stored[0]["vehicle_id"] == first, (
+            f"report filed against vehicle {stored[0]['vehicle_id']} but built "
+            f"from vehicle {first}")
+
+        # And the context that went into the model is the same vehicle's.
+        assert result["context"]["vehicle"]["vin"] == "WVWZZZE1ZMP087053", \
+            f"evidence packet described the wrong vehicle: {result['context']}"
+
+
 def test_concurrent_writers_do_not_duplicate_an_anomaly(repo):
     """add_anomaly was a check-then-write, so parallel scans duplicated rows.
 
