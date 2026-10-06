@@ -2140,6 +2140,153 @@ def test_slow_pass_excludes_cell_dids(offline_collector, tmp_path):
 
 
 
+# --- collector reliability --------------------------------------------------------
+def _tcp_collector(tmp_path, port, timeout=0.2):
+    """A Collector pointed at a TCP adapter, so it exercises the real transport
+    path -- including its failure path -- without any hardware."""
+    from collector import Collector
+    cfg = load_config()
+    cfg._data["database"]["path"] = str(tmp_path / "dead.db")
+    cfg._data["adapter"]["type"] = "elm327_tcp"
+    cfg._data["adapter"]["tcp_port"] = port
+    cfg._data["adapter"]["timeout"] = timeout
+    cfg._data["collector"]["poll_interval"] = 0.05
+    cfg._data["collector"]["slow_poll_interval"] = 0.05
+    # The per-cell sweep is 100+ DIDs per slow phase. It adds nothing to what
+    # these tests check and dominates their runtime.
+    cfg._data["collector"]["read_cell_voltages"] = False
+    col = Collector(cfg, Repository(cfg._data["database"]["path"]))
+    col.vehicle_id = col.repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.vin = "WVWZZZE1ZMP087053"
+    return col
+
+
+def test_dead_adapter_is_distinguished_from_a_quiet_vehicle(tmp_path):
+    """Every read swallows CommunicationError, so an unplugged adapter used to
+    look exactly like a sleeping car: collect_once returned {} forever and the
+    loop spun at poll_interval writing a failed row for every registered DID
+    (146 rows per 3 cycles measured). run() must tell the two apart, because
+    only one of them is worth reconnecting for."""
+    from collector import DEAD_CYCLE_MIN_ATTEMPTS
+
+    col = _tcp_collector(tmp_path, 39981)          # nothing is listening
+    try:
+        assert col._cycle_is_dead(col.collect_once()) is True
+
+        # A vehicle that is merely refusing DIDs is NOT a dead adapter.
+        col._cycle_attempts, col._cycle_failures = 10, 3
+        assert col._cycle_is_dead({}) is False, "refused DIDs read as dead"
+        # Nor one that answered something.
+        col._cycle_attempts, col._cycle_failures = 10, 0
+        assert col._cycle_is_dead({"pack_voltage": 350.0}) is False
+        # Nor a cycle too small to judge -- a car implementing none of the
+        # registered DIDs must not cause a reconnect storm.
+        col._cycle_attempts = col._cycle_failures = DEAD_CYCLE_MIN_ATTEMPTS - 1
+        assert col._cycle_is_dead({}) is False
+    finally:
+        col.repo.close()
+
+
+def test_run_backs_off_instead_of_spinning_on_a_dead_adapter(tmp_path,
+                                                             monkeypatch, caplog):
+    """Regression: a dead adapter produced an endless tight loop of failed
+    cycles, with no error surfaced and no attempt to reconnect. It must now
+    stop cycling, say why, and back off.
+
+    The meaningful property is not how many cycles ran -- a bounded run still
+    terminates on its budget -- but that the run spent real time WAITING. The
+    old loop slept nothing at all between failed cycles.
+    """
+    from collector import RECONNECT_BACKOFF_S
+
+    col = _tcp_collector(tmp_path, 39982)
+    slept: list[float] = []
+    attempts = {"n": 0}
+
+    monkeypatch.setattr(col, "read_and_store_dtcs",
+                        lambda: pytest.fail("DTC pass on a dead link"))
+    monkeypatch.setattr("collector.time.sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(col.conn, "close", lambda: None)
+
+    def fake_open():
+        attempts["n"] += 1
+        from diagnostic.interface import AdapterNotFoundError
+        raise AdapterNotFoundError("still absent")
+
+    monkeypatch.setattr(col.conn, "open", fake_open)
+    monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMP087053")
+
+    import logging
+    with caplog.at_level(logging.ERROR):
+        col.run(max_cycles=12)
+
+    assert attempts["n"] >= 3, "never tried to reconnect"
+    # One reconnect per dead cycle, not several: no extra spinning between them.
+    assert attempts["n"] == 12, f"unexpected attempt count: {attempts['n']}"
+    # Backoff grows and is bounded.
+    assert slept[:4] == sorted(slept[:4]), f"backoff not monotonic: {slept[:5]}"
+    assert all(s > 0 for s in slept), "busy-looped during recovery"
+    assert slept[0] == pytest.approx(RECONNECT_BACKOFF_S)
+    assert slept[1] > slept[0], "backoff never grew"
+    from collector import RECONNECT_MAX_BACKOFF_S
+    assert max(slept) <= RECONNECT_MAX_BACKOFF_S + 1e-6, f"unbounded: {max(slept)}"
+    # The whole point: it waited, rather than cycling flat out.
+    assert sum(slept) > 60, f"did not back off, only slept {sum(slept):.0f}s total"
+    # And the operator is told, rather than left watching an empty dashboard.
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "answered nothing" in text or "Adapter stopped answering" in text
+    # Matched on the description, not merely kind='adapter': open_and_identify
+    # already writes a kind='adapter' row for every successful connect, so a
+    # kind-only check would pass even if the loss were never recorded.
+    assert col.repo.conn.execute(
+        "SELECT 1 FROM diagnostic_events WHERE description LIKE '%stopped answering%'"
+    ).fetchone() is not None, "adapter loss was not recorded as an event"
+    col.repo.close()
+
+
+def test_recovery_resumes_collection_when_the_adapter_returns(tmp_path,
+                                                              monkeypatch):
+    """After a successful reconnect the collector must resume normally: reset
+    the dead-cycle counter, force a slow pass (the vehicle may have driven or
+    charged while blind), and re-probe DIDs that had been refused."""
+    col = _tcp_collector(tmp_path, 39983)
+    col._last_slow = 10_000.0          # pretend a slow phase just ran
+    col._cells_readable = False
+    col._dtc_snapshots["U112300"] = {"x": 1}
+    col._dead_cycles = 3
+
+    monkeypatch.setattr("collector.time.sleep", lambda s: None)
+    monkeypatch.setattr(col.conn, "close", lambda: None)
+    monkeypatch.setattr(col.conn, "open", lambda: None)
+    monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMP087053")
+
+    assert col._recover_adapter() is True
+    assert col._dead_cycles == 0
+    assert col._last_slow < 0, "slow phase not forced after a blind period"
+    assert col._cells_readable is True, "cell sweep not re-enabled"
+    assert col._dtc_snapshots == {}, "stale DTC snapshots survived a reconnect"
+    col.repo.close()
+
+
+def test_recovery_reports_failure_and_keeps_trying(tmp_path, monkeypatch):
+    """A failed reconnect must not be fatal and must not reset the counter --
+    resetting it would restart the backoff at 5 s and hammer the port."""
+    from diagnostic.interface import AdapterNotFoundError
+    col = _tcp_collector(tmp_path, 39984)
+    monkeypatch.setattr("collector.time.sleep", lambda s: None)
+    monkeypatch.setattr(col.conn, "close", lambda: None)
+
+    def boom():
+        raise AdapterNotFoundError("nope")
+
+    monkeypatch.setattr(col.conn, "open", boom)
+    assert col._recover_adapter() is False
+    assert col._dead_cycles == 1
+    assert col._recover_adapter() is False
+    assert col._dead_cycles == 2, "backoff state lost between attempts"
+    col.repo.close()
+
+
 # -- session energy integration --------------------------------------------------
 
 def test_session_energy_is_integrated_not_summed(repo):

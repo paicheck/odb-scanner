@@ -134,6 +134,23 @@ Manual equivalent, in two terminals:
 
 ## Running the stack continuously
 
+### If the adapter disappears
+
+A Bluetooth SPP link drops — the phone sleeps, walks out of range, or the
+ignition goes off — and the collector tells the difference between *the adapter
+is gone* and *the vehicle is merely asleep*. A car that is off simply refuses
+its DIDs; an adapter that has vanished fails every read, including the OBD-II
+handshake that needs no ECU cooperation. When a cycle fails entirely, the
+collector stops cycling, records the outage as an event, and reconnects on a
+backoff from 5 s to 5 minutes rather than spinning. A successful reconnect
+forces a full slow pass, because the vehicle may have driven or charged while
+the collector was blind.
+
+Previously the two cases looked identical: `collect_once()` returned an empty
+snapshot, the loop kept running at `poll_interval` forever, and each cycle
+wrote a failed row for every registered DID — 146 rows per 3 cycles, with
+nothing in the log to say why.
+
 ### If you would rather not type commands
 
 On Windows there are double-clickable shortcuts next to this file, and

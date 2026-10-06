@@ -31,6 +31,19 @@ log = logging.getLogger(__name__)
 # standard OBD-II PIDs to poll on BEVs (0x42 = control module voltage ~12V)
 OBD_PIDS = (0x00, 0x0D, 0x42)
 
+# A cycle is treated as a dead adapter -- not a quiet vehicle -- once it made
+# at least this many read attempts and every single one of them failed. One
+# threshold for both: below it, a cycle that happened to contain only DIDs
+# this car does not implement (all NRC 0x31) would be mistaken for a dead
+# link and trigger a pointless reconnect storm.
+DEAD_CYCLE_MIN_ATTEMPTS = 3
+
+# Reconnect pacing. Starts at 5 s and doubles to a 5-minute ceiling: a
+# Bluetooth SPP port whose phone has gone to sleep stays deaf for a while, and
+# hammering open() every poll_interval just fills the log.
+RECONNECT_BACKOFF_S = 5.0
+RECONNECT_MAX_BACKOFF_S = 300.0
+
 # Which polled PIDs get persisted, as (measurement key, snapshot key, unit,
 # doc). PID 0x00 is the supported-bitmask handshake, not a value, so it is
 # deliberately absent. A decoded PID missing from this table would be
@@ -98,6 +111,22 @@ class Collector:
         # e.g. NRC-31): the per-cell sweep would otherwise re-collect 102
         # guaranteed failures on every slow phase.
         self._cells_readable = True
+        # Per-cycle health. Every read swallows CommunicationError so one dead
+        # DID cannot abort a pass, which also meant an unplugged adapter looked
+        # identical to a quiet vehicle: collect_once returned {} forever, the
+        # loop kept spinning at poll_interval, and each cycle wrote a failed
+        # measurement row for every registered DID. Measured at 146 rows per
+        # 3 cycles on a TCP adapter that was never there. These counters are
+        # what let run() tell the two apart.
+        self._cycle_attempts = 0
+        self._cycle_failures = 0
+        self._dead_cycles = 0
+
+    def _attempt(self, ok: bool) -> None:
+        """Count one read attempt and whether it produced data."""
+        self._cycle_attempts += 1
+        if not ok:
+            self._cycle_failures += 1
 
     def _adopt_open_session(self) -> None:
         """Continue a session a previous run left open.
@@ -263,22 +292,28 @@ class Collector:
         try:
             raw = self.conn.read_did(ecu, spec.did)
             self._record(spec, raw, ts)
+            self._attempt(True)
             return raw
         except CommunicationError as exc:
             self._record(spec, None, ts, error=str(exc), success=False)
+            self._attempt(False)
             return None
 
     # -- phase 3/4: one collection pass ----------------------------------------
     def collect_once(self) -> dict:
         ts = utcnow()
         snapshot: dict = {}
+        self._cycle_attempts = 0
+        self._cycle_failures = 0
 
         # standard OBD-II (12 V voltage comes from PID 0x42, speed from 0x0D)
         for pid in OBD_PIDS:
             try:
                 data = self.conn.mode01(pid)
             except CommunicationError:
+                self._attempt(False)
                 continue
+            self._attempt(True)
             decoded = obd2.decode_pid(pid, data)
             if not decoded or pid not in OBD_PID_KEYS:
                 continue
@@ -545,6 +580,58 @@ class Collector:
         return all_dtcs
 
     # -- main loop ----------------------------------------------------------------
+    def _cycle_is_dead(self, snapshot: dict) -> bool:
+        """True when the adapter answered nothing at all this cycle.
+
+        A quiet vehicle is not a dead adapter: the OBD-II warm-up in
+        initialize() already distinguishes "NO DATA" from a closed port, and a
+        sleeping car still answers once woken. What separates the two here is
+        that a sleeping/asleep vehicle yields a couple of refused DIDs while a
+        dead adapter fails EVERY attempt, including the mode-01 handshake that
+        needs no ECU cooperation.
+        """
+        return (self._cycle_attempts >= DEAD_CYCLE_MIN_ATTEMPTS
+                and self._cycle_failures == self._cycle_attempts
+                and not snapshot)
+
+    def _recover_adapter(self) -> bool:
+        """Re-open the adapter after a run of dead cycles. True if it is back.
+
+        Closes the transport first: a Bluetooth SPP port whose far end has
+        gone away frequently leaves the handle open but deaf, so re-running
+        initialize() on it can silently do nothing.
+        """
+        self._dead_cycles += 1
+        delay = min(RECONNECT_MAX_BACKOFF_S,
+                    RECONNECT_BACKOFF_S * (2 ** min(self._dead_cycles - 1, 5)))
+        log.error(
+            "Adapter answered nothing for %d consecutive cycles (%d/%d reads "
+            "failed, no data at all). Treating the adapter as gone rather than "
+            "the vehicle being asleep. Reconnecting in %.0f s. This also "
+            "happens if the phone running the Bluetooth link drops the car.",
+            self._dead_cycles, self._cycle_failures, self._cycle_attempts,
+            delay)
+        try:
+            self.conn.close()
+        except Exception:
+            log.debug("error closing a dead transport", exc_info=True)
+        time.sleep(delay)
+        try:
+            self.conn.open()
+            self.open_and_identify()
+            # The vehicle may have driven or charged while we were blind; take
+            # a full slow pass immediately rather than waiting out the interval.
+            self._last_slow = -self.slow_interval
+            self._cells_readable = True
+            self._dtc_snapshots.clear()
+            self._dead_cycles = 0
+            log.info("Adapter recovered after %d dead cycle(s)", self._dead_cycles)
+            return True
+        except Exception as exc:
+            log.error("Reconnect attempt failed (%s: %s)",
+                      type(exc).__name__, exc)
+            return False
+
     def run(self, max_cycles: int | None = None) -> None:
         interval = float(self.cfg.get("collector.poll_interval", 5.0))
         self.open_and_identify()
@@ -556,10 +643,22 @@ class Collector:
         next_due = time.monotonic()
         while max_cycles is None or cycles < max_cycles:
             snap = self.collect_once()
+            cycles += 1
+            if self._cycle_is_dead(snap):
+                # Do not record a DTC pass on a dead link, and do not log a
+                # cycle summary of nothing: both add noise, not information.
+                if self._dead_cycles == 0:
+                    self._note_adapter_lost()
+                if self._recover_adapter():
+                    continue          # do not count the recovery as a cycle
+                next_due = time.monotonic()
+                continue
+            if self._dead_cycles:
+                log.info("Vehicle answering again after %d dead cycle(s)",
+                         self._dead_cycles)
             self.read_and_store_dtcs()
             log.info("cycle %d: %s", cycles,
                      {k: v for k, v in snap.items() if k != "cell_v"})
-            cycles += 1
             if max_cycles is None or cycles < max_cycles:
                 next_due += interval
                 delay = next_due - time.monotonic()
@@ -570,6 +669,26 @@ class Collector:
                     # catch up with back-to-back cycles, which would only make
                     # the adapter busier.
                     next_due = time.monotonic()
+
+    def _note_adapter_lost(self) -> None:
+        """Record the first dead cycle as an event, once per outage.
+
+        The dashboard's 'what happened' view reads diagnostic_events, so a
+        silent adapter that never appears in the logs still shows up there.
+        """
+        log.error(
+            "Adapter stopped answering entirely (ignition off, Bluetooth link "
+            "dropped, or the adapter was unplugged). No requests are reaching "
+            "the vehicle and no data is being recorded.")
+        if self.vehicle_id is None:
+            return
+        try:
+            self.repo.add_event(
+                self.vehicle_id, utcnow(), "adapter",
+                "Adapter stopped answering; collection paused and reconnect "
+                "attempts began")
+        except Exception:
+            log.debug("could not record adapter-loss event", exc_info=True)
 
 
 
