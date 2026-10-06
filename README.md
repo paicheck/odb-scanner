@@ -268,6 +268,7 @@ on Linux/macOS, where the compiled wheels differ.
 | `python tools/smoke_test.py` | Offline end-to-end self-test (no car, no Ollama) |
 | `python tools/elm_console.py` | Raw ELM327 console for live debugging (`--tcp` for simulator) |
 | `python tools/start_scanner.py` | Start/stop the simulated stack (`--status`, `--stop`) |
+| `python tools/import_carscanner.py "export.csv"` | Import a Car Scanner CSV as evidence labelled `imported` (`--dry-run` previews) |
 | `python main.py seed` | Load example 30-day dataset |
 | `python main.py guard-test` | Verify the read-only UDS guard |
 | `python main.py doctor` | **Work out why the adapter is not connecting** |
