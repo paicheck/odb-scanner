@@ -1,5 +1,18 @@
 """Interactive raw ELM327 console for live diagnostics at the vehicle.
 
+*** THIS TOOL IS NOT READ-ONLY. ***
+
+Everything else in this project routes every byte through
+diagnostic/uds.validate_request, so no code path can put a write on the
+vehicle. This console deliberately does not: whatever you type is sent as
+typed, with no allow-list. You can transmit 2E (write data), 31 (routine
+control), 1002 (programming session), 14 (clear DTCs) or any other service
+simply by typing it. That is the point of the tool, and it is also why the
+read-only guarantee in README.md does not extend to it.
+
+Run it against the car only when a read is not enough, and prefer
+`main.py discover`, `main.py doctor` and `main.py guard-test`, which cannot.
+
 Uses the same transport and init sequence as main.py, but every command is
 typed by hand and responses are printed raw. Built for the "discovery
 answers NO DATA" situation:
@@ -27,7 +40,11 @@ from config import load_config  # noqa: E402
 from diagnostic.elm327 import Elm327Transport  # noqa: E402
 from diagnostic.interface import CommunicationError  # noqa: E402
 
-HELP_TEXT = """commands:
+HELP_TEXT = """NOT READ-ONLY. Whatever you type is sent as typed, with no allow-list --
+so 2E, 31, 1002 and 14 will reach the vehicle if you enter them. Every other
+command in this project cannot do that.
+
+commands:
   <any ELM327/UDS command>   sent as typed (0100, 0902, 03, ATSP0, ATSH7E5, ...)
   info                       show adapter identity
   help                       show this help
@@ -65,6 +82,9 @@ def main() -> int:
         return 1
 
     print(f"Connected: {transport.description()} — 'help' for help, 'q' to quit")
+    # Printed on connect, not only in --help: the person most likely to type a
+    # write service by accident is the one who did not read the docstring.
+    print("NOT READ-ONLY: what you type is sent to the vehicle as typed.")
     try:
         while True:
             try:

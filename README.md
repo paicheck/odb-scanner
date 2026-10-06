@@ -28,6 +28,13 @@ This system performs **no writes to the vehicle**. Enforced structurally in
   (safety manifest).
 * The LLM has no path to the adapter whatsoever.
 
+**One deliberate exception: `tools/elm_console.py` is not read-only.** It is a
+raw console that sends whatever you type, with no allow-list, so `2E`, `31`,
+`1002` and `14` reach the vehicle if you enter them. That is the point of a
+discovery tool, and it is why the guarantee above does not extend to it. It
+says so on startup. Everything else — `collect`, `discover`, `doctor`,
+`guard-test`, the dashboard — goes through the allow-list.
+
 ### Network exposure — read this before connecting it to anything
 
 `config.yaml` binds the dashboard to `0.0.0.0` so a tablet on the same Wi-Fi

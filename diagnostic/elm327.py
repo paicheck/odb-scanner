@@ -70,6 +70,9 @@ class Elm327Transport(OBDInterface):
         self._meb_module: int | None = None   # None = functional addressing
         self._caf = 1                          # CAN auto-formatting on/off
         self._proto = PINNED_PROTOCOL          # active ATSP protocol
+        # Set when the link may be holding an unanswered request, so the next
+        # send_command drains before writing. See _drain_input.
+        self._needs_drain = False
 
     # -- lifecycle ----------------------------------------------------------
     @property
@@ -149,15 +152,93 @@ class Elm327Transport(OBDInterface):
                 pass
         self._dev = None
         self._opened = False
+        self._needs_drain = True
+        # Addressing state describes an adapter that no longer exists. Leaving
+        # it set means a request issued between close() and initialize() takes
+        # the MEB path against a closed transport, and if a later _negotiate_meb
+        # refuses, meb_addressing stays True with a stale _meb_module -- which
+        # makes set_module() re-issue ATCP/ATSH, get refused, and _recover() the
+        # adapter, once per request. _base_init resets these too; close() is
+        # just the other place that has to.
+        self.meb_addressing = False
+        self._caf = 0
+        self._proto = None
+        self._meb_module = None
 
     # -- raw line I/O -------------------------------------------------------
     def send_command(self, command: str) -> list[str]:
         if self._dev is None:
             raise CommunicationError("Adapter not open")
+        # Discard anything already in the buffer before asking a new question.
+        # Only when something might be there: a desync can only begin with a
+        # read that did not complete, and _read_until_prompt already drains on
+        # that path. Doing this unconditionally would cost a socket timeout on
+        # every one of the ~110 commands a cycle issues, which is seconds of
+        # dead time per cycle to protect against something that cannot happen.
+        if self._needs_drain:
+            self._drain_input()
+            self._needs_drain = False
         self._write(command + "\r")
         raw = self._read_until_prompt(self.timeout)
         lines = raw.replace(">", "\n").splitlines()
         return [ln.strip() for ln in lines if ln.strip()]
+
+    def _drain_input(self, max_bytes: int = 4096) -> int:
+        """Throw away unread input. Returns how many bytes were discarded.
+
+        A timed-out read leaves the adapter mid-answer. The bytes already
+        consumed are gone, but the rest of that answer -- including the '>'
+        prompt that terminates it -- is still sitting in the driver buffer. The
+        next send_command() then writes its command and _read_until_prompt()
+        finds the STALE '>' first, breaks immediately, and returns the previous
+        request's lines as this request's answer. The link is then permanently
+        one request out of step until an ATZ happens to resynchronise it.
+
+        That is a data-integrity failure, not a cosmetic one. Most answers are
+        caught by the echo check in read_did(), but the DIDs that are re-polled
+        every cycle answer with byte-identical bytes, so a stale reply is
+        indistinguishable from a live one -- and it is then stored with the
+        current timestamp, which defeats the max_value_age_s freshness bound
+        that exists precisely to catch stale readings. Anomaly detection then
+        compares week-old data against a live baseline without noticing.
+
+        Draining before the write makes a late answer from a previous request
+        impossible to mistake for the current one; draining on failure makes
+        the next request start clean rather than one request further behind.
+        """
+        if self._dev is None:
+            return 0
+        discarded = 0
+        if hasattr(self._dev, "reset_input_buffer"):
+            # serial: pyserial knows exactly what is pending
+            try:
+                pending = self._dev.in_waiting
+                self._dev.reset_input_buffer()
+                discarded += int(pending or 0)
+            except Exception:  # pragma: no cover - platform dependent
+                pass
+            return discarded
+        # socket: recv until the deadline. Note that on a timeout-configured
+        # socket, "no data yet" arrives as a raised timeout, NOT as an empty
+        # recv -- an empty recv means the peer closed. So this must not stop on
+        # b""; only the deadline or an error ends it. Stopping early is exactly
+        # the bug being fixed here, because the stale answer is still sitting
+        # there waiting to be read.
+        deadline = time.time() + 0.2
+        while time.time() < deadline and discarded < max_bytes:
+            try:
+                self._dev.settimeout(0.05)
+                chunk = self._dev.recv(1024)
+            except (TimeoutError, OSError):
+                break
+            except Exception:  # pragma: no cover - platform dependent
+                break
+            discarded += len(chunk or b"")
+        try:
+            self._dev.settimeout(0.5)   # restore what open() established
+        except Exception:  # pragma: no cover
+            pass
+        return discarded
 
     def _write(self, text: str) -> None:
         try:
@@ -185,6 +266,12 @@ class Elm327Transport(OBDInterface):
                     break
         text = buf.decode("ascii", errors="replace")
         if ">" not in text:
+            # Clear the partial answer before giving up, or the next request
+            # inherits it and reads this one's reply as its own. The flag also
+            # covers the case where the rest of the answer arrives after this
+            # drain has already finished looking.
+            self._drain_input()
+            self._needs_drain = True
             raise CommunicationError(
                 f"Timeout waiting for prompt after: {buf[:80]!r}"
             )
@@ -280,7 +367,16 @@ class Elm327Transport(OBDInterface):
         Only the 29-bit half of MEB addressing is probed here. The 11-bit
         modules (energy 0x710, climate 0x746) need protocol 6 and are reached
         by set_module, which negotiates per module.
+
+        Every refusal path clears meb_addressing. It used to only ever be set,
+        never cleared, so a re-negotiation that had previously succeeded and
+        then failed (an ATZ from _recover() against an adapter now refusing,
+        say) left the flag True with a stale _meb_module. _transmit() would keep
+        taking the MEB branch, set_module() would re-issue ATCP/ATSH, get
+        refused, and call _recover() -- one full adapter reset per request, on
+        every poll, for the rest of the session.
         """
+        self.meb_addressing = False
         if any("?" in r for r in self.send_command("ATCP 17")):
             log.info("Adapter refused 'ATCP 17' - MEB physical addressing "
                      "unavailable, staying functional-only")
@@ -299,6 +395,12 @@ class Elm327Transport(OBDInterface):
             self.send_command("ATZ")
             time.sleep(0.3)
             self._base_init()
+            # ATZ wiped every addressing setting the adapter held, so the
+            # physical header this method just negotiated no longer exists.
+            # Leaving meb_addressing=True would send every subsequent request
+            # down the MEB path against a functional-only adapter.
+            self.meb_addressing = False
+            self._meb_module = None
         log.info("MEB physical addressing available (ATCP + 6-digit ATSH)")
 
     def _restore_functional(self) -> bool:
@@ -337,6 +439,9 @@ class Elm327Transport(OBDInterface):
         functional addressing, because the adapter is no longer aimed at the
         module it asked for.
         """
+        # Whatever was in flight is now unanswerable, so make sure the next
+        # write starts from a clean buffer.
+        self._needs_drain = True
         log.info("Adapter refused a module header -- resetting and re-negotiating")
         self.send_command("ATZ")
         time.sleep(0.3)

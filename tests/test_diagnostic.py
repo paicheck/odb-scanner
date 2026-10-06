@@ -256,6 +256,183 @@ def test_meb_negotiation_refused_stays_functional():
     assert t.set_module(0x17FC007B) is False
 
 
+def test_meb_negotiation_clears_a_stale_flag_when_a_later_probe_refuses():
+    """meb_addressing could only ever be set, never cleared.
+
+    After a successful negotiation, a re-negotiation that hit an adapter now
+    refusing (an ATZ from _recover(), say) left the flag True with a stale
+    module. _transmit() kept taking the MEB branch, set_module() re-issued
+    ATCP/ATSH, got refused and called _recover() -- a full adapter reset on
+    every single request, for the rest of the session.
+    """
+    from diagnostic.elm327 import Elm327Transport
+
+    # First negotiation succeeds. (_meb_module is None afterwards because
+    # _restore_functional() points the adapter back at the shared OBD header;
+    # the flag is what decides the MEB code path.)
+    ok = _StubTransport()
+    t = Elm327Transport(port="TEST")
+    t.send_command = ok.send_command
+    t._negotiate_meb()
+    assert t.meb_addressing is True
+
+    # The adapter is later recovered and now refuses. The stale flag must not
+    # survive that.
+    refusing = _StubTransport(refusals=("ATCP 17",))
+    t.send_command = refusing.send_command
+    t._negotiate_meb()
+    assert t.meb_addressing is False, (
+        "a refused re-negotiation left meb_addressing=True with a stale "
+        "module; every request would now cost an adapter reset")
+    assert t._meb_module is None
+    assert t.set_module(0x17FC007B) is False
+
+
+def test_close_clears_the_addressing_state_it_describes():
+    """close() released the device but kept meb_addressing/_caf/_proto.
+
+    A request issued between close() and initialize() would take the MEB path
+    against a closed transport. _base_init already resets them; close() is the
+    other place that has to.
+    """
+    from diagnostic.elm327 import Elm327Transport
+
+    stub = _StubTransport()
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t._negotiate_meb()
+    assert t.meb_addressing is True
+
+    t._dev = object()      # something close() can call .close() on
+    t._opened = True
+    t.close()
+    assert t.meb_addressing is False
+    assert t._meb_module is None
+    assert t._caf == 0
+    assert t._proto is None
+    assert t._dev is None and t._opened is False
+
+
+class _LaggingAdapter:
+    """A socket-ish link that answers AFTER the caller has given up.
+
+    This is what a Bluetooth SPP drop looks like from the software side: the
+    reply for request N turns up in the buffer after request N has already
+    timed out, prompt and all.
+    """
+
+    def __init__(self, answers, lag_first=True):
+        self.answers = list(answers)
+        self.pending = b""
+        self.stall_next = lag_first
+        self.sent = b""
+        self.timeout = None
+        # A real adapter only speaks when spoken to, so the double must not
+        # hand over an answer just because someone called recv(). Otherwise the
+        # drain that legitimately runs before each write would consume the very
+        # reply the command was waiting for.
+        self.awaiting_reply = False
+
+    # -- socket surface used by Elm327Transport
+    def settimeout(self, value):
+        self.timeout = value
+
+    def sendall(self, data):
+        self.sent += data
+        self.awaiting_reply = True
+
+    def recv(self, _n):
+        if self.awaiting_reply:
+            self.awaiting_reply = False
+            if self.stall_next:
+                # The adapter says nothing at all for this request, so the
+                # caller hits its deadline and raises. The real answer is
+                # staged afterwards by the test, which is exactly the shape of
+                # the bug: it arrives after the request that wanted it gave up.
+                self.stall_next = False
+                return b""
+            self._queue_next()
+        if not self.pending:
+            # Nothing buffered and nothing owed. A real socket would block
+            # here; returning empty is the same thing to the caller.
+            return b""
+        out, self.pending = self.pending, b""
+        return out
+
+    def _queue_next(self):
+        if not self.answers:
+            return
+        answer = self.answers.pop(0)
+        # A real adapter terminates every reply with the '>' prompt; the
+        # transport breaks on it, so it has to be in the bytes.
+        self.pending += (answer + "\r>").encode()
+
+
+def test_a_late_reply_cannot_be_mistaken_for_the_next_request():
+    """The link must not end up permanently one request out of step.
+
+    A timed-out read discarded the bytes it had consumed, but the rest of that
+    answer -- including the '>' prompt -- stayed in the driver buffer. The next
+    send_command() then found the stale '>' immediately and returned the
+    PREVIOUS request's lines as its own answer, and every subsequent read
+    inherited the shift until an ATZ happened to resynchronise it.
+
+    The DID echo check in read_did() catches most of this, but the DIDs that
+    are re-polled every cycle answer with byte-identical bytes, so a stale
+    reply is indistinguishable from a live one -- and it gets stored with the
+    current timestamp, defeating the freshness bound that exists to catch
+    exactly that.
+    """
+    from diagnostic.elm327 import Elm327Transport
+    from diagnostic.interface import CommunicationError
+
+    answers = [
+        "OK",                                            # request 1
+        "SPEED12A",                                      # request 2 (late)
+        "SPEED64B",                                      # request 3
+    ]
+    adapter = _LaggingAdapter(answers, lag_first=False)
+    t = Elm327Transport(port="TEST")
+    t._dev = adapter
+    t._opened = True
+    t.timeout = 0.3
+
+    assert t.send_command("010C") == ["OK"]
+
+    # Request 2 stalls past the deadline...
+    adapter.stall_next = True
+    with pytest.raises(CommunicationError):
+        t.send_command("010C")
+    # ...and only then does its answer land in the buffer, prompt and all.
+    adapter._queue_next()
+    assert adapter.pending, "test double failed to stage the late answer"
+
+    # Request 3 must get its own answer and nothing else. Without a drain,
+    # _read_until_prompt finds the stale '>' first, breaks immediately, and
+    # returns ["SPEED12A", "SPEED64B"] -- the previous request's reply handed
+    # over as this one's.
+    adapter.answers.append("SPEED64B")
+    third = t.send_command("010C")
+    assert third == ["SPEED64B"], (
+        f"stale answer returned for a fresh request: {third} -- the transport "
+        "is still offset from the link")
+
+
+def test_draining_before_a_write_does_not_eat_the_current_answer():
+    """The drain must not throw away the reply to the command just sent."""
+    from diagnostic.elm327 import Elm327Transport
+
+    adapter = _LaggingAdapter(["OK", "OK", "OK"], lag_first=False)
+    t = Elm327Transport(port="TEST")
+    t._dev = adapter
+    t._opened = True
+    t.timeout = 0.5
+
+    assert t.send_command("ATI") == ["OK"]
+    assert t.send_command("ATI") == ["OK"]
+    assert t.send_command("ATI") == ["OK"]
+
+
 def test_set_module_switches_header_and_caf_mode():
     stub = _StubTransport()
     from diagnostic.elm327 import Elm327Transport
