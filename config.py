@@ -29,8 +29,17 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
 class Config:
     """Attribute-style access with defaults; env vars override yaml."""
 
-    def __init__(self, data: dict):
+    def __init__(self, data: dict, path: Path | None = None,
+                 local_path: Path | None = None):
         self._data = data or {}
+        # Remember where this config came from. Anything that needs to WRITE a
+        # setting back (the dashboard access token, see web/auth.py) must not
+        # assume the default locations: a config loaded from elsewhere would
+        # otherwise have its token written into the repository's own
+        # config.local.yaml, silently sharing one machine's secret with every
+        # other configuration that uses the default path.
+        self.path = Path(path) if path else None
+        self.local_path = Path(local_path) if local_path else None
 
     def __getattr__(self, name):  # top-level sections and scalar keys
         try:
@@ -153,4 +162,4 @@ def load_config(path: str | Path | None = None,
     if overlay_path != base_path:
         data = _deep_merge(data, _read_yaml(overlay_path))
     _validate(data)
-    return Config(data)
+    return Config(data, path=base_path, local_path=overlay_path)

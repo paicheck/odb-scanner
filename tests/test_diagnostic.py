@@ -1512,6 +1512,209 @@ def test_config_missing_base_file_yields_defaults(tmp_path):
     assert cfg.get("anything.at.all") is None
 
 
+# --- dashboard access control --------------------------------------------------
+def _auth_cfg(tmp_path, host):
+    (tmp_path / "c.yaml").write_text(
+        f"database:\n  path: {tmp_path / 'd.db'}\n"
+        f"web:\n  host: \"{host}\"\n  port: 8000\n", encoding="utf-8")
+    return load_config(tmp_path / "c.yaml", tmp_path / "local.yaml")
+
+
+def test_network_bind_requires_a_token(tmp_path, monkeypatch):
+    """config.yaml ships web.host 0.0.0.0 so a tablet can reach the dashboard.
+
+    Nothing authenticated it: the VIN, the fault history and POST /ai/ask were
+    all reachable by anything on the network. A network-reachable bind must
+    refuse everything without the token, and the refusal must not leak the
+    page it is protecting.
+    """
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+    from web.auth import is_loopback
+
+    token = "s3cret-token-value"
+    # Host-aware, like the real resolver: a loopback bind must need no token.
+    monkeypatch.setattr(dash, "resolve_token",
+                        lambda c, h: None if is_loopback(h) else token)
+
+    cfg = _auth_cfg(tmp_path, "0.0.0.0")
+    client = TestClient(dash.create_app(cfg, bind_host="0.0.0.0"),
+                        raise_server_exceptions=False)
+
+    for path in ("/", "/battery", "/dtcs", "/charging", "/ai",
+                 "/api/health", "/api/battery"):
+        r = client.get(path)
+        assert r.status_code == 401, f"{path} served without a token"
+        assert "WVWZZZE1ZMP" not in r.text, f"{path} leaked vehicle data"
+    # POST must be gated too, or the endpoint is merely hidden behind 401 on GET.
+    assert client.post("/ai/ask", data={"question": "hi"}).status_code == 401
+
+    assert client.get("/?k=wrong").status_code == 401
+    assert client.get("/?k=" + token + "x").status_code == 401
+
+
+def test_valid_token_is_exchanged_for_a_cookie(tmp_path, monkeypatch):
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+
+    token = "s3cret-token-value"
+    monkeypatch.setattr(dash, "resolve_token", lambda c, h: token)
+    cfg = _auth_cfg(tmp_path, "0.0.0.0")
+    client = TestClient(dash.create_app(cfg, bind_host="0.0.0.0"),
+                        raise_server_exceptions=False)
+
+    r = client.get("/?k=" + token, follow_redirects=False)
+    assert r.status_code == 303
+    # The token must not stay in the address bar: that is browser history,
+    # bookmarks, screenshots and the Referer of every outbound link.
+    assert "k=" not in (r.headers.get("location") or "")
+    assert "odb_token" in r.cookies
+    # HttpOnly: unreadable from page JavaScript, which is what an XSS would use.
+    assert "HttpOnly" in r.headers.get("set-cookie", "")
+
+    # The cookie alone is then enough -- no token repeated in every URL.
+    assert client.get("/").status_code == 200
+    assert client.get("/api/health").status_code == 200
+
+
+def test_loopback_bind_needs_no_token(tmp_path, monkeypatch):
+    """Nothing else can open a loopback socket, so there is nobody to auth."""
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+    from web.auth import is_loopback
+
+    monkeypatch.setattr(dash, "resolve_token",
+                        lambda c, h: None if is_loopback(h) else "tok")
+    cfg = _auth_cfg(tmp_path, "127.0.0.1")
+    client = TestClient(dash.create_app(cfg, bind_host="127.0.0.1"),
+                        raise_server_exceptions=False)
+    assert client.get("/").status_code == 200
+    assert client.get("/api/health").status_code == 200
+
+
+@pytest.mark.parametrize("host,loopback", [
+    ("127.0.0.1", True), ("127.1.2.3", True), ("::1", True),
+    ("localhost", True), ("0.0.0.0", False), ("192.168.1.50", False),
+    ("", False), ("10.0.0.5", False),
+])
+def test_loopback_detection(host, loopback):
+    from web.auth import is_loopback
+    assert is_loopback(host) is loopback
+
+
+def test_security_headers_are_present(tmp_path, monkeypatch):
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(dash, "resolve_token", lambda c, h: None)
+    cfg = _auth_cfg(tmp_path, "127.0.0.1")
+    client = TestClient(dash.create_app(cfg, bind_host="127.0.0.1"),
+                        raise_server_exceptions=False)
+    h = client.get("/").headers
+    assert h["X-Content-Type-Options"] == "nosniff"
+    assert h["X-Frame-Options"] == "DENY"
+    assert h["Referrer-Policy"] == "no-referrer"
+    assert "no-store" in h["Cache-Control"]
+    assert "frame-ancestors 'none'" in h["Content-Security-Policy"]
+
+
+def test_generated_token_is_written_to_the_config_that_was_loaded(tmp_path):
+    """Regression risk: the token must not land in the repository's own
+    config.local.yaml when a different config was loaded -- that would share
+    one machine's dashboard secret with every other configuration."""
+    from web.auth import resolve_token
+
+    cfg = _auth_cfg(tmp_path, "0.0.0.0")
+    token = resolve_token(cfg, "0.0.0.0")
+    assert token and len(token) >= 32
+
+    written = tmp_path / "local.yaml"
+    assert written.exists(), "token was not persisted"
+    assert token in written.read_text(encoding="utf-8")
+    # And nowhere near the repository's real settings file.
+    assert not (Path(__file__).resolve().parents[1] / "config.local.yaml").exists() \
+        or token not in (Path(__file__).resolve().parents[1]
+                         / "config.local.yaml").read_text(encoding="utf-8")
+
+    # Second call must reuse the persisted token rather than minting another,
+    # otherwise the tablet is logged out on every restart.
+    assert resolve_token(cfg, "0.0.0.0") == token
+
+
+def test_configured_token_is_used_verbatim(tmp_path, monkeypatch):
+    from web.auth import resolve_token
+    monkeypatch.delenv("ODB_TOKEN", raising=False)
+    cfg = _auth_cfg(tmp_path, "0.0.0.0")
+    cfg._data["web"]["auth_token"] = "  operator-chosen  "
+    assert resolve_token(cfg, "0.0.0.0") == "operator-chosen"
+    assert not (tmp_path / "local.yaml").exists(), "overwrote an explicit token"
+
+
+def test_env_token_overrides_generation(tmp_path, monkeypatch):
+    from web.auth import resolve_token
+    cfg = _auth_cfg(tmp_path, "0.0.0.0")
+    monkeypatch.setenv("ODB_TOKEN", "from-environment")
+    assert resolve_token(cfg, "0.0.0.0") == "from-environment"
+    assert not (tmp_path / "local.yaml").exists()
+
+
+def test_loopback_bind_never_generates_a_token_file(tmp_path):
+    from web.auth import resolve_token
+    cfg = _auth_cfg(tmp_path, "127.0.0.1")
+    assert resolve_token(cfg, "127.0.0.1") is None
+    assert not (tmp_path / "local.yaml").exists()
+
+
+def test_ai_question_length_is_capped(tmp_path, monkeypatch):
+    """The question is the only unbounded user input, and it goes into an LLM
+    prompt that occupies a GPU for minutes on the default model."""
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(dash, "resolve_token", lambda c, h: None)
+    cfg = _auth_cfg(tmp_path, "127.0.0.1")
+    client = TestClient(dash.create_app(cfg, bind_host="127.0.0.1"),
+                        raise_server_exceptions=False)
+    asked = []
+    monkeypatch.setattr(dash.svc_cls if hasattr(dash, "svc_cls") else
+                        dash.AnalysisService, "ask",
+                        lambda self, q: asked.append(q) or
+                        {"report": "ok", "warnings": [], "context": {}})
+    r = client.post("/ai/ask", data={"question": "x" * 5000})
+    assert r.status_code == 400
+    assert not asked, "an oversized question reached the model"
+    assert client.post("/ai/ask", data={"question": "   "}).status_code == 400
+
+
+def test_dashboard_closes_its_database_on_shutdown(tmp_path):
+    """Repository opened a connection per thread and never closed it, so every
+    reload leaked handles and held the SQLite file open -- which is what made
+    `main.py prune` fail with PermissionError while the dashboard was running."""
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+
+    closed = []
+    real_repo = dash.Repository
+
+    class SpyRepo(real_repo):
+        def close(self):
+            closed.append(True)
+            super().close()
+
+    monkey = dash.Repository
+    dash.Repository = SpyRepo
+    try:
+        cfg = _auth_cfg(tmp_path, "127.0.0.1")
+        dash.resolve_token = lambda c, h: None
+        app = dash.create_app(cfg, bind_host="127.0.0.1")
+        with TestClient(app, raise_server_exceptions=False) as client:
+            assert client.get("/").status_code == 200
+            assert not closed, "closed before shutdown"
+        assert closed, "Repository.close() was never called on shutdown"
+    finally:
+        dash.Repository = monkey
+
+
 def test_dashboard_windows_come_from_config(monkeypatch):
     """Routes used to hardcode 30/90 and ignore analysis.trend_window_days, so
     the dashboard, the charts and `main.py analyze` could disagree."""
@@ -1541,9 +1744,10 @@ def test_dashboard_windows_come_from_config(monkeypatch):
                 return super().charging_sessions(days, vehicle_id)
 
         monkeypatch.setattr(dash, "Repository", SpyRepo)
-        client = TestClient(dash.create_app(cfg), raise_server_exceptions=False)
-        for path in ("/", "/battery", "/charging", "/api/battery"):
-            assert client.get(path).status_code == 200, path
+        with TestClient(dash.create_app(cfg, bind_host="127.0.0.1"),
+                        raise_server_exceptions=False) as client:
+            for path in ("/", "/battery", "/charging", "/api/battery"):
+                assert client.get(path).status_code == 200, path
 
     assert seen["trend"] and set(seen["trend"]) == {7}, seen
     assert seen["charging"] and set(seen["charging"]) == {11}, seen
@@ -1830,9 +2034,15 @@ def test_dashboard_pages_render(populate):
 
         cfg = load_config()
         cfg._data["database"]["path"] = db_path
-        client = TestClient(create_app(cfg), raise_server_exceptions=False)
-        for path in ("/", "/battery", "/dtcs", "/charging", "/ai"):
-            assert client.get(path).status_code == 200, path
+        # `with` so the app's lifespan shutdown runs and releases the SQLite
+        # handle create_app opened. On Windows an open file cannot be deleted,
+        # so a bare TestClient left the temp dir undeletable at teardown --
+        # these four tests used to fail on PermissionError rather than on
+        # anything about the dashboard.
+        with TestClient(create_app(cfg, bind_host="127.0.0.1"),
+                        raise_server_exceptions=False) as client:
+            for path in ("/", "/battery", "/dtcs", "/charging", "/ai"):
+                assert client.get(path).status_code == 200, path
 
 
 def test_ai_ask_on_empty_db_does_not_500(monkeypatch, cfg):
@@ -1857,60 +2067,74 @@ def test_ai_ask_on_empty_db_does_not_500(monkeypatch, cfg):
         with Repository(db_path):        # schema only, no vehicle
             pass
         cfg._data["database"]["path"] = db_path
-        client = TestClient(create_app(cfg), raise_server_exceptions=False)
-        resp = client.post("/ai/ask", data={"question": "How is my battery?"})
+        with TestClient(create_app(cfg, bind_host="127.0.0.1"),
+                        raise_server_exceptions=False) as client:
+            resp = client.post("/ai/ask",
+                               data={"question": "How is my battery?"})
 
     assert resp.status_code == 200, resp.status_code
     assert "NOT PERSISTED" in resp.text
 
 
 # --- collector cadence ----------------------------------------------------------
-def _offline_collector(slow_interval: float, tmp: str):
-    """A Collector wired to a TCP adapter that is never opened, so the
-    slow-phase gate can be exercised without any I/O."""
+@pytest.fixture
+def offline_collector():
+    """Factory for Collectors wired to a TCP adapter that is never opened, so
+    the slow-phase gate can be exercised without any I/O.
+
+    Closes every repository it made on teardown. Windows cannot delete an open
+    file, so a leaked handle made the temporary directory undeletable and these
+    tests failed at cleanup with PermissionError instead of testing anything.
+    """
     from collector import Collector
-    cfg = load_config()
-    cfg._data["database"]["path"] = os.path.join(tmp, "cadence.db")
-    cfg._data["adapter"]["type"] = "elm327_tcp"
-    cfg._data["collector"]["slow_poll_interval"] = slow_interval
-    return Collector(cfg, Repository(cfg._data["database"]["path"]))
+    made: list = []
+
+    def _make(slow_interval: float, tmp) -> "object":
+        cfg = load_config()
+        cfg._data["database"]["path"] = os.path.join(str(tmp), "cadence.db")
+        cfg._data["adapter"]["type"] = "elm327_tcp"
+        cfg._data["collector"]["slow_poll_interval"] = slow_interval
+        col = Collector(cfg, Repository(cfg._data["database"]["path"]))
+        made.append(col)
+        return col
+
+    yield _make
+    for col in made:
+        col.repo.close()
 
 
-def test_slow_phase_is_gated_not_every_cycle():
+def test_slow_phase_is_gated_not_every_cycle(offline_collector, tmp_path):
     """The 107 slow DIDs must respect collector.slow_poll_interval instead of
     being re-read on every fast poll."""
-    with tempfile.TemporaryDirectory() as tmp:
-        col = _offline_collector(60.0, tmp)
-        assert col._slow_phase_due() is True, "first pass must always run"
-        assert col._slow_phase_due() is False, "must not re-run immediately"
-        assert col._slow_phase_due() is False
-        col._last_slow -= 61.0          # pretend 61s elapsed
-        assert col._slow_phase_due() is True, "must re-run after the interval"
+    col = offline_collector(60.0, tmp_path)
+    assert col._slow_phase_due() is True, "first pass must always run"
+    assert col._slow_phase_due() is False, "must not re-run immediately"
+    assert col._slow_phase_due() is False
+    col._last_slow -= 61.0          # pretend 61s elapsed
+    assert col._slow_phase_due() is True, "must re-run after the interval"
 
 
-def test_slow_phase_due_just_after_boot():
+def test_slow_phase_due_just_after_boot(offline_collector, tmp_path):
     """time.monotonic() starts near 0 on a freshly booted host; the slow phase
     must still run on the very first pass."""
-    with tempfile.TemporaryDirectory() as tmp:
-        col = _offline_collector(60.0, tmp)
-        assert col._last_slow < 0, "clock starts negative-relative, not at 0"
-        assert col._slow_phase_due() is True
+    col = offline_collector(60.0, tmp_path)
+    assert col._last_slow < 0, "clock starts negative-relative, not at 0"
+    assert col._slow_phase_due() is True
 
 
-def test_slow_pass_excludes_cell_dids():
+def test_slow_pass_excludes_cell_dids(offline_collector, tmp_path):
     """_sweep_cells() reads the per-cell DIDs; _slow_pass() must not read them
     again in the same phase, or every cell DID is polled twice per cycle."""
-    with tempfile.TemporaryDirectory() as tmp:
-        col = _offline_collector(60.0, tmp)
-        cell_keys = {s.key for s in col.registry.all()
-                     if s.key.startswith("cell_v_")}
-        assert cell_keys, "expected per-cell DIDs to be registered"
-        polled: list[str] = []
-        col.poll_did = lambda spec, ts: polled.append(spec.key)
-        col._slow_pass("ts", {})
-        assert polled, "slow pass polled nothing"
-        assert not (cell_keys & set(polled)), "cell DIDs double-polled"
-        assert len(polled) == len(set(polled)), "a slow DID was polled twice"
+    col = offline_collector(60.0, tmp_path)
+    cell_keys = {s.key for s in col.registry.all()
+                 if s.key.startswith("cell_v_")}
+    assert cell_keys, "expected per-cell DIDs to be registered"
+    polled: list[str] = []
+    col.poll_did = lambda spec, ts: polled.append(spec.key)
+    col._slow_pass("ts", {})
+    assert polled, "slow pass polled nothing"
+    assert not (cell_keys & set(polled)), "cell DIDs double-polled"
+    assert len(polled) == len(set(polled)), "a slow DID was polled twice"
 
 
 

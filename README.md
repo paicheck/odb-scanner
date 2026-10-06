@@ -30,15 +30,29 @@ This system performs **no writes to the vehicle**. Enforced structurally in
 
 ### Network exposure — read this before connecting it to anything
 
-The dashboard and the `/ai/ask` endpoint have **no authentication and no CSRF
-protection**. Anyone who can reach the port can read the vehicle history and
-submit prompts to the LLM. This is deliberate for the intended use — a phone or
-tablet on a private Wi-Fi network talking to a laptop running the collector — but
-it is a real boundary, not an oversight:
+`config.yaml` binds the dashboard to `0.0.0.0` so a tablet on the same Wi-Fi
+can open it. Because that bind is reachable from the network, the dashboard
+**requires an access token** (`web/auth.py`):
+
+* On the first run a token is generated, written to `config.local.yaml`
+  (gitignored) and printed at startup, along with the URL to open.
+* Opening `http://<this-machine>:8000/?k=<token>` once exchanges it for an
+  `HttpOnly` cookie, so the token stops appearing in the address bar — and
+  therefore in browser history, bookmarks, screenshots and `Referer` headers.
+  Every later visit works normally.
+* Bind to `127.0.0.1` instead and no token is needed at all: nothing but that
+  machine can open a loopback socket, so there is nobody to authenticate.
+
+Set `web.auth_token` in `config.local.yaml` (or export `ODB_TOKEN`) to choose
+the value yourself. There is still **no CSRF protection**, and the token is
+sent in the clear over plain HTTP — which is the assumption for a home network.
+Further boundaries:
 
 * Do not port-forward or expose the port to the internet.
-* On shared or untrusted Wi-Fi, bind to localhost only and reach it over an SSH
-  tunnel, or put a reverse proxy with authentication in front of it.
+* On shared or untrusted Wi-Fi, bind to `127.0.0.1` and reach it over an SSH
+  tunnel, or put a reverse proxy with TLS in front of it.
+* `POST /ai/ask` is rate-limited only by an input length cap. Anything that can
+  authenticate can spend minutes of GPU time per request.
 * The read-only guarantee described above is about the **vehicle**: no request
   the dashboard can trigger writes to the car. It says nothing about who can
   reach the dashboard itself.

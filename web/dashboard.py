@@ -2,12 +2,16 @@
 
 READ-ONLY: no endpoint can transmit anything to the vehicle. The dashboard
 only reads from SQLite; collection runs as a separate process (main.py collect).
+
+Network-exposed binds require an access token -- see web/auth.py.
 """
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -18,16 +22,63 @@ from analysis import charging as charging_analysis
 from analysis import dtc as dtc_analysis
 from config import Config
 from database.repository import Repository
+from web.auth import (
+    QUERY,
+    CookiePromotionMiddleware,
+    SecurityHeadersMiddleware,
+    TokenAuthMiddleware,
+    resolve_token,
+)
+
+log = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+# The question is the only unbounded user input in the app: it goes into an
+# LLM prompt and, on the default model, occupies a GPU for minutes. Without a
+# cap a single request can stall the box for anyone else using it.
+MAX_QUESTION_CHARS = 1000
 
-def create_app(cfg: Config) -> FastAPI:
+
+def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
+    """Build the dashboard.
+
+    `bind_host` is the address uvicorn will actually listen on. It decides
+    whether the access token is required (see web/auth.py): passing it in
+    rather than re-reading the config keeps the decision tied to the socket
+    that is really opened, and lets tests exercise both modes without editing
+    config. It defaults to the configured web.host, which is what main.py
+    passes anyway.
+    """
     repo = Repository(cfg.db_path)
     svc = AnalysisService(cfg, repo)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        # Repository opens a SQLite connection per thread and never got closed,
+        # so every reload of the app leaked a handle set until the process
+        # exited. On Windows that also holds a lock on the file, which is what
+        # made `main.py prune` fail with PermissionError while the dashboard
+        # was running.
+        yield
+        repo.close()
+
     app = FastAPI(title="ID.3 Diagnostic System", docs_url=None, redoc_url=None,
-                  openapi_url=None)
+                  openapi_url=None, lifespan=lifespan)
+
+    host = bind_host if bind_host is not None else cfg.get("web.host", "127.0.0.1")
+    token = resolve_token(cfg, host)
+    if token:
+        log.warning(
+            "Dashboard bound to %s with no visible token configured; access now "
+            "requires ?%s=... once. See the startup message for the value.",
+            host, QUERY)
+    # Order matters: headers wrap everything, then the cookie exchange, then
+    # the gate itself. Middleware added last runs first.
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(CookiePromotionMiddleware, token=token)
+    app.add_middleware(TokenAuthMiddleware, token=token)
 
     # Analysis windows come from config so the dashboard, the charts and the
     # CLI agree. Previously each route hardcoded its own 30/90 and silently
@@ -132,6 +183,14 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.post("/ai/ask", response_class=HTMLResponse)
     def ai_ask(request: Request, question: str = Form(...)):
+        question = (question or "").strip()
+        if not question:
+            raise HTTPException(status_code=400, detail="Question is empty.")
+        if len(question) > MAX_QUESTION_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Question is {len(question)} characters; the limit is "
+                       f"{MAX_QUESTION_CHARS}.")
         try:
             result = svc.ask(question)
             report, warnings, error = result["report"], result["warnings"], None

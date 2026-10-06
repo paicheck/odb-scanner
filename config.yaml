@@ -53,8 +53,15 @@ ollama:
   timeout: 300
 
 web:
-  host: "0.0.0.0"           # all interfaces -> dashboard also reachable from
-  port: 8000                # the tablet: http://<PC-IP>:8000 (allow in firewall)
+  # 0.0.0.0 makes the dashboard reachable from the network so a tablet can
+  # open it. That is only safe because such a bind REQUIRES an access token
+  # (web/auth.py): the first run mints one, saves it to config.local.yaml --
+  # gitignored -- and prints the URL to open. Requests without it get 401.
+  # Set this to 127.0.0.1 to disable the token entirely and keep the dashboard
+  # reachable only from this machine.
+  host: "0.0.0.0"
+  port: 8000                # the tablet: http://<PC-IP>:8000
+  # auth_token: "..."       # normally not set here; see config.local.yaml
 
 analysis:
   trend_window_days: 30     # battery trend + overview/chart window

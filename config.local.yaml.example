@@ -17,10 +17,16 @@
 #   host: http://localhost:11434
 
 # web:
-#   host: 127.0.0.1         # default config.yaml binds 0.0.0.0 (LAN-wide)
+#   # config.yaml binds 0.0.0.0 so a tablet on the wifi can reach the
+#   # dashboard. Any bind other than 127.0.0.1 REQUIRES an access token; the
+#   # first run generates one, writes it to this file, and prints the URL.
+#   # Setting it here overrides that generated value.
+#   host: 127.0.0.1         # loopback only: no token, not reachable by others
+#   # auth_token: "paste-the-token-here"   # or let it be generated for you
 
 # database:
 #   path: data/real_car.db
+#   backup_dir: backups     # where `main.py backup` writes snapshots
 
 # analysis:
 #   trend_window_days: 30

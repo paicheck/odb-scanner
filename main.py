@@ -24,6 +24,7 @@ from pathlib import Path
 from config import load_config
 from database.repository import Repository
 from diagnostic.interface import AdapterNotFoundError, CommunicationError
+from web.auth import is_loopback, resolve_token
 
 
 def cmd_discover(cfg) -> int:
@@ -90,9 +91,28 @@ def cmd_serve(cfg) -> int:
     import uvicorn
 
     from web.dashboard import create_app
-    app = create_app(cfg)
-    uvicorn.run(app, host=cfg.get("web.host", "127.0.0.1"),
-                port=int(cfg.get("web.port", 8000)), log_level="info")
+    host = str(cfg.get("web.host", "127.0.0.1"))
+    port = int(cfg.get("web.port", 8000))
+    # create_app is passed the address uvicorn will really bind, so the token
+    # decision is made against the socket that is actually opened rather than
+    # against whatever the config happens to say.
+    app = create_app(cfg, bind_host=host)
+
+    shown = "localhost" if host in ("0.0.0.0", "127.0.0.1") else host
+    print(f"Dashboard: http://{shown}:{port}")
+    if not is_loopback(host):
+        token = resolve_token(cfg, host)
+        # resolve_token already ran inside create_app and, having found nothing
+        # configured, minted and persisted one. Read it back so the printed URL
+        # is guaranteed to be the value actually enforced.
+        token = token or str(cfg.get("web.auth_token", "")).strip()
+        if token:
+            print(f"Access token required (network-reachable bind {host}).")
+            print(f"Open once:  http://<this-machine>:{port}/?k={token}")
+            print("Your browser then remembers it. Stored in config.local.yaml,")
+            print("which is gitignored. To close the dashboard to the network,")
+            print("set web.host to 127.0.0.1 instead.")
+    uvicorn.run(app, host=host, port=port, log_level="info")
     return 0
 
 
