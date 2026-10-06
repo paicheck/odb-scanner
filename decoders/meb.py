@@ -18,7 +18,12 @@ Provenance of the scale factors:
   [CS]      cross-checked byte-exact against a Car Scanner ELM OBD2 log of
             the actual vehicle (2026-10-05, ID.3 MY2021, 58 kWh):
               - SoC raw 0xCB (203) -> 81.2 % BMS / 83.63 % display
-              - pack raw 0x06CD (1725) -> 431.25 V, matching 108 cells @ ~3.99 V
+              - pack raw 0x06BD (1725) -> 431.25 V, matching 108 cells @ ~3.99 V
+                (0x06BD, not 0x06CD: the first transcription of this capture
+                gave 0x06CD, which is 1741 and decodes to 435.25 V. The decimal
+                was right and the hex was wrong. A prose note is the only form
+                this evidence takes, so nothing caught it until
+                tools/validate_decoders.py re-derived the value from the bytes.)
               - cell raw 2997 -> 3.997 V (u16/1000 + 1)
               - max cell raw 16377 -> 3.9984 V (u16/4096)
               - current raw 150198 -> 1.98 A ((u32-150000)/100)
@@ -255,7 +260,7 @@ def _register_bms(reg: DIDRegistry) -> None:
     reg.register(DIDSpec(
         "pack_voltage", ECU_BAT, 0x1E3B, "HV pack voltage", "V",
         decode=_pack_voltage, doc_status=_EXP,
-        notes="u16 / 4 [evDash; CS log: raw 1725 -> 431.25 V]",
+        notes="u16 / 4 [evDash; CS log: raw 1725 (0x06BD) -> 431.25 V]",
     ))
     reg.register(DIDSpec(
         "pack_current", ECU_BAT, 0x1E3D, "HV pack current", "A",
