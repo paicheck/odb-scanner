@@ -118,14 +118,45 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
                     return status
         return None
 
+    def measurement_sources():
+        """Per-measurement provenance: live / imported / stale / unavailable.
+
+        Without this the battery page cannot tell an empty page (a defect) from
+        a page full of values imported from a Car Scanner export (evidence), and
+        both read as "no live data". See analysis/provenance.py.
+        """
+        _, vid = vehicle_and_id()
+        if not vid:
+            return [], {"live": 0, "imported": 0, "stale": 0,
+                        "unavailable": 0, "unverified": 0, "total": 0}
+        from analysis.provenance import key_states, summary
+        from decoders.registry import build_default_registry
+
+        registry = build_default_registry(cfg.get("vehicle.did_profile", "eup"))
+        stale_after = float(cfg.get("collector.max_value_age_s", 900.0))
+        rows = key_states(repo, vid, registry, stale_after_s=stale_after)
+        return rows, summary(rows)
+
     def render(name: str, request: Request, **extra):
         vehicle, _ = vehicle_and_id()
-        ctx = {"vehicle": vehicle, "nav": ["Overview", "Battery", "Faults",
-                                           "Charging", "AI Analysis"],
+        ctx = {"vehicle": vehicle,
+               "nav": ["Overview", "Battery", "Faults", "Charging",
+                       "AI Analysis", "Sources"],
                **extra}
         return _templates.TemplateResponse(request, name, ctx)
 
     # ---- pages --------------------------------------------------------------
+    @app.get("/sources", response_class=HTMLResponse)
+    def sources_page(request: Request):
+        """Where every measurement's value came from.
+
+        Phase 13 of the BMS work: until this existed, an empty battery page and a
+        page full of values carried over from a Car Scanner export looked
+        identical. Both read as "no live data", and only one is a defect.
+        """
+        rows, counts = measurement_sources()
+        return render("sources.html", request, sources=rows, counts=counts)
+
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
         _, vid = vehicle_and_id()
