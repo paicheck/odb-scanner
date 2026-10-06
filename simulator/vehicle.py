@@ -357,7 +357,22 @@ class SimHandler(socketserver.BaseRequestHandler):
             except ValueError:
                 return
             self.meb_module = hdr if hdr in MEB_MODULES else None
-            self.current_ecu = (0x7E0, 0x7E8)      # nothing 11-bit behind it
+            # An unknown MODULE header must fall silent. Leaving current_ecu
+            # on the 11-bit motor made the simulator answer an unaddressed
+            # request as 0x7E8, which is unfaithful: on a real bus an id
+            # nothing listens on gets NO DATA. That mattered because the MEB
+            # experiment matrix relies on this being the negative control --
+            # if every arm answered, a NO DATA on the car would say nothing
+            # about the car.
+            #
+            # "Unknown" excludes the functional header, which is also 6 hex
+            # digits (DB33F1 under ATCP 18) and legitimately reaches an ECU.
+            # The priority byte is what separates the two cases: modules are
+            # addressed with ATCP 17, functional with ATCP 18.
+            if self.meb_module is not None or self.cp == 0x18:
+                self.current_ecu = (0x7E0, 0x7E8)
+            else:
+                self.current_ecu = None
             return
         try:
             tx = int(arg, 16) & 0x7FF

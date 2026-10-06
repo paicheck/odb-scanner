@@ -311,6 +311,38 @@ Ready to run; compiles and passes ruff. Every request it sends is read-only
 (0x10 0x01, 0x22, 0x19, 0x3E, 0x01/0x03/0x09); `AT*` commands are adapter-local
 and never reach the vehicle.
 
+**The matrix has been executed end to end**, against the built-in simulator,
+which implements the MEB module map with the real addresses and MEB-scaled
+values (`simulator/vehicle.py`, `MEB_MODULES`). `tests/test_meb_path.py` runs it
+there and asserts the arms that must answer do:
+
+```
+17FE007B0462028CA1        BMS 0x028C  ->  A1 = 161 -> 64.4 % SoC
+17FE007B05621E3B058C      BMS 0x1E3B  ->  058C = 1420 -> 355 V
+17FE007B07621E3D0002469F  BMS 0x1E3D  ->  0002469F = 150175 -> 1.75 A
+77A07622AB204280A64       energy 0x2AB2 (11-bit header, 4 data bytes)
+77A05622AF7290A           energy 0x2AF7 -> 290A = 10506 -> 14.52 V
+17FE00B90562465B00E2      DC/DC 0x465B -> 00E2 = 226 -> 14.1 A
+```
+
+`--tcp HOST PORT` runs the tool against the simulator instead of the car, which
+is how the harness was verified. Without that, a matrix that had never executed
+would be a guess with print statements, and a wrong header or a mis-padded frame
+would have made every experiment report NO DATA on the real car — a conclusion
+about the harness mistaken for a conclusion about the vehicle.
+
+Two negative controls are asserted, because they are what make a NO DATA
+meaningful:
+
+- an unaddressed module must **not** answer;
+- functional addressing must **not** reach the BMS.
+
+Writing that first control found a real simulator defect: an unknown 6-digit
+`ATSH` left `meb_module` unset but left `current_ecu` pointing at the 11-bit
+motor, so the simulator answered `0x7E8` for a module that does not exist. On a
+real bus that gets NO DATA. Fixed by distinguishing module headers (`ATCP 17`)
+from the functional header (`ATCP 18`), which is also 6 hex digits.
+
 | Exp | Hypothesis | Key action | Success criterion |
 |---|---|---|---|
 | 1 | bus alive | `0100` | pid response |
@@ -341,6 +373,9 @@ that would end the investigation:
   only before its commanded control operations, never between plain `22xxxx`
   reads, so a DID that needs a keep-alive would be a genuine surprise worth
   recording rather than assuming.
+
+Experiment numbering in the script matches this table exactly (EXP-7b for the
+tester-present arm), so a result can be cited by number without ambiguity.
 
 ## 8. Reading the results
 

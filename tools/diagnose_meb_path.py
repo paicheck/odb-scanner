@@ -13,6 +13,7 @@ Each experiment tests one hypothesis. Results are printed and logged.
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from pathlib import Path
@@ -175,8 +176,8 @@ def test_meb_bms_with_atbi_session_tp(
 
 
 def test_meb_bms_with_session(t: Elm327Transport, did: int, name: str) -> None:
-    """EXP-6: BMS DID with default session first"""
-    log(f"=== EXP-6: BMS DID 0x{did:04X} ({name}) with 10 01 session ===")
+    """EXP-7: BMS DID with default session first"""
+    log(f"=== EXP-7: BMS DID 0x{did:04X} ({name}) with 10 01 session ===")
     # Switch to BMS
     send_raw(t, "ATCP 17", "priority")
     send_raw(t, "ATSH FC007B", "BMS header")
@@ -198,8 +199,8 @@ def test_meb_bms_with_session(t: Elm327Transport, did: int, name: str) -> None:
 
 
 def test_meb_bms_with_tester_present(t: Elm327Transport, did: int, name: str) -> None:
-    """EXP-7: BMS DID with periodic tester present"""
-    log(f"=== EXP-7: BMS DID 0x{did:04X} with 3E 00 tester present ===")
+    """EXP-7b: BMS DID with periodic tester present"""
+    log(f"=== EXP-7b: BMS DID 0x{did:04X} with 3E 00 tester present ===")
     send_raw(t, "ATCP 17", "priority")
     send_raw(t, "ATSH FC007B", "BMS header")
     send_raw(t, "ATCAF0", "disable CAF")
@@ -221,8 +222,8 @@ def test_meb_bms_with_tester_present(t: Elm327Transport, did: int, name: str) ->
 
 
 def test_energy_module_11bit(t: Elm327Transport) -> None:
-    """EXP-8: Energy module (0x710 -> 0x77A) on 11-bit addressing"""
-    log("=== EXP-8: Energy module 0x710 (11-bit) ===")
+    """EXP-9: Energy module (0x710 -> 0x77A) on 11-bit addressing"""
+    log("=== EXP-9: Energy module 0x710 (11-bit) ===")
     # Protocol 6 = 11-bit 500k
     send_raw(t, "ATSP6", "11-bit protocol")
     send_raw(t, "ATCP 00", "priority 0x00")
@@ -249,8 +250,8 @@ def test_energy_module_11bit(t: Elm327Transport) -> None:
 
 
 def test_dcdc_module_29bit(t: Elm327Transport) -> None:
-    """EXP-9: DC/DC module (0x17FC00B9) on 29-bit addressing"""
-    log("=== EXP-9: DC/DC module 0x17FC00B9 (29-bit) ===")
+    """EXP-10: DC/DC module (0x17FC00B9) on 29-bit addressing"""
+    log("=== EXP-10: DC/DC module 0x17FC00B9 (29-bit) ===")
     send_raw(t, f"ATSP{PINNED_PROTOCOL}", "29-bit protocol")
     send_raw(t, "ATCP 17", "priority")
     send_raw(t, "ATSH FC00B9", "DC/DC header")
@@ -268,8 +269,8 @@ def test_dcdc_module_29bit(t: Elm327Transport) -> None:
 
 
 def test_gateway_routing(t: Elm327Transport) -> None:
-    """EXP-10: Try gateway routing - functional request to gateway (0x7E0) for BMS data"""
-    log("=== EXP-10: Gateway routing (functional to 0x7E0) ===")
+    """EXP-11: Try gateway routing - functional request to gateway (0x7E0) for BMS data"""
+    log("=== EXP-11: Gateway routing (functional to 0x7E0) ===")
     # Functional addressing (default)
     send_raw(t, f"ATSP{PINNED_PROTOCOL}", "29-bit")
     send_raw(t, "ATCP 18", "functional priority")
@@ -284,8 +285,8 @@ def test_gateway_routing(t: Elm327Transport) -> None:
 
 
 def test_11bit_bat_mgmt(t: Elm327Transport) -> None:
-    """EXP-11: Try BMS on 11-bit addressing (0x7E5 -> 0x7ED)"""
-    log("=== EXP-11: BMS on 11-bit (0x7E5) ===")
+    """EXP-12: Try BMS on 11-bit addressing (0x7E5 -> 0x7ED)"""
+    log("=== EXP-12: BMS on 11-bit (0x7E5) ===")
     send_raw(t, "ATSP6", "11-bit protocol")
     send_raw(t, "ATCP 00", "priority")
     send_raw(t, "ATSH 0007E5", "BMS 11-bit header")
@@ -302,8 +303,8 @@ def test_11bit_bat_mgmt(t: Elm327Transport) -> None:
 
 
 def test_canfd_check(t: Elm327Transport) -> None:
-    """EXP-12: Check if adapter reports CAN-FD capability"""
-    log("=== EXP-12: CAN-FD capability check ===")
+    """EXP-13: Check if adapter reports CAN-FD capability"""
+    log("=== EXP-13: CAN-FD capability check ===")
     send_raw(t, "AT@", "adapter description")
     send_raw(t, "ATRV", "voltage")
     send_raw(t, "ATDP", "protocol detection")
@@ -311,10 +312,23 @@ def test_canfd_check(t: Elm327Transport) -> None:
     send_raw(t, "ATFD", "CAN-FD query (may be unsupported)")
 
 
-def run_all_experiments():
-    """Run full experiment matrix."""
+def run_all_experiments(tcp=None):
+    """Run the full experiment matrix.
+
+    tcp=(host, port) talks to the built-in simulator instead of the car. That
+    exists so the harness itself can be verified: every experiment below has
+    been run at least once, and the ones that should answer a working MEB
+    implementation do. A matrix that has never executed is not evidence, it is
+    a guess with print statements.
+    """
     cfg = load_config()
-    t = Elm327Transport(port=cfg.get("adapter.port", "COM3"))
+    if tcp:
+        host, port = tcp
+        log(f"TARGET: simulator at {host}:{port} (harness self-test)")
+        t = Elm327Transport(host=host, tcp_port=int(port),
+                            timeout=float(cfg.get("adapter.timeout", 5.0)))
+    else:
+        t = Elm327Transport(port=cfg.get("adapter.port", "COM3"))
 
     try:
         log("Opening adapter...")
@@ -383,5 +397,19 @@ def run_all_experiments():
         log("Done")
 
 
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Systematically test how this ID.3's MEB modules answer. "
+                    "Every request is read-only; see uds.py.")
+    ap.add_argument("--tcp", nargs=2, metavar=("HOST", "PORT"),
+                    help="run against the built-in simulator instead of the "
+                         "car. Verifies this harness itself before it is "
+                         "pointed at real hardware.")
+    args = ap.parse_args()
+    tcp = (args.tcp[0], int(args.tcp[1])) if args.tcp else None
+    run_all_experiments(tcp=tcp)
+    return 0
+
+
 if __name__ == "__main__":
-    run_all_experiments()
+    raise SystemExit(main())
