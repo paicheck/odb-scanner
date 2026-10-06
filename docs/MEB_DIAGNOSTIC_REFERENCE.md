@@ -433,7 +433,111 @@ run — but the correct value is now known rather than guessed, and
 `set_receive_address()` is already a deliberate no-op that exists for exactly
 this reason.
 
-### 5.2 `ATSTFH` — absent here, present in neither reference
+### 5.2 The ELM327 datasheet settles two of our claims and opens a third
+
+Both claims in 5.1 and 5.4 below were originally reasoning from memory. The
+datasheet (scantool.net `elm327dsh.pdf`, 76 pages) says, verbatim:
+
+**`ATCRA` — my claim was correct.**
+
+> `CRA` [RESET THE CAN RX ADDR] — The AT CRA command is used to restore the CAN
+> receive filters to their default values. Note that it does not have any
+> arguments (ie no data).
+> `CRA HHH` [SET THE CAN RX ADDR TO HHH] — … if you only want to receive
+> information from one address … simply send `ATCRA7E8`, and the ELM327 will make
+> the necessary adjustments to both the mask and the filter for you.
+
+So `ATCRA0` sets the filter to CAN id `0x000`, and **plain `ATCRA` with no
+argument is the accept-all form**. Our comment claiming `ATCRA0` is an
+"accept-all filter" is wrong, and the one-word fix is to send `ATCRA`.
+
+**`ATBI` — confirmed.** Datasheet:
+
+> Now everything is configured. Next, tell the IC to use this protocol, and to
+> **bypass any initiation** (as it is not standard OBD, and would likely fail):
+> `>ATSPB` `>ATBI`
+
+**`ATCP` — confirmed as the 29-bit priority byte**, and the datasheet explains
+the `ATSH XXYYZZ` + `ATCP VV` pairing exactly as the MEB sources use it:
+
+> The additional 5 bits needed for a 29-bit system are set with the ATCP
+> command. … `>ATSHXXYYZZ` `>ATCPVV` … `VVXXYYZZ` 11-bit ID / 5 bits only …
+> `VVXXYYZZXXYYZZ` 29-bit ID
+
+**New lead — the datasheet's own recipe for non-OBD CAN pairs addressing with
+flow control, and Car Scanner's documented per-PID start commands follow it
+exactly:**
+
+> The J1939 protocol uses the ATCP and ATSH commands to assign values for the ID
+> bits, just as the other CAN protocols do. … **you will need to define your own
+> flow control** with the following three statements: `>ATFCSH7B0`
+> `>ATFCSD0430FF00` `>ATFCSM1` … Next, tell the IC to use this protocol, and to
+> bypass any initiation (as it is not standard OBD, and would likely fail):
+> `>ATSPB` `>ATBI`
+
+Compare Car Scanner's documented per-PID start commands:
+`ATCRA7E8,ATFCSH7E0,ATFCSD300000` — the same shape. And
+`ATCF 17FE7` (ABRP) is the short form of the same thing. **We set none of
+`ATFCSH` / `ATFCSD` / `ATFCSM` / `ATCF`, and `ATBI` is the one command in that
+quoted recipe we also omit.**
+
+This raises flow control from a loose "medium confidence" candidate to the
+best-evidenced one: it is required by the datasheet for any non-standard CAN
+framing, Car Scanner demonstrably sends it, and ABRP sends it. EXP-14 and EXP-16
+already test it.
+
+### 5.3 An independent MEB/ELM327 report confirms our addressing — and shows a session our policy blocks
+
+`PowerBroker2/ELMduino` issue **#207**, *"Help with Volkswagen MEB (ID.3, Skoda
+Enyaq etc.) needed"* (Dec 2023, closed). Someone with an ELM327 and an Enyaq
+trying to read BMS temperature and hitting the same wall. Three things transfer.
+
+**Our addressing approach is independently confirmed.** Their `ATSH 17FC007B`
+(8-digit) returned `?`. They then found, in their own words:
+
+> If I send a header without the leading 17 (FC007B) I get an "ok" back instead
+> of "?" when I send 17FC007B. Could it be that the header is to long?
+
+`ATCP 17` + `ATSH FC007B` is exactly what `elm327.py` already does, and exactly
+what spot2000 documents. Two people, two clone behaviours, same conclusion. Also
+from their log, `ATDP` → `ISO157654CAN29500`, confirming protocol 7 is right for
+MEB.
+
+**Functional DID reads return NO DATA on an Enyaq too** — independent
+corroboration that functional addressing does not reach the BMS and physical
+addressing is required. (Their DID queries were themselves malformed —
+`22028C1` and `222A0B1`, ELMduino appending a byte — so their NO DATA on DIDs is
+not evidence about the car. The valid request is `22028C`.)
+
+**The finding that matters: `0x10 0x03` is answered.** With no header set at all,
+functionally:
+
+```
+> 1003
+  50 03 00 32 01 F4
+```
+
+`50` = positive response to `DiagnosticSessionControl`, `03` =
+**extendedDiagnosticSession**, P2 = `0x0032` = 50 ms, P2* = `0x01F4` = 500 ms. The
+MEB gateway answers it.
+
+**This does not change the safety policy, and must not.** `uds.py` blocks
+`0x10 0x03` deliberately — extendedDiagnosticSession raises the security level
+and changes diagnostic behaviour — and Phase 8 forbids weakening `uds.py`.
+Whether to permit `0x10 0x03` is a policy decision for the owner, not a
+side-effect of this investigation, so nothing is changed here and no experiment
+sends it.
+
+It is recorded because it is the one mechanism by which a UDS DID read could
+require something our allow-list forbids: a DID that answers `NRC 0x7F
+subFunctionNotSupportedInActiveSession` under `0x10 0x01` but answers under
+`0x10 0x03` would be invisible to us. Note the counter-argument: evDash and ABRP
+both reach these DIDs with no session change at all, and `10 01` is what we send.
+So a required `10 03` is a live but unproven hypothesis, and it is falsifiable
+on the car without breaking policy — if a DID we *can* reach answers only after
+`10 01`, the session theory is wrong.
+
+### 5.4 `ATSTFH` — absent here, present in neither reference
 
 Neither evDash nor ABRP sends `ATSTFH` ("stay in header mode after send"), so
 it is not an established requirement for MEB. Listed only to record that it was
@@ -538,6 +642,19 @@ from the functional header (`ATCP 18`), which is also 6 hex digits.
 | 11 | gateway routing | functional `22 1E3B`, no module header | any `62 1E3B` |
 | 12 | BMS on 11-bit `0x7E5` | `ATSP6` + `ATSH 0007E5` | `62 xxxx` from `0x7ED` |
 | 13 | **CAN-FD capability** | `ATFD`, `AT@`, `ATRV`, `ATDP` | adapter reports FD support / `ATFD` accepted |
+| 14 | **flow control required** | `ATCF 17FE7` before addressing | BMS answers where EXP-5 was silent |
+| 15 | **receive filter required** | `ATCRA 17FE007B` | BMS answers where EXP-5 was silent |
+| 16 | full reference configuration | all of the above + session + `3E 00` | isolates against the log next run |
+
+Experiments 14 and 15 exist because of the datasheet (5.2): its own recipe for
+non-standard CAN framing pairs addressing with `ATFCSH`/`ATFCSD`/`ATFCSM` and
+ends with `ATBI`, and Car Scanner's documented per-PID start commands have
+exactly that shape. We set none of them.
+
+**Deliberately not tested: `0x10 0x03`.** The MEB gateway answers it (5.3), and
+`uds.py` blocks it by design. No experiment sends it and nothing here proposes
+relaxing the allow-list; it is recorded as a policy question for the owner, not
+an engineering finding.
 
 Experiment 5 sweeps the six highest-value BMS DIDs (`0x028C` SoC, `0x1E3B` pack
 voltage, `0x1E3D` pack current, `0x2A0B` temp, `0x1E0E`/`0x1E0F` max/min temp) so
@@ -644,19 +761,23 @@ baseline was silent.
 
 **Still open:**
 
-1. Which of the three adapter-state differences is the blocker — `AT BI`, the
-   `ATCF 17FE7` flow-control setting, or the per-module `ATCRA`? All three are
-   things Car Scanner and/or two references do and we do not, and none of them
-   is a change of request bytes. Experiments 6 and 8 discriminate; if neither
-   answers, flow control and `ATCRA` need their own arms, which the matrix does
-   not yet have.
-2. **Current sign, positive or negative on discharge** (2.7). evDash and this
+1. Which of the adapter-state differences is the blocker — `AT BI`, flow control
+   (`ATCF`/`ATFCSH`), or the per-module `ATCRA`? All three are things Car
+   Scanner and the datasheet recipe do and we do not, and none of them is a
+   change of request bytes. Experiments 6, 8, 14, 15 and 16 discriminate.
+2. **Does a DID that answers `NRC 0x7F …InActiveSession` under `0x10 0x01`
+   answer under a different session?** The MEB gateway answers `0x10 0x03` (5.3)
+   while our allow-list forbids sending it. If the BMS gates `22` reads on the
+   session, the fix is a policy decision, not a code change — which is why it is
+   recorded rather than acted on. Counter-evidence to weigh: evDash and ABRP
+   reach these DIDs with no session change at all.
+3. **Current sign, positive or negative on discharge** (2.7). evDash and this
    project say positive; ABRP and spot2000 say negative. Settle with a raw
    capture during charge and discharge. Until then `pack_current`'s sign is
    carried from evDash on the strength of Car Scanner's own counters, and is the
    project's single most consequential unverified assumption.
-3. Why does the car report two opposite-signed currents (`DC Battery Current`
+4. Why does the car report two opposite-signed currents (`DC Battery Current`
    and `DC Battery Current #2`)? A bipolar pair, or one sensor read two ways?
    Affects whether we need a second current DID.
-4. What are the sub-field offsets inside `0x2AF7` (2.6)? Solvable from one raw
+5. What are the sub-field offsets inside `0x2AF7` (2.6)? Solvable from one raw
    capture plus the eight simultaneous Car Scanner readings already imported.
