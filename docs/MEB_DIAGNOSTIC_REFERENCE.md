@@ -446,23 +446,41 @@ keeps flow control as a live hypothesis (difference 3).
 
 ## 6. Adapter: Veepeak OBDCheck BLE+ over Bluetooth SPP
 
+**Car Scanner read this car's BMS through this same adapter** (confirmed by the
+owner). That is the single most useful fact in this section, because it collapses
+the hardware question:
+
+- The MEB diagnostic bus is reachable through the OBD connector with this
+  adapter. It is therefore classical CAN, not CAN-FD: an ELM327 v1.5 clone
+  cannot speak CAN-FD, and Car Scanner obtained `62 xx xx` positive responses
+  through it. **CAN-FD is ruled out as the cause of our `NO DATA`.**
+- **The current adapter can be retained.** No OBDLink MX+, no SocketCAN, no
+  Linux, no CAN-FD dongle. Whatever is wrong is in our adapter *state* and
+  request path, not in the hardware or in the car's firewall.
+- It also means the earlier "BMS not exposed via the OBD surface" reading in
+  `collector.discover_ecus()` was wrong about the vehicle and wrong about the
+  limit of this adapter. That code concludes from one `22` DID returning no
+  answer that the BMS is unreachable; the evidence now says the same adapter,
+  configured differently, does reach it.
+
+Adapter facts as observed:
+
 - ELM327 v1.5 clone firmware; COM3 outgoing / COM4 incoming (Windows SPP pair).
 - Confirmed by our run: accepts `ATCP 17`, accepts 6-digit `ATSH FC007B`.
 - Documented clone behaviour already in `elm327.py`: refuses 8-digit `ATSH`;
   silently mis-applies 3-digit `ATSH` under protocol 7; refuses the plain `ATSH`
   that would clear a header (only `ATZ` recovers).
-- CAN-FD: **unverified**. No `ATFD` capability test has run — `tools/diagnose_meb_path.py`
-  includes one (EXP-12). This is the single most important unknown, and it is
-  cheap to answer.
-- COM3 is currently held by the phone's Bluetooth pairing; the adapter cannot be
-  opened until the device is removed from Windows Bluetooth, not merely
-  disconnected in the app.
+- CAN-FD: this adapter cannot do it (v1.5 clone, classical CAN controller).
+  Experiment 13 is kept as a cheap confirmation rather than a hypothesis.
 
-CAN-FD expectations if it turns out to matter: arbitration 500 kbit/s,
-data 2 Mbit/s typical for VW, `ATSH 8000` style extended flags, ISO-TP over
-64-byte frames. Nothing in the three references requires CAN-FD — evDash and
-ABRP both use classical CAN protocol 7 — so a working classical CAN path is the
-target and CAN-FD is a contingency.
+**What this promotes.** With hardware and framing both ruled out, the gap is
+narrower than "find the right command": it is *adapter state at the moment the
+BMS is addressed*. Three references configure the adapter before any DID read in
+ways we do not — `AT BI` (evDash, ABRP), `ATCF 17FE7` flow control (ABRP), and a
+per-module `ATCRA` (ABRP, spot2000, and Car Scanner's documented per-PID
+`ATCRA…,ATFCSH…,ATFCSD…`). Flow control is now a stronger candidate than it was,
+because it is the one thing Car Scanner demonstrably does that neither evDash nor
+our code does.
 
 ---
 
@@ -588,33 +606,37 @@ experiment can run.
 
 **Answered since the first draft:**
 
+- **Which adapter did Car Scanner use? This same Veepeak.** So the vehicle is
+  reachable through the OBD connector with this adapter, CAN-FD is ruled out,
+  and the current hardware can be retained (6).
 - Which DIDs sit behind Car Scanner's `[19.Gate]` 12 V block? **`0x2AF7`**,
   multi-frame, holding the whole block (2.6). Not new DID discovery at all.
 - Is the `0x2AB8` divisor derivable from public sources? **No** — evDash and
   spot2000 independently have the addressing and no equation (2.5).
 - Are the ~10 "unverified" decoder scales sound? **Yes**, all sixteen that
   spot2000 documents agree with `decoders/meb.py` (2.4).
+- Is our ISO-TP framing right? **Yes** — byte-identical to ABRP and spot2000
+  (1.1, 2.3).
 - Which SoC fit? evDash `byte/2.5` and display `raw*0.4425-6.1947`, now backed
   by spot2000's `XX/2,5` (2-against-1 over ABRP's `1.12*A/2.5-7.16`), and the
   Car Scanner pair 81.2 / 83.63 % reproduces evDash exactly from `raw = 203`.
+- Is CAN-FD required? **No.** Same adapter, Car Scanner read the BMS (6).
 
 **Still open:**
 
-1. Does the Veepeak clone support CAN-FD at all, and does the MEB diagnostic bus
-   need it? (exp 13). Nothing in the three references requires CAN-FD, so
-   classical CAN is the target.
-2. Is `ATBI` the actual blocker? (exp 6). Top candidate: both evDash and ABRP
-   send it and we do not.
-3. **Which adapter did Car Scanner use on this car?** Not established. The
-   configured adapter is a Veepeak BLE+ (`config.yaml`), but nothing records
-   that the earlier Car Scanner session used the same one over the same OBD
-   connector. If it was a different or CAN-FD adapter, question 1 becomes the
-   whole investigation.
-4. **Current sign, positive or negative on discharge** (2.7). evDash and this
+1. Which of the three adapter-state differences is the blocker — `AT BI`, the
+   `ATCF 17FE7` flow-control setting, or the per-module `ATCRA`? All three are
+   things Car Scanner and/or two references do and we do not, and none of them
+   is a change of request bytes. Experiments 6 and 8 discriminate; if neither
+   answers, flow control and `ATCRA` need their own arms, which the matrix does
+   not yet have.
+2. **Current sign, positive or negative on discharge** (2.7). evDash and this
    project say positive; ABRP and spot2000 say negative. Settle with a raw
    capture during charge and discharge. Until then `pack_current`'s sign is
    carried from evDash on the strength of Car Scanner's own counters, and is the
    project's single most consequential unverified assumption.
-5. Why does the car report two opposite-signed currents (`DC Battery Current`
+3. Why does the car report two opposite-signed currents (`DC Battery Current`
    and `DC Battery Current #2`)? A bipolar pair, or one sensor read two ways?
    Affects whether we need a second current DID.
+4. What are the sub-field offsets inside `0x2AF7` (2.6)? Solvable from one raw
+   capture plus the eight simultaneous Car Scanner readings already imported.

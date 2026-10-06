@@ -32,6 +32,25 @@ def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
 
+# Which DIDs the baseline arm (EXP-5, MEB addressing alone) actually got an
+# answer for. Every variant arm compares against this before claiming credit:
+# without it, a permissive adapter -- or the simulator, which answers no matter
+# what -- makes all fifteen arms print "was required" and the output says
+# nothing. The claim is only meaningful when the baseline was SILENT.
+_baseline_answered: set[int] = set()
+
+
+def claim(interpretation: str, did: int, answered: bool) -> None:
+    """Report a variant's result, crediting it only against a silent baseline."""
+    if not answered:
+        return
+    if did in _baseline_answered:
+        print("  (baseline EXP-5 already answered this DID, so nothing here "
+              "is attributable to this arm)")
+        return
+    print(f"  INTERPRETATION: {interpretation}")
+
+
 def send_raw(t: Elm327Transport, cmd: str, desc: str = "") -> list[str]:
     """Send raw command, print result."""
     log(f"TX: {cmd}  ({desc})")
@@ -103,13 +122,17 @@ def test_meb_bms_did(t: Elm327Transport, did: int, name: str) -> None:
     lines = send_raw(t, wire, f"BMS DID 0x{did:04X}")
 
     # Parse responses
+    answered = False
     for _src, p in payloads_by_source(lines).items():
         if p:
             print(f"  ECU {_src}: {p.hex().upper()}")
             if p[0] == 0x62:
                 print(f"    POSITIVE: data = {p[3:].hex().upper()}")
+                answered = True
             elif p[0] == 0x7F:
                 print(f"    NRC 0x{p[2]:02X}")
+    if answered:
+        _baseline_answered.add(did)
 
 
 def test_meb_bms_with_atbi(t: Elm327Transport, did: int, name: str) -> None:
@@ -136,12 +159,14 @@ def test_meb_bms_with_atbi(t: Elm327Transport, did: int, name: str) -> None:
     payload = f"22{did:04X}"
     wire = (f"{len(payload) // 2:02X}{payload}" + "55" * 8)[:16]
     lines = send_raw(t, wire, f"BMS DID 0x{did:04X} after ATBI")
+    _hit = False
     for _src, p in payloads_by_source(lines).items():
         if p and p[0] == 0x62:
             print(f"  ANSWERED: BMS DID 0x{did:04X} -> {p.hex().upper()}")
-            print("  INTERPRETATION: ATBI was the blocker.")
+            _hit = True
         elif p and p[0] == 0x7F:
             print(f"  BMS ALIVE but refused: NRC 0x{p[2]:02X}")
+    claim("ATBI was the blocker.", did, _hit)
 
 
 def test_meb_bms_with_atbi_session_tp(
@@ -167,12 +192,104 @@ def test_meb_bms_with_atbi_session_tp(
     payload = f"22{did:04X}"
     wire = (f"{len(payload) // 2:02X}{payload}" + "55" * 8)[:16]
     lines = send_raw(t, wire, f"BMS DID 0x{did:04X} full sequence")
+    _hit = False
     for _src, p in payloads_by_source(lines).items():
         if p and p[0] == 0x62:
             print(f"  ANSWERED: {p.hex().upper()}")
-            print("  INTERPRETATION: session and/or tester-present was required.")
+            _hit = True
         elif p and p[0] == 0x7F:
             print(f"  BMS ALIVE but refused: NRC 0x{p[2]:02X}")
+    claim("session and/or tester-present was required.", did, _hit)
+
+
+def test_meb_bms_with_flow_control(t: Elm327Transport, did: int, name: str) -> None:
+    """EXP-14: BMS DID with ATCF 17FE7 flow control set.
+
+    ABRP sends `ATCF 17FE7`, and Car Scanner's documented per-PID start commands
+    include `ATCRA7E8,ATFCSH7E0,ATFCSD300000` -- so two sources that reach this
+    BMS set flow control and neither evDash nor we do. Flow control is what the
+    ECU is told to do about *its own* transmitted frames, which on a 29-bit bus
+    the ELM327 is otherwise guessing at.
+
+    Adapter-local; reaches no ECU.
+    """
+    log(f"=== EXP-14: BMS DID 0x{did:04X} ({name}) with ATCF 17FE7 ===")
+    send_raw(t, "ATCF 17FE7", "flow control send header")
+    send_raw(t, "ATCP 17", "priority")
+    send_raw(t, "ATSH FC007B", "BMS header")
+    send_raw(t, "ATCAF0", "disable CAF")
+    payload = f"22{did:04X}"
+    wire = (f"{len(payload) // 2:02X}{payload}" + "55" * 8)[:16]
+    lines = send_raw(t, wire, f"BMS DID 0x{did:04X} after ATCF")
+    _hit = False
+    for _src, p in payloads_by_source(lines).items():
+        if p and p[0] == 0x62:
+            print(f"  ANSWERED: {p.hex().upper()}")
+            _hit = True
+    claim("flow control was required.", did, _hit)
+
+
+def test_meb_bms_with_atcra(t: Elm327Transport, did: int, name: str) -> None:
+    """EXP-15: BMS DID with ATCRA pinned to the module's response id.
+
+    ABRP sends `ATCRA17FE007B` and spot2000 states ATCRA per module (BMS =
+    17fe007b). Ours sends `ATCRA0`, which is not "accept all" -- ATCRA *sets* a
+    filter, so ATCRA0 means "accept only CAN id 0x000". This clone appears to
+    ignore it (the post-init warm-up still returns frames), but an adapter that
+    honoured it would go deaf.
+
+    Adapter-local; reaches no ECU. Note the repo's set_receive_address() is a
+    deliberate no-op because the field clone refuses the plain ATCRA that clears
+    a filter -- only ATZ recovers.
+    """
+    log(f"=== EXP-15: BMS DID 0x{did:04X} ({name}) with ATCRA 17FE007B ===")
+    send_raw(t, "ATCP 17", "priority")
+    send_raw(t, "ATSH FC007B", "BMS header")
+    send_raw(t, "ATCAF0", "disable CAF")
+    send_raw(t, "ATCRA 17FE007B", "receive filter = BMS response id")
+    payload = f"22{did:04X}"
+    wire = (f"{len(payload) // 2:02X}{payload}" + "55" * 8)[:16]
+    lines = send_raw(t, wire, f"BMS DID 0x{did:04X} after ATCRA")
+    _hit = False
+    for _src, p in payloads_by_source(lines).items():
+        if p and p[0] == 0x62:
+            print(f"  ANSWERED: {p.hex().upper()}")
+            _hit = True
+    claim("the ATCRA filter was required.", did, _hit)
+    send_raw(t, "ATCRA 17FE007B", "restore accept-all-ish filter")
+
+
+def test_meb_bms_everything(t: Elm327Transport, did: int, name: str) -> None:
+    """EXP-16: ATBI + ATCF + ATCRA + session + tester present, all at once.
+
+    The last resort, and the arm most likely to reproduce Car Scanner's path if
+    none of the single-variable arms does. If this answers and EXP-6/8/14/15 do
+    not, the path needs several of them together and each will need isolating
+    against the log rather than by bisection on the car.
+    """
+    log(f"=== EXP-16: BMS DID 0x{did:04X} everything at once ===")
+    send_raw(t, "ATBI", "bypass init")
+    send_raw(t, "ATCF 17FE7", "flow control send header")
+    send_raw(t, "ATCP 17", "priority")
+    send_raw(t, "ATSH FC007B", "BMS header")
+    send_raw(t, "ATCAF0", "disable CAF")
+    send_raw(t, "ATCRA 17FE007B", "receive filter")
+    send_raw(t, "0210015555555555555555", "10 01 default session")
+    time.sleep(0.1)
+    send_raw(t, "023E005555555555555555", "3E 00 tester present")
+    time.sleep(0.1)
+    payload = f"22{did:04X}"
+    wire = (f"{len(payload) // 2:02X}{payload}" + "55" * 8)[:16]
+    lines = send_raw(t, wire, f"BMS DID 0x{did:04X} everything")
+    _hit = False
+    for _src, p in payloads_by_source(lines).items():
+        if p and p[0] == 0x62:
+            print(f"  ANSWERED: {p.hex().upper()}")
+            _hit = True
+        elif p and p[0] == 0x7F:
+            print(f"  BMS ALIVE but refused: NRC 0x{p[2]:02X}")
+    claim("the full reference configuration is the path. Isolate against the "
+          "log on the next run.", did, _hit)
 
 
 def test_meb_bms_with_session(t: Elm327Transport, did: int, name: str) -> None:
@@ -372,6 +489,18 @@ def run_all_experiments(tcp=None):
 
             # Everything at once
             test_meb_bms_with_atbi_session_tp(t, 0x028C, "SoC")
+            time.sleep(0.2)
+
+            # Adapter-state arms: flow control and the receive filter. These
+            # are the two things Car Scanner demonstrably does that evDash and
+            # this project do not.
+            test_meb_bms_with_flow_control(t, 0x028C, "SoC")
+            time.sleep(0.2)
+
+            test_meb_bms_with_atcra(t, 0x028C, "SoC")
+            time.sleep(0.2)
+
+            test_meb_bms_everything(t, 0x028C, "SoC")
             time.sleep(0.2)
 
             # Energy module (11-bit)
