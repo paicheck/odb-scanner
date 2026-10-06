@@ -5,6 +5,10 @@ data/*.db-journal
 data/*.db-wal
 data/*.db-shm
 data/logs/
+# `main.py backup` snapshots. These are copies of the vehicle's own history and
+# can be large; a database committed to git is also a data-retention problem.
+data/backups/
+**/backups/
 .venv/
 venv/
 .pytest_cache/

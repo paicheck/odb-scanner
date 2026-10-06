@@ -281,6 +281,30 @@ class Repository:
         sql += " ORDER BY ts"
         return self.conn.execute(sql, args).fetchall()
 
+    def backup(self, dest: str | Path) -> Path:
+        """Write a consistent snapshot of the database to `dest`.
+
+        Uses SQLite's online backup API rather than copying the file. A plain
+        file copy of a WAL database is not a backup: any write committed to
+        the -wal sidecar but not yet checkpointed is missing from the copy, so
+        a crash right after a collection cycle -- exactly when a backup is
+        most wanted -- yields a file that is silently missing recent data. The
+        backup API reads through the WAL and holds a read lock for the
+        duration, so the snapshot is a single consistent point in time even
+        while the collector thread is still writing to the same database.
+
+        The parent directory is created if missing; an existing file at `dest`
+        is overwritten (SQLite truncates it first).
+        """
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        target = sqlite3.connect(str(dest))
+        try:
+            self.conn.backup(target)
+        finally:
+            target.close()
+        return dest
+
     def vacuum(self) -> None:
         """Reclaim space after pruning. Needs no open transaction.
 
@@ -313,19 +337,32 @@ class Repository:
         Nothing is deleted automatically: pruning is destructive, so the caller
         decides when. Anything still inside the window is left alone, including
         rows belonging to an in-progress charging session.
+
+        tx_log is NOT pruned, in either mode. It is the safety manifest -- the
+        record of every request this tool ever put on the vehicle's diagnostic
+        port, and the only evidence that the read-only guarantee held. Deleting
+        it would destroy the audit trail that exists precisely to be kept, and
+        `--hard` used to do exactly that while main.py's own summary line went
+        on claiming that only "sessions, DTCs and reports" were protected. A
+        vehicle's diagnostic history is also small next to the measurement
+        stream, so there is nothing to gain by reclaiming it.
         """
         cutoff = _iso_days_ago(days)
         # Every table below carries a `ts` column holding an ISO-8601 UTC stamp,
         # so one cutoff applies to all of them. Sessions, DTCs, vehicles and ECUs
         # are deliberately absent: they are small and are the durable record.
-        # llm_reports is kept too -- it is the user's own generated history.
+        # llm_reports is kept too -- it is the user's own generated history --
+        # and so is tx_log, which is the safety manifest.
         tables = ("measurements", "battery_measurements", "cell_voltages",
                   "charging_samples", "anomalies", "diagnostic_events",
-                  "analysis_results", "tx_log")
+                  "analysis_results")
         removed = {t: 0 for t in tables}
         removed["measurements_raw"] = 0
         removed["cutoff"] = cutoff
         removed["keep_raw"] = keep_raw
+        # Reported so the CLI can state plainly that the safety manifest was
+        # left intact rather than silently omitting it from the totals.
+        removed["tx_log_kept"] = True
         if keep_raw:
             cur = self.conn.execute(
                 "UPDATE measurements SET raw_response=NULL "

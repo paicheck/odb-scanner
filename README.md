@@ -235,6 +235,7 @@ on Linux/macOS, where the compiled wheels differ.
 | `python main.py doctor` | **Work out why the adapter is not connecting** |
 | `python main.py prune --days 90` | Drop stale raw response bytes, keeping every parsed value |
 | `python main.py prune --days 90 --hard` | Delete history rows older than 90 days entirely |
+| `python main.py backup` | Consistent database snapshot (safe while a collector runs) |
 
 ### Database growth
 
@@ -244,7 +245,20 @@ is your call. The default drops only the verbatim vehicle bytes older than
 `--days`, keeping every parsed value, so trends and reports are unaffected.
 `--hard` also deletes the rows, and is the only way to reclaim the space
 promptly (it vacuums). Vehicles, ECUs, sessions, DTCs and generated reports are
-never pruned.
+never pruned — and neither is `tx_log`, the safety manifest that records every
+request ever sent to the vehicle. That record exists to be kept, so neither
+prune mode touches it.
+
+### Backups
+
+Nothing here backs itself up, so run `python main.py backup` before doing
+anything irreversible (a `--hard` prune, a schema change) and periodically
+afterwards. It uses SQLite's online backup API, so it is safe to run while a
+collector is writing: the result is a single consistent snapshot rather than a
+file copy that would silently miss everything still sitting in the write-ahead
+log. Snapshots are timestamped (`data/backups/real_car-<UTC>.db`) so one bad
+day cannot overwrite the last good copy. Change `database.backup_dir` in
+`config.local.yaml` to keep them on a different drive.
 
 ## When it will not connect — run the doctor
 

@@ -41,6 +41,10 @@ database:
   # Real-car sessions get their own file: vehicles are keyed by VIN, and this
   # keeps simulator data (odb_scanner.db) separate from measured data.
   path: "data/real_car.db"
+  # Sub-folder (beside the database) that `main.py backup` writes timestamped
+  # snapshots into. Point this at a different drive if this machine is not the
+  # only place a copy of the car's history should live.
+  backup_dir: "backups"
 
 ollama:
   host: "http://localhost:11434"

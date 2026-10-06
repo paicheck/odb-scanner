@@ -1441,6 +1441,72 @@ def test_hard_prune_removes_old_rows_but_keeps_identity(repo):
                              (vid,)).fetchone() is not None, "vehicle pruned"
 
 
+def test_prune_never_deletes_the_safety_manifest(repo):
+    """Regression: `prune --hard` deleted tx_log rows.
+
+    tx_log is the record of every request this tool ever put on the vehicle's
+    diagnostic port -- the evidence that the read-only guarantee held. It was
+    listed alongside the analytics tables, so the destructive path removed it,
+    while main.py's own summary line went on claiming only "sessions, DTCs and
+    reports" were protected. Both modes must now leave it alone.
+    """
+    from datetime import datetime, timedelta, timezone
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    old = (datetime.now(timezone.utc) - timedelta(days=500)).isoformat(
+        timespec="seconds")
+    repo.log_tx(old, direction="TX", ecu="bat_mgmt", payload="221E3B",
+                purpose="read-only DID probe")
+    repo.record_measurement(vid, old, "pack_voltage", "bat_mgmt", "UDS-0x22",
+                            "0x1E3B", "V", "reported", "builtin", "documented",
+                            "DEADBEEF", 350.0)
+
+    for keep_raw in (True, False):
+        repo.prune(days=1, keep_raw=keep_raw)
+        left = repo.conn.execute("SELECT payload FROM tx_log").fetchall()
+        assert len(left) == 1, f"tx_log pruned with keep_raw={keep_raw}"
+        assert left[0]["payload"] == "221E3B"
+
+    assert repo.prune(days=0, keep_raw=False)["tx_log_kept"] is True
+
+
+def test_backup_produces_a_readable_consistent_snapshot(tmp_path):
+    """The snapshot must be a real database, not a file copy of a WAL."""
+    import sqlite3
+    src = tmp_path / "live.db"
+    repo = Repository(src)
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    for i in range(25):
+        repo.record_measurement(vid, f"2026-10-05T10:{i:02d}:00+00:00",
+                                "pack_voltage", "bat_mgmt", "UDS-0x22", "0x1E3B",
+                                "V", "reported", "builtin", "documented",
+                                "ABCD", 350.0 + i)
+    repo.log_tx("2026-10-05T10:00:00+00:00", direction="TX", ecu="bat_mgmt",
+                payload="221E3B", purpose="read-only DID probe")
+
+    dest = repo.backup(tmp_path / "snapshots" / "copy.db")
+    assert dest.exists(), "parent directory was not created"
+
+    # Readable by a completely separate connection, with the same rows.
+    con = sqlite3.connect(str(dest))
+    try:
+        assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert con.execute("SELECT COUNT(*) FROM measurements").fetchone()[0] == 25
+        assert con.execute("SELECT COUNT(*) FROM tx_log").fetchone()[0] == 1
+    finally:
+        con.close()
+
+    # Backup twice: the second must overwrite cleanly, not append or fail.
+    repo.backup(dest)
+    repo.close()
+
+
+def test_backup_dir_is_configurable_and_gitignored(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    ignored = (root / ".gitignore").read_text(encoding="utf-8")
+    assert "data/backups/" in ignored
+    assert "backup_dir" in (root / "config.yaml").read_text(encoding="utf-8")
+
+
 def test_config_missing_base_file_yields_defaults(tmp_path):
     cfg = load_config(tmp_path / "absent.yaml", tmp_path / "absent.local.yaml")
     assert cfg.get("anything.at.all") is None

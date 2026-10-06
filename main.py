@@ -9,12 +9,16 @@ Commands:
     python main.py serve                 run the web dashboard
     python main.py seed                  load the example diagnostic dataset
     python main.py guard-test            verify the read-only guard blocks writes
+    python main.py backup [--out FILE]   snapshot the database (safe while
+                                         a collector is running)
+    python main.py prune [--days N]      trim old history (never automatic)
 """
 from __future__ import annotations
 
 import argparse
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config import load_config
@@ -225,6 +229,39 @@ def cmd_guard_test() -> int:
     return 0 if ok else 1
 
 
+def _default_backup_path(cfg) -> Path:
+    """Timestamped snapshot beside the database.
+
+    Timestamped so repeated backups never overwrite each other -- a rolling
+    "latest.db" is one bad day away from being the only copy of the only copy.
+    """
+    db = Path(cfg.db_path)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    folder = db.parent / cfg.get("database.backup_dir", "backups")
+    return folder / f"{db.stem}-{stamp}{db.suffix}"
+
+
+def cmd_backup(cfg, out: str | None = None) -> int:
+    """Snapshot the database while it is safe to do so.
+
+    Uses SQLite's online backup API, so this is safe to run while a collector
+    is writing: the snapshot is a single consistent point in time rather than
+    a file copy that could miss everything still sitting in the WAL.
+    """
+    before = _db_size_mb(cfg.db_path)
+    with Repository(cfg.db_path) as repo:
+        dest = repo.backup(out or _default_backup_path(cfg))
+        rows = repo.conn.execute("SELECT COUNT(*) c FROM measurements").fetchone()["c"]
+        tx = repo.conn.execute("SELECT COUNT(*) c FROM tx_log").fetchone()["c"]
+    after = _db_size_mb(dest)
+    print(f"Backup written: {dest}")
+    print(f"  {rows} measurements, {tx} tx_log (safety manifest) rows included")
+    print(f"  size {before:.1f} MB -> {after:.1f} MB")
+    print("\nKeep this file somewhere off this machine -- it is the only copy of")
+    print("the vehicle's measured history.")
+    return 0
+
+
 def cmd_prune(cfg, days: float, hard: bool) -> int:
     """Trim history. Never runs automatically -- deleting data is the user's call."""
     with Repository(cfg.db_path) as repo:
@@ -243,10 +280,12 @@ def cmd_prune(cfg, days: float, hard: bool) -> int:
             print(f"  {key:22} {count}")
     if hard:
         print("Parsed values inside the window are untouched. Vehicles, ECUs, "
-              "sessions, DTCs and reports are never pruned.")
+              "sessions, DTCs, reports and tx_log are never pruned.")
     else:
         print("Every parsed value inside the window is untouched, including the "
               "verbatim bytes of recent rows.")
+    print("tx_log is never pruned: it is the safety manifest recording every "
+          "request ever sent to the vehicle.")
     print(f"Database size: {before:.1f} MB -> {after:.1f} MB")
     return 0
 
@@ -266,12 +305,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("command",
                         choices=["discover", "collect", "analyze", "report",
                                  "serve", "simulate", "seed", "guard-test",
-                                 "prune", "doctor"])
+                                 "prune", "backup", "doctor"])
     parser.add_argument("--days", type=float, default=90.0,
                         help="prune: age in days to keep (default 90)")
     parser.add_argument("--hard", action="store_true",
                         help="prune: delete whole rows instead of only the "
                              "verbatim response payloads")
+    parser.add_argument("--out", type=str, default=None,
+                        help="backup: destination file (default: a timestamped "
+                             "file beside the database)")
     parser.add_argument("--cycles", type=int, default=None)
     parser.add_argument("--question", type=str, default=None)
     parser.add_argument("--config", type=str, default=None)
@@ -321,6 +363,8 @@ def main() -> int:
         if args.only_config:
             doctor_argv += ["--only-config"]
         return doctor_main(doctor_argv)
+    if args.command == "backup":
+        return cmd_backup(cfg, args.out)
     if args.command == "prune":
         return cmd_prune(cfg, args.days, args.hard)
     try:
