@@ -2470,11 +2470,129 @@ def test_network_bind_requires_a_token(tmp_path, monkeypatch):
         r = client.get(path)
         assert r.status_code == 401, f"{path} served without a token"
         assert "WVWZZZE1ZMP" not in r.text, f"{path} leaked vehicle data"
+        assert token not in r.text, f"{path} leaked the token itself"
     # POST must be gated too, or the endpoint is merely hidden behind 401 on GET.
     assert client.post("/ai/ask", data={"question": "hi"}).status_code == 401
 
     assert client.get("/?k=wrong").status_code == 401
     assert client.get("/?k=" + token + "x").status_code == 401
+
+
+def test_the_401_page_never_contains_the_token(tmp_path, monkeypatch):
+    """The refusal page is served TO unauthenticated callers.
+
+    It used to be rendered with a ready-made login link containing the live
+    token, so one unauthenticated GET from anywhere on the network returned the
+    credential in the response body -- a guest phone, a neighbour on the wifi,
+    anything that can reach the port. Replaying it grants the VIN, the fault
+    history and POST /ai/ask, and the token is reused across restarts, so the
+    compromise is permanent rather than one-shot.
+    """
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+
+    token = "s3cret-token-value"
+    monkeypatch.setattr(dash, "resolve_token", lambda c, h: token)
+    cfg = _auth_cfg(tmp_path, "0.0.0.0")
+    client = TestClient(dash.create_app(cfg, bind_host="0.0.0.0"),
+                        raise_server_exceptions=False)
+
+    for path in ("/", "/battery", "/api/health", "/does-not-exist"):
+        r = client.get(path)
+        assert r.status_code == 401
+        assert token not in r.text, (
+            f"{path} handed the access token to an unauthenticated caller")
+
+
+def test_security_headers_cover_the_responses_auth_generates(tmp_path,
+                                                             monkeypatch):
+    """The 401 and the cookie-setting 303 come from middleware, not a route.
+
+    Starlette runs the last-registered middleware outermost, so registering the
+    header layer first made it innermost: it only decorated responses returned
+    by a route handler, and the two responses auth manufactures itself went out
+    bare -- no no-store on the page unauthenticated callers are served, and no
+    frame-ancestors on the one page worth clickjacking.
+    """
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+
+    token = "s3cret-token-value"
+    monkeypatch.setattr(dash, "resolve_token", lambda c, h: token)
+    cfg = _auth_cfg(tmp_path, "0.0.0.0")
+    client = TestClient(dash.create_app(cfg, bind_host="0.0.0.0"),
+                        raise_server_exceptions=False)
+
+    unauth = client.get("/")
+    assert unauth.status_code == 401
+    for header in ("X-Content-Type-Options", "X-Frame-Options",
+                   "Referrer-Policy", "Content-Security-Policy",
+                   "Cache-Control"):
+        assert header in unauth.headers, f"401 served without {header}"
+    assert unauth.headers["Cache-Control"] == "no-store"
+
+    hop = client.get("/?k=" + token, follow_redirects=False)
+    assert hop.status_code == 303
+    assert hop.headers.get("Cache-Control") == "no-store", (
+        "the response carrying the auth cookie is cacheable")
+
+
+def test_cross_origin_state_changing_requests_are_refused(tmp_path,
+                                                          monkeypatch):
+    """POST /ai/ask is a CSRF target, and on a loopback bind it has no token.
+
+    A form-encoded POST is CORS-simple, so any page the operator visits can
+    submit one without a preflight: the attacker never reads the reply, but the
+    LLM still runs for minutes and the question is written into llm_reports,
+    where /ai renders it back as local history.
+    """
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+    from web.auth import is_loopback
+
+    monkeypatch.setattr(dash, "resolve_token",
+                        lambda c, h: None if is_loopback(h) else "tok")
+    cfg = _auth_cfg(tmp_path, "127.0.0.1")
+    client = TestClient(dash.create_app(cfg, bind_host="127.0.0.1"),
+                        raise_server_exceptions=False)
+
+    r = client.post("/ai/ask", data={"question": "hi"},
+                    headers={"Origin": "https://attacker.example"})
+    assert r.status_code == 403, (
+        "a cross-origin POST reached the LLM endpoint unauthenticated")
+
+    # Same-origin and non-browser callers must still pass: 405 is the router
+    # refusing POST on a GET-only path, which means the gate let it through.
+    assert client.post(
+        "/", headers={"Origin": "http://testserver"}).status_code == 405
+    assert client.post("/").status_code == 405, "a CLI caller was refused"
+
+
+def test_malformed_token_input_is_refused_not_crashed(tmp_path, monkeypatch):
+    """secrets.compare_digest raises TypeError on non-ASCII str operands.
+
+    Neither the query parameter nor the cookie was validated, so one byte from
+    an unauthenticated caller produced a 500 and a full traceback in the server
+    log -- a cheap log-flooding primitive, and a traceback disclosure the day
+    anyone turns on debug.
+    """
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(dash, "resolve_token", lambda c, h: "s3cret")
+    cfg = _auth_cfg(tmp_path, "0.0.0.0")
+    client = TestClient(dash.create_app(cfg, bind_host="0.0.0.0"),
+                        raise_server_exceptions=False)
+
+    assert client.get("/?k=%C3%A9").status_code == 401
+    assert client.get("/?k=").status_code == 401
+
+    # The cookie path shares the same comparison, but httpx will not transmit a
+    # non-ASCII header value, so it is pinned directly rather than over HTTP.
+    from web.auth import _token_matches
+    assert _token_matches("\u00e9", "s3cret") is False
+    assert _token_matches("s3cret", "s3cret") is True
+    assert _token_matches(None, "s3cret") is False
 
 
 def test_valid_token_is_exchanged_for_a_cookie(tmp_path, monkeypatch):

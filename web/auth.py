@@ -40,10 +40,10 @@ from __future__ import annotations
 import logging
 import os
 import secrets
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 log = logging.getLogger(__name__)
@@ -142,30 +142,67 @@ def _generate_and_persist(cfg, bind_host: str) -> str:
     return token
 
 
-def login_url(request: Request, token: str) -> str:
-    """Absolute URL that carries the token once, for copy/paste."""
-    path = quote(request.url.path or "/")
-    qs = urlencode({QUERY: token})
-    return f"{request.url.scheme}://{request.url.netloc}{path}?{qs}"
+def _origin_of(url: str) -> str:
+    """scheme://host:port of a URL, or "" when it has no usable origin."""
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.netloc:
+        return ""
+    return f"{parts.scheme}://{parts.netloc}"
 
 
+def _safe_path(path: str) -> str:
+    """A redirect target that cannot leave this origin.
+
+    '//evil.example/x' is a protocol-relative URL, not a path: handing it to
+    RedirectResponse turns the dashboard into an open redirector.
+    """
+    if not path.startswith("/") or path.startswith("//"):
+        return "/"
+    return path
+
+
+def _token_matches(supplied: str | None, token: str | None) -> bool:
+    """Constant-time comparison that the caller cannot crash.
+
+    secrets.compare_digest refuses str operands holding non-ASCII and raises
+    TypeError, so '?k=<any non-ASCII byte>' reached the middleware as an
+    unhandled 500 on an unauthenticated path -- one byte to send, a full
+    traceback written to the server log every time. Comparing the UTF-8
+    encodings keeps the timing property and turns undecodable input into an
+    ordinary mismatch.
+    """
+    if not supplied or not token:
+        return False
+    try:
+        return secrets.compare_digest(str(supplied).encode("utf-8"),
+                                      str(token).encode("utf-8"))
+    except (AttributeError, UnicodeEncodeError):  # pragma: no cover - defensive
+        return False
+
+
+# This page is served to callers who have NOT authenticated, so it must not
+# contain the token. It used to be rendered with the live token interpolated
+# into it as a ready-made login link, which meant one unauthenticated GET from
+# anywhere on the network returned the credential in the response body.
 _LOGIN_PAGE = """<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Authentication required</title>
-<style>body{{font-family:'Segoe UI',Arial,sans-serif;background:#f4f6f8;color:#222;
-margin:0;padding:60px 20px}}div{{max-width:640px;margin:0 auto;background:#fff;
-border-radius:8px;padding:28px 32px;box-shadow:0 1px 3px rgba(0,0,0,.08)}}
-h1{{font-size:20px;margin:0 0 12px}}p{{line-height:1.6;color:#444}}
-code{{background:#eef2f5;padding:2px 6px;border-radius:4px}}
-.warn{{background:#fff8e1;border-left:4px solid #e0a800;padding:10px 14px;
-margin:18px 0;font-size:14px}}</style></head>
+<style>body{font-family:'Segoe UI',Arial,sans-serif;background:#f4f6f8;color:#222;
+margin:0;padding:60px 20px}div{max-width:640px;margin:0 auto;background:#fff;
+border-radius:8px;padding:28px 32px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+h1{font-size:20px;margin:0 0 12px}p{line-height:1.6;color:#444}
+code{background:#eef2f5;padding:2px 6px;border-radius:4px}
+.warn{background:#fff8e1;border-left:4px solid #e0a800;padding:10px 14px;
+margin:18px 0;font-size:14px}</style></head>
 <body><div><h1>Dashboard is protected</h1>
-<p>This server is bound to a network-reachable address, so it requires a
-one-time access token. Open it once with the token in the address:</p>
-<p><code>{url}</code></p>
-<p>Your browser will then remember it and every later visit will work
-normally. The token is stored in an HttpOnly cookie, not in the page.</p>
-<p class="warn">If you did not expect this, something else on your network has
-your car's diagnostic data. Change <code>web.host</code> to
+<p>This server is bound to a network-reachable address, so it requires an
+access token. Open it once with the token in the address, as
+<code>?k=YOUR-TOKEN</code></p>
+<p>The token was printed to the console when the dashboard started, and is
+stored under <code>web.auth_token</code> in <code>config.local.yaml</code> on
+the machine running it. Your browser remembers it afterwards: it is kept in an
+HttpOnly cookie and dropped from the address bar on the first visit.</p>
+<p class="warn">If you did not expect this page, something else on your network
+is asking for your car's diagnostic data. Change <code>web.host</code> to
 <code>127.0.0.1</code> in <code>config.local.yaml</code> to close it off.</p>
 </div></body></html>"""
 
@@ -175,7 +212,8 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
     Requests without a valid token get an explanatory 401 page rather than a
     bare refusal, because the usual reason to land here is following a
-    bookmark written before the dashboard was protected.
+    bookmark written before the dashboard was protected. That page states how
+    to supply the token; it must never state the token itself.
     """
 
     def __init__(self, app, token: str | None):
@@ -184,20 +222,14 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if self.token and not self._authorised(request):
-            return HTMLResponse(
-                _LOGIN_PAGE.format(url=login_url(request, self.token)),
-                status_code=401)
+            return HTMLResponse(_LOGIN_PAGE, status_code=401)
         return await call_next(request)
 
     def _authorised(self, request: Request) -> bool:
         supplied = request.cookies.get(COOKIE) or request.query_params.get(QUERY)
-        if not supplied:
-            return False
         # Constant-time: a byte-at-a-time compare would leak the token to a
         # caller able to time responses.
-        if not secrets.compare_digest(str(supplied), self.token):
-            return False
-        return True
+        return _token_matches(supplied, self.token)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -238,12 +270,21 @@ class CookiePromotionMiddleware(BaseHTTPMiddleware):
         self.token = token
 
     async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
         supplied = request.query_params.get(QUERY)
-        if (self.token and supplied
-                and secrets.compare_digest(str(supplied), self.token)):
-            response = RedirectResponse(
-                request.url.path or "/", status_code=303)
+        if self.token and _token_matches(supplied, self.token):
+            # Decided BEFORE the handler runs. The old order called the route
+            # first and then threw its response away, so a POST carrying ?k=
+            # did the whole job for nothing -- a full LLM generation, binned,
+            # followed by a 303 to a POST-only path, which the browser then
+            # re-requests with GET and gets 405.
+            remaining = [(k, v) for k, v in request.query_params.multi_items()
+                         if k != QUERY]
+            target = _safe_path(request.url.path or "/")
+            if remaining:
+                # Keep every other parameter: the token hop should not silently
+                # drop the rest of the query it was pasted onto.
+                target = f"{target}?{urlencode(remaining)}"
+            response = RedirectResponse(target, status_code=303)
             response.set_cookie(
                 COOKIE, self.token,
                 httponly=True,          # not readable from JavaScript
@@ -251,4 +292,42 @@ class CookiePromotionMiddleware(BaseHTTPMiddleware):
                 max_age=60 * 60 * 24 * 90,
                 path="/",
             )
-        return response
+            return response
+        return await call_next(request)
+
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+
+
+class SameOriginMiddleware(BaseHTTPMiddleware):
+    """Refuse cross-origin state-changing requests (CSRF).
+
+    POST /ai/ask starts a local LLM generation that occupies the GPU for
+    minutes and writes the question into llm_reports, which /ai then renders
+    back as trustworthy-looking local history. A form-encoded POST is a
+    CORS-simple request, so any page the operator happens to visit can submit
+    one with no preflight -- the attacker never reads the response, but the
+    write and the resource burn both land, and looping it is a denial of
+    service against the machine.
+
+    SameSite=Lax on the cookie does not help here, because on a loopback bind
+    there is no token to require at all -- and that is the configuration the
+    documentation recommends as the safe one. So this check runs regardless of
+    whether a token is configured.
+
+    Browsers send Origin on every cross-origin POST. A request carrying
+    neither Origin nor Referer is not browser-driven (curl, a script, a probe)
+    and is allowed through: refusing it would break command-line use without
+    closing anything a browser is able to do.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method.upper() not in _SAFE_METHODS:
+            stated = request.headers.get("origin")
+            if not stated:
+                referer = request.headers.get("referer")
+                stated = _origin_of(referer) if referer else ""
+            if stated and stated != _origin_of(str(request.url)):
+                return PlainTextResponse(
+                    "Cross-origin request refused.", status_code=403)
+        return await call_next(request)

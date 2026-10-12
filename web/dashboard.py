@@ -25,6 +25,7 @@ from database.repository import Repository
 from web.auth import (
     QUERY,
     CookiePromotionMiddleware,
+    SameOriginMiddleware,
     SecurityHeadersMiddleware,
     TokenAuthMiddleware,
     resolve_token,
@@ -83,15 +84,26 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     host = bind_host if bind_host is not None else cfg.get("web.host", "127.0.0.1")
     token = resolve_token(cfg, host)
     if token:
-        log.warning(
-            "Dashboard bound to %s with no visible token configured; access now "
-            "requires ?%s=... once. See the startup message for the value.",
-            host, QUERY)
-    # Order matters: headers wrap everything, then the cookie exchange, then
-    # the gate itself. Middleware added last runs first.
-    app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(CookiePromotionMiddleware, token=token)
+        log.info(
+            "Dashboard bound to %s, so access requires ?%s=... once per "
+            "browser. See the startup message for the value.", host, QUERY)
+    # Order matters, and Starlette applies these OUTERMOST-LAST: whatever is
+    # added last is the first to see a request and the last to touch a
+    # response. The intended nesting, outside in, is
+    #
+    #     SecurityHeaders -> SameOrigin -> CookiePromotion -> TokenAuth
+    #
+    # so the registrations below are in the reverse of that reading order.
+    # This used to be written the other way round, which put SecurityHeaders
+    # innermost: it then only decorated responses that came back from a route
+    # handler, and the two responses auth generates itself -- the 401 page and
+    # the 303 that sets the cookie -- went out bare, with no Cache-Control:
+    # no-store and no frame-ancestors on the one page unauthenticated callers
+    # are served.
     app.add_middleware(TokenAuthMiddleware, token=token)
+    app.add_middleware(CookiePromotionMiddleware, token=token)
+    app.add_middleware(SameOriginMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     # Analysis windows come from config so the dashboard, the charts and the
     # CLI agree. Previously each route hardcoded its own 30/90 and silently
