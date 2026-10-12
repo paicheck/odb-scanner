@@ -294,6 +294,11 @@ def test_close_clears_the_addressing_state_it_describes():
     A request issued between close() and initialize() would take the MEB path
     against a closed transport. _base_init already resets them; close() is the
     other place that has to.
+
+    _caf is cleared to None ("unknown"), not 0 ("auto-formatting is off"):
+    nothing is known about an adapter that has been closed, and claiming the
+    mode is already off is what makes the next set_module() skip the ATCAF0
+    that a hand-framed 8-byte module read depends on.
     """
     from diagnostic.elm327 import Elm327Transport
 
@@ -308,7 +313,7 @@ def test_close_clears_the_addressing_state_it_describes():
     t.close()
     assert t.meb_addressing is False
     assert t._meb_module is None
-    assert t._caf == 0
+    assert t._caf is None
     assert t._proto is None
     assert t._dev is None and t._opened is False
 
@@ -489,6 +494,63 @@ def test_set_module_switches_protocol_for_11bit_modules():
     assert t.set_module(None) is True
     assert "ATSP7" in stub.sent
     assert "ATSH DB33F1" in stub.sent
+
+
+def test_protocol_switch_reasserts_auto_formatting_mode():
+    """ATSP re-inits the CAN layer, so ATCAF0 cannot be assumed to survive it.
+
+    Module reads are hand-framed 8-byte lines ('03 22 xxxx 55 55 55 55'), legal
+    only with auto-formatting OFF -- under ATCAF1 the payload limit is 7 and the
+    ELM327 answers '?' instead of transmitting. The transport used to cache
+    _caf across a protocol change and skip re-sending ATCAF0, so every module
+    read issued after an 11-bit detour went out into that state.
+
+    '?' is the adapter refusing the command, not the car staying silent. The
+    real-car tx_log shows exactly that split: bat_mgmt, which is never preceded
+    by a protocol switch, answered NO DATA 472 times, while energy, climate and
+    veh_info -- all reached after an ATSP6 -- answered '?'.
+    """
+    stub = _StubTransport()
+    from diagnostic.elm327 import Elm327Transport
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t.meb_addressing = True
+    t._meb_module = None
+
+    assert t.set_module(0x17FC007B) is True       # 29-bit module, protocol 7
+    assert "ATCAF0" in stub.sent
+    assert t.set_module(0x00000710) is True       # 11-bit module, forces ATSP6
+
+    stub.sent.clear()
+    assert t.set_module(0x17FC007B) is True       # back across a switch
+    assert "ATSP7" in stub.sent, "test double did not exercise a switch"
+    assert "ATCAF0" in stub.sent, (
+        "auto-formatting was not re-asserted after ATSP: the next hand-framed "
+        "8-byte module read can be refused with '?' rather than transmitted")
+    assert stub.sent.index("ATCAF0") > stub.sent.index("ATSP7"), (
+        "ATCAF0 must be sent after the ATSP that may have reset it")
+
+
+def test_meb_negotiation_does_not_claim_success_after_a_refused_restore(caplog):
+    """A refused functional restore disables MEB addressing -- so do not
+    announce the opposite.
+
+    The method reset the adapter, cleared meb_addressing, and then fell through
+    to log 'MEB physical addressing available' regardless. In a no-response
+    investigation that line is read as evidence the module path was up.
+    """
+    import logging
+
+    stub = _StubTransport(refusals={"ATSH DB33F1"})
+    from diagnostic.elm327 import Elm327Transport
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+
+    with caplog.at_level(logging.INFO, logger="diagnostic.elm327"):
+        t._negotiate_meb()
+
+    assert t.meb_addressing is False
+    assert "MEB physical addressing available" not in caplog.text
 
 
 def test_set_module_refusal_resets_adapter_and_reports_failure():

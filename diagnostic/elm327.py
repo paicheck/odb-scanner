@@ -214,7 +214,7 @@ class Elm327Transport(OBDInterface):
         # adapter, once per request. _base_init resets these too; close() is
         # just the other place that has to.
         self.meb_addressing = False
-        self._caf = 0
+        self._caf = None        # unknown, not "off": this adapter is gone
         self._proto = None
         self._meb_module = None
 
@@ -476,6 +476,10 @@ class Elm327Transport(OBDInterface):
             # down the MEB path against a functional-only adapter.
             self.meb_addressing = False
             self._meb_module = None
+            # Without this return the line below announced that MEB addressing
+            # was available immediately after giving up on it -- the log said
+            # the opposite of what the transport had just decided.
+            return
         log.info("MEB physical addressing available (ATCP + 6-digit ATSH)")
 
     def _restore_functional(self) -> bool:
@@ -500,6 +504,24 @@ class Elm327Transport(OBDInterface):
         resp = self.send_command(f"ATSP{proto}")
         if not any("?" in r for r in resp):
             self._proto = proto
+            # ATSP re-initialises the CAN layer, so the header programmed by a
+            # previous ATCP/ATSH and the auto-formatting mode set by ATCAF are
+            # no longer known to be what we last set them to. Whether this
+            # clone preserves them across a protocol switch is exactly the kind
+            # of behaviour this module's other comments insist must be measured
+            # rather than assumed -- and assuming it does has a specific, silent
+            # failure mode: a module read goes out as a hand-built 8-byte line
+            # while the adapter is back on ATCAF1, where the payload limit is 7,
+            # and the ELM327 answers '?' instead of transmitting. That is not a
+            # bus timeout ('NO DATA'), it is the adapter refusing the command,
+            # and the two are indistinguishable once discover_ecus() has mapped
+            # both onto 'no-response'.
+            #
+            # Forgetting both is cheap -- it costs one ATCAF per protocol
+            # change -- and it makes the next set_module() re-assert the state
+            # instead of trusting a cache it cannot verify.
+            self._meb_module = None
+            self._caf = None
         return resp
 
     def _recover(self) -> bool:
@@ -540,7 +562,12 @@ class Elm327Transport(OBDInterface):
         if not self.meb_addressing:
             return tx29 is None
         want_proto = "6" if tx29 is not None and tx29 <= 0x7FF else PINNED_PROTOCOL
-        if tx29 == self._meb_module and self._proto == want_proto:
+        # The CAF check belongs in this guard: being aimed at the right module
+        # on the right protocol is not enough if auto-formatting is not in the
+        # mode the hand-framed request needs. _set_protocol() clears _caf to
+        # None whenever it switches, so this correctly misses the cache then.
+        if (tx29 == self._meb_module and self._proto == want_proto
+                and self._caf == 0):
             return True
         if tx29 is None:
             if not self._restore_functional():
