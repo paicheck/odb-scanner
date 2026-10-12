@@ -736,3 +736,94 @@ def test_vid_pid_hint_prioritises_but_does_not_select(monkeypatch):
     assert t._autodetect_serial() == "COM31"
     # The hint made COM30 be tried first, but it did not answer, so COM31 won.
     assert opened[0] == "COM30"
+
+
+# --- doctor: the serial candidate list ----------------------------------------
+
+class _StubCfg:
+    """Minimal stand-in for Config: the doctor only ever calls .get()."""
+
+    def __init__(self, values):
+        self.values = values
+
+    def get(self, key, default=None):
+        return self.values.get(key, default)
+
+
+def test_doctor_all_ports_tries_every_usable_port(monkeypatch):
+    """--all-ports is the doctor's own remedy for a dead configured port.
+
+    Stage 3 read its candidate list from its own Stage object, but stage 2 had
+    written the list onto stage 2's -- a different instance -- so the lookup
+    always found {} and the `or [port]` fallback re-opened exactly the port
+    that had just failed. On a Bluetooth pair that means COM4, the half that
+    actually carries bytes, is never opened, while the verdict prints "Run with
+    --all-ports to find the real one". Each retry also costs a ~60 s blocking
+    open on a stale port, so the user waits twice for the same answer.
+    """
+    from diagnostic import discovery
+    from tools import doctor as doc
+
+    def fake_classify():
+        hex_dev = SerialDevice(port="COM13", description="Ross-Tech HEX-USB",
+                               vid=0x0403, pid=0xFA24, product="HEX-USB")
+        bt_a = SerialDevice(port="COM3",
+                            description="Standard Serial over Bluetooth link")
+        bt_b = SerialDevice(port="COM4",
+                            description="Standard Serial over Bluetooth link")
+        return [discovery.classify_device(d) for d in (hex_dev, bt_a, bt_b)]
+
+    monkeypatch.setattr(doc, "discover_and_classify", fake_classify)
+
+    attempted: list[str] = []
+
+    class _DeadTransport:
+        def __init__(self, port=None, baudrate=38400, timeout=5.0, **kw):
+            self.port = port
+
+        def open(self):
+            attempted.append(self.port)
+            raise AdapterNotFoundError(f"Cannot open {self.port}")
+
+    monkeypatch.setattr(doc, "Elm327Transport", _DeadTransport)
+
+    d = doc.Doctor(_StubCfg({"adapter.port": "COM3"}), all_ports=True)
+    d.stage_ports()
+    d.stage_open()
+
+    assert attempted, "no port was opened at all"
+    assert attempted[0] == "COM3", "the configured port should still be tried first"
+    assert "COM4" in attempted, (
+        "--all-ports never tried the other half of the Bluetooth pair")
+    assert "COM13" not in attempted, (
+        "stage 2 already established a vendor-specific interface cannot work "
+        "as an ELM327; opening it only costs another blocking open")
+
+
+def test_doctor_without_all_ports_tries_only_the_configured_port(monkeypatch):
+    """The default must stay narrow: one port, the one that was configured."""
+    from diagnostic import discovery
+    from tools import doctor as doc
+
+    def fake_classify():
+        return [discovery.classify_device(SerialDevice(port=p))
+                for p in ("COM3", "COM4")]
+
+    monkeypatch.setattr(doc, "discover_and_classify", fake_classify)
+    attempted: list[str] = []
+
+    class _DeadTransport:
+        def __init__(self, port=None, baudrate=38400, timeout=5.0, **kw):
+            self.port = port
+
+        def open(self):
+            attempted.append(self.port)
+            raise AdapterNotFoundError("nope")
+
+    monkeypatch.setattr(doc, "Elm327Transport", _DeadTransport)
+
+    d = doc.Doctor(_StubCfg({"adapter.port": "COM3"}))
+    d.stage_ports()
+    d.stage_open()
+
+    assert attempted == ["COM3"]

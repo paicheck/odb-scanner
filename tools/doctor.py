@@ -121,6 +121,10 @@ class Doctor:
         self.transport: Elm327Transport | None = None
         self.identity = ""
         self.working_protocol: str | None = None
+        # Stage 2's classification, carried here so stage 3 can use it. It
+        # cannot be read back off stage 2's Stage object: run() keeps those in
+        # a list and never hands one to the next stage.
+        self.classified: list = []
 
     # -- low-level helpers ---------------------------------------------------
     def _vehicle(self, cmd: str) -> list[str]:
@@ -192,6 +196,7 @@ class Doctor:
                        "work as an ELM327 serial adapter")
         s.data["ports"] = [c.device.port for c in classified]
         s.data["classified"] = classified
+        self.classified = classified
 
         if wanted not in ("auto", None, "") and wanted not in s.data["ports"]:
             # The single most common cause of "it doesn't connect": a COM port
@@ -225,8 +230,25 @@ class Doctor:
             s.line(f"connected to tcp {host}:{tp}")
             return s
 
-        candidates = [port] if not self.all_ports else \
-            (s.data.get("ports") or [port])
+        candidates = [port]
+        if self.all_ports:
+            # These come from stage 2 via self.classified. Reading them off
+            # this stage's own .data always found {} -- a different Stage
+            # object -- so --all-ports fell through to [port] and re-opened
+            # exactly the port that had just failed, which is what the verdict
+            # tells the user to run --all-ports to get past.
+            #
+            # Vendor-specific interfaces are excluded: stage 2 has already
+            # established they cannot work as an ELM327, and opening one (a
+            # Ross-Tech HEX, say) only costs another blocking open.
+            usable = [c.device.port for c in self.classified
+                      if c.device_class != DeviceClass.VENDOR_SPECIFIC]
+            if usable:
+                # Configured port first -- it is usually the right one -- then
+                # every other candidate, so the Bluetooth pair's other half
+                # actually gets tried.
+                candidates = ([port] if port in usable else []) + \
+                             [p for p in usable if p != port]
         last = ""
         for cand in candidates:
             t = Elm327Transport(port=cand,

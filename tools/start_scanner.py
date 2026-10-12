@@ -128,17 +128,103 @@ def _spawn(name: str, args: list[str]) -> int:
     return proc.pid
 
 
+def _process_identity(pid: int) -> str | None:
+    """A token distinguishing THIS process from a later one reusing its id.
+
+    A pid on its own is not an identity. stack.json outlives a reboot, a
+    Ctrl-C and a crash, and Windows reissues low pids quickly, so a --stop run
+    after a reboot could find a recorded pid "alive", belonging to something
+    else entirely, and taskkill /T it along with every one of its children. A
+    terminal, an IDE or a build would simply vanish, and the script would
+    report "stopped collector".
+
+    The process creation time is the cheap standard answer: it is fixed for
+    the life of a process and a recycled pid gets a different one. Returns
+    None when it cannot be read, which callers must treat as "cannot verify",
+    never as "matches".
+    """
+    if pid <= 0:
+        return None
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        k32 = ctypes.windll.kernel32
+        handle = k32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return None
+        try:
+            created, exited = wintypes.FILETIME(), wintypes.FILETIME()
+            kernel, user = wintypes.FILETIME(), wintypes.FILETIME()
+            if not k32.GetProcessTimes(handle, ctypes.byref(created),
+                                       ctypes.byref(exited),
+                                       ctypes.byref(kernel),
+                                       ctypes.byref(user)):
+                return None
+            return f"{created.dwHighDateTime}:{created.dwLowDateTime}"
+        finally:
+            k32.CloseHandle(handle)
+    try:  # pragma: no cover - posix
+        with open(f"/proc/{pid}/stat", encoding="ascii") as fh:
+            # Field 22 (starttime). The comm field can contain spaces, so the
+            # split has to start after its closing parenthesis.
+            return fh.read().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+
+
+def _is_ours(entry: dict | None) -> bool:
+    """True only when the recorded process is still the one we started."""
+    if not entry:
+        return False
+    pid = entry.get("pid", 0)
+    if not _alive(pid):
+        return False
+    recorded = entry.get("identity")
+    if recorded is None:
+        # Written by a build that did not record one. Unverifiable, so it is
+        # not treated as ours -- killing the wrong tree is worse than leaving
+        # a process for the operator to stop by hand.
+        return False
+    return recorded == _process_identity(pid)
+
+
 def _load_state() -> dict:
+    """name -> {"pid": int, "identity": str | None}.
+
+    Accepts the older `{"collector": 1234}` shape so an upgrade does not crash
+    on a state file written by the previous version; those entries carry no
+    identity and are therefore unverifiable.
+    """
     try:
         data = json.loads(STATE.read_text(encoding="utf-8"))
-        return {k: int(v) for k, v in data.items()}
     except (OSError, ValueError, TypeError, AttributeError):
         return {}
+    out: dict = {}
+    for name, value in (data or {}).items():
+        try:
+            if isinstance(value, dict):
+                out[name] = {"pid": int(value["pid"]),
+                             "identity": value.get("identity")}
+            else:
+                out[name] = {"pid": int(value), "identity": None}
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _record(pid: int) -> dict:
+    return {"pid": pid, "identity": _process_identity(pid)}
 
 
 def _save_state(state: dict) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    # Written via a temp file: a crash partway through a direct write leaves
+    # truncated JSON, which _load_state swallows as {} -- losing every pid and
+    # making the running stack unstoppable by this script.
+    tmp = STATE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    os.replace(tmp, STATE)
 
 
 # --- commands ----------------------------------------------------------------
@@ -156,12 +242,12 @@ def cmd_start(cfg, cycles: int | None, with_web: bool) -> int:
         sim_host = cfg.get("simulation.host", "127.0.0.1")
         sim_port = int(cfg.get("simulation.port", 35000))
         if cfg.get("adapter.type", "elm327_tcp") == "elm327_tcp":
-            if (state.get("simulator") and _alive(state["simulator"])) \
+            if _is_ours(state.get("simulator")) \
                     or _port_open(sim_host, sim_port):
                 skipped.append(f"simulator already up on {sim_host}:{sim_port}")
             else:
                 pid = _spawn("simulator", ["main.py", "simulate"])
-                state["simulator"] = pid
+                state["simulator"] = _record(pid)
                 ok = _wait_port(sim_host, sim_port)
                 started.append(
                     f"simulator pid {pid} "
@@ -172,14 +258,15 @@ def cmd_start(cfg, cycles: int | None, with_web: bool) -> int:
             skipped.append("simulator not needed "
                            f"(adapter.type = {cfg.get('adapter.type')})")
 
-        if (state.get("collector") and _alive(state["collector"])):
-            skipped.append(f"collector already running (pid {state['collector']})")
+        if _is_ours(state.get("collector")):
+            skipped.append("collector already running "
+                           f"(pid {state['collector']['pid']})")
         else:
             args = ["main.py", "collect"]
             if cycles is not None:
                 args += ["--cycles", str(cycles)]
             pid = _spawn("collector", args)
-            state["collector"] = pid
+            state["collector"] = _record(pid)
             started.append(f"collector pid {pid} -> {cfg.get('database.path')} "
                            f"(log: data/logs/collector.log)")
 
@@ -187,13 +274,13 @@ def cmd_start(cfg, cycles: int | None, with_web: bool) -> int:
         web_port = int(cfg.get("web.port", 8000))
         if not with_web:
             skipped.append("web dashboard disabled (--no-web)")
-        elif (state.get("web") and _alive(state["web"])) \
+        elif _is_ours(state.get("web")) \
                 or _port_open(_probe_host(web_host), web_port):
             skipped.append(f"web dashboard already up on "
                            f"http://{_probe_host(web_host)}:{web_port}")
         else:
             pid = _spawn("web", ["main.py", "serve"])
-            state["web"] = pid
+            state["web"] = _record(pid)
             ok = _wait_port(_probe_host(web_host), web_port)
             started.append(
                 f"web pid {pid} "
@@ -201,9 +288,12 @@ def cmd_start(cfg, cycles: int | None, with_web: bool) -> int:
                    f"FAILED to listen on {web_host}:{web_port} "
                    "(see data/logs/web.log)"))
     finally:
+        # Saved here, not after the try: if a _spawn raises partway through,
+        # the components already started would otherwise be running with no
+        # recorded pid at all -- invisible to --status, unstoppable by --stop,
+        # and still holding the serial port. Recovery was Task Manager.
+        _save_state(state)
         LOCK.unlink(missing_ok=True)
-
-    _save_state(state)
     for line in started:
         print(f"  started: {line}")
     for line in skipped:
@@ -227,12 +317,20 @@ def cmd_status(cfg) -> int:
          f"{_probe_host(web_host)}:{web_port} "
          f"listening={_port_open(_probe_host(web_host), web_port)}"),
     ]
-    for name, pid, extra in rows:
-        if pid is None:
+    for name, entry, extra in rows:
+        if entry is None:
             print(f"  {name:<10} not started by this script   {extra}")
+            continue
+        pid = entry["pid"]
+        if _is_ours(entry):
+            state_text = "alive=True"
+        elif _alive(pid):
+            # Something holds the pid, but not the process we started. Say so
+            # rather than reporting it as ours and offering to kill it.
+            state_text = "alive=True (DIFFERENT process - pid was reused)"
         else:
-            print(f"  {name:<10} pid {pid:<6} "
-                  f"alive={_alive(pid)}   {extra}")
+            state_text = "alive=False"
+        print(f"  {name:<10} pid {pid:<6} {state_text}   {extra}")
     return 0
 
 
@@ -258,16 +356,43 @@ def cmd_stop() -> int:
     if not state:
         print("Nothing recorded in data/logs/stack.json — nothing to stop.")
         return 0
-    for name, pid in state.items():
+    survivors: dict = {}
+    for name, entry in state.items():
+        pid = entry["pid"]
         if not _alive(pid):
             print(f"  {name} (pid {pid}) was not running")
+            continue
+        recorded = entry.get("identity")
+        if recorded is None:
+            # Written before identities were recorded. It may well be ours, so
+            # the record is kept rather than dropped -- but it is not killed,
+            # because an unverified pid is exactly what this guard exists for.
+            print(f"  {name} (pid {pid}) predates identity checks, so it "
+                  "cannot be confirmed as ours -- not killing it")
+            print("     stop it by hand, then delete data/logs/stack.json")
+            survivors[name] = entry
+            continue
+        if recorded != _process_identity(pid):
+            # Definitively someone else: taskkill /T here would take out that
+            # process AND all its children, and report "stopped collector".
+            print(f"  {name} (pid {pid}) is NOT the process this script "
+                  "started -- the pid was reused; ignoring it")
             continue
         _kill_tree(pid)
         deadline = time.time() + 10.0
         while time.time() < deadline and _alive(pid):
             time.sleep(0.2)
-        print(f"  {'stopped' if not _alive(pid) else 'FAILED to stop'} "
-              f"{name} (pid {pid})")
+        if _alive(pid):
+            print(f"  FAILED to stop {name} (pid {pid})")
+            survivors[name] = entry
+        else:
+            print(f"  stopped {name} (pid {pid})")
+    if survivors:
+        # Keep what is still running. Dropping the file unconditionally lost
+        # the pid of a component that had just refused to die, after which the
+        # next start saw no collector recorded and launched a second one.
+        _save_state(survivors)
+        return 1
     STATE.unlink(missing_ok=True)
     return 0
 
