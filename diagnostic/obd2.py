@@ -104,13 +104,29 @@ def parse_mode03(lines: list[str]) -> list[str]:
     payload = _payload_after(lines, b"\x43")
     if payload is None:
         return []
-    dtcs = []
+    # ISO 15765-4 (CAN) response: 43 <count> [(b1,b2) x count], where <count>
+    # is the number of DTCs reported. The count byte exists on CAN and not on
+    # the older serial protocols, and this transport is CAN-only (ATSP6/7), so
+    # it is always present.
+    #
+    # It used to be consumed as the high byte of the first DTC, which shifted
+    # every pair by one byte: '43 01 01 43' -- one DTC, P0143 -- decoded as
+    # P0101, and the real code's low byte was left dangling and dropped. Each
+    # result goes straight into upsert_dtc() and on to the dashboard and the
+    # LLM evidence packet, so this invented faults that were never set while
+    # losing the one that was.
     body = payload[1:]
-    # response: 43 + [(b1,b2) x N]; 0000 bytes are padding/empty
-    body = body[: (len(body) // 2) * 2]
+    if not body:
+        return []
+    count, body = body[0], body[1:]
+    if count == 0:
+        return []
+    body = body[: (len(body) // 2) * 2]     # whole pairs only
+    body = body[: count * 2]                # ignore any padding past the count
+    dtcs = []
     for i in range(0, len(body), 2):
         b1, b2 = body[i], body[i + 1]
-        if (b1, b2) == (0, 0):
+        if (b1, b2) == (0, 0):              # padding inside the counted region
             continue
         dtcs.append(decode_obd2_dtc(b1, b2))
     return dtcs

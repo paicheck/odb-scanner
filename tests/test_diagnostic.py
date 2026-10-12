@@ -902,6 +902,31 @@ def test_obd2_dtc_decode():
     assert obd2.decode_obd2_dtc(0x04, 0x20) == "P0420"
 
 
+def test_parse_mode03_honours_the_can_dtc_count_byte():
+    """On CAN the response is 43 <count> <pairs>, not 43 <pairs>.
+
+    The count byte was being read as the high byte of the first DTC, which
+    shifted every pair by one: the canonical worked example '43 01 01 43' --
+    one DTC, P0143 -- came back as P0101, and the real code's low byte was
+    dropped off the end. Results go straight into upsert_dtc() and on to the
+    dashboard and the LLM evidence packet, so a read-only diagnostic tool was
+    reporting faults the car never set and hiding the one it did.
+    """
+    # 7E8 04 43 01 01 43 -> one DTC, P0143
+    assert obd2.parse_mode03(["7E80443010143"]) == ["P0143"]
+    # 7E8 06 43 02 01 43 01 96 -> two DTCs
+    assert obd2.parse_mode03(["7E806430201430196"]) == ["P0143", "P0196"]
+
+
+def test_parse_mode03_reports_no_faults_as_an_empty_list():
+    """count 0 means a clean car; the padding must not decode as a DTC."""
+    # What the simulator sends: 02 43 00 + padding.
+    assert obd2.parse_mode03(["7E8024300 0000"]) == []
+    assert obd2.parse_mode03(["7E8024300"]) == []
+    # Padding past the counted region is ignored rather than decoded.
+    assert obd2.parse_mode03(["7E8044301014300 00"]) == ["P0143"]
+
+
 # --- VAG DTC ------------------------------------------------------------------
 def test_vag_dtc_decode():
     # U1123 00: letter U (11b), first digit 1, second 1 -> 0xD1, then 0x23,
