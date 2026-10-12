@@ -11,22 +11,80 @@ The deeper source of truth (raw evidence, source logs, provenance) is
 
 ## 1. What we need from you
 
+**Status: the BMS path is solved.** On 2026-10-12 the matrix produced this
+project's first BMS answer — see §1.1. The remaining work is the 11-bit
+modules (energy, climate), which are a separate and narrower problem.
+
 The symptom is **not** one problem. The wire log splits it cleanly into two
 independent tracks (§4), and the plan should treat them separately:
 
-- **Track A — car-dependent.** The BMS receives our requests and stays silent.
-  Needs an ordered, read-only experiment plan on the car (§6, §8).
-- **Track B — car-independent.** Four of the five modules are refused by the
-  *adapter* before anything reaches the bus. This is our own transport defect and
-  is reproducible offline against the built-in simulator, **no car required.**
+- **Track A — BMS/DC-DC/vehicle-info (29-bit).** **Solved.** The clone's
+  default CAN receive filter silently drops `17FExxxx` responses while
+  accepting `18DAF1xx` functional ones. `ATCRA <response-id>` per module
+  fixes it. Implemented in `set_module()`.
+- **Track B — energy/climate (11-bit).** Still refused with `?`. The
+  header-width theory (EXP-17) was tested and **refuted** on the car.
+  Needs further experiment.
 
-Deliver: an ordered experiment plan for Track A, a debugging plan for Track B, and
-a decision tree mapping each outcome → the minimal code change → how to re-verify.
+Deliver: an ordered experiment plan for Track B, and a decision tree mapping
+each outcome → the minimal code change → how to re-verify.
 No code changes before an experiment discriminates; nothing added to the
 collector's init blindly.
 
 Acceptance target (reference doc §9): `pack_voltage` (DID `0x1E3B`, `u16/4`) within
 one LSB (0.25 V) of the Car Scanner band 431.25–431.75 V, across ≥3 readings.
+
+---
+
+## 1.1 The BMS answer (2026-10-12, first ever)
+
+The matrix run against the car produced the first BMS answer this project
+has had:
+
+```
+=== EXP-15: BMS DID 0x028C (SoC) with ATCRA 17FE007B ===
+TX: ATCRA 17FE007B  (receive filter = BMS response id)
+  RX: OK
+TX: 0322028C55555555  (BMS DID 0x028C after ATCRA)
+  RX: 17FE007B0462028CB3AAAAAA
+  ANSWERED: 62028CB3
+```
+
+`62028CB3` — positive response to DID `0x028C` (SoC), data byte `0xB3` = 179
+→ **71.6 %** (evDash `byte/2.5` fit). The car was parked and collecting, so
+SoC has dropped from the morning's 81.2 % — consistent.
+
+**Root cause.** The clone's default CAN receive filter accepts functional OBD
+responses (`18DAF1xx`) but silently drops MEB module responses (`17FExxxx`).
+Every MEB read was transmitted correctly and the answer was discarded by the
+adapter. `ATCRA0` (sent during init) was ignored, which is why warm-up frames
+arrived — but `ATCRA <id>` is fully implemented. Car Scanner does the same
+per-PID start commands (`ATCRA7E8,ATFCSH7E0,...`), which is the one thing it
+does that this transport did not.
+
+**Fix.** `set_module()` now takes the module's `rx29` and programs
+`ATCRA <rx29>` after the header. Restoring functional addressing sends plain
+`ATCRA` to clear the filter, or every later mode-01 read would time out.
+
+**What the same matrix ruled out** (all on the car, same run):
+
+| Arm | Result | Conclusion |
+|---|---|---|
+| EXP-6 `ATBI` | NO DATA | not the blocker |
+| EXP-7 session `10 01` | `?` on the session frame | clone refuses it; not the blocker |
+| EXP-7b tester-present | `?` | not the blocker |
+| EXP-8 everything | NO DATA (pre-ATCRA) | combination is not it |
+| EXP-14 `ATCF 17FE7` | `?` on ATCF | clone refuses it; not the blocker |
+| **EXP-15 `ATCRA`** | **answered** | **the filter was the whole BMS problem** |
+| EXP-16 full config | answered | confirms; no other variable needed |
+| EXP-17 3-digit `ATSH` | `?` | **header width refuted** for 11-bit modules |
+| EXP-9 energy 6-digit | `?` | energy/climate still refused — separate issue |
+| EXP-12 BMS on 11-bit `0x7E5` | `?` | BMS is 29-bit only, as mapped |
+| EXP-11 functional `0x22` | NO DATA | gateway does not route, as expected |
+
+The simulator answers every DID the car refuses, which is what made this
+findable: the harness is sound, and the `?`/`NO DATA` split was always about
+the adapter, not the wire form.
 
 ---
 
