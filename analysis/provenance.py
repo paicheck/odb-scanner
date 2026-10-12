@@ -26,13 +26,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from database.repository import IMPORTED_PREFIX
+
 # How old a vehicle reading may be and still be called live. Deliberately
 # generous: the collector's slow DIDs (cell voltages, energy content) only run
 # every collector.slow_poll_interval, so a tighter bound would report healthy
 # data as stale between polls.
 DEFAULT_STALE_AFTER_S = 900.0
 
-IMPORTED_PREFIX = "imported"
+# Imported-row marker, owned by database/repository.py so the query filter and
+# the state machine cannot drift into disagreeing about what counts as imported.
+IMPORTED_PREFIX = IMPORTED_PREFIX
 
 # Per-cell and per-sensor keys are rolled up: the registry carries 108 cell
 # voltage specs, and listing them individually would bury the other rows.

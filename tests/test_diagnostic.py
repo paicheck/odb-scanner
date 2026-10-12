@@ -1076,6 +1076,62 @@ def test_latest_measurements_respects_max_age(repo):
     assert got["pack_voltage"]["value"] == 351.0
 
 
+def test_latest_measurements_live_only_excludes_imported_rows(repo):
+    """live_only=True must drop imported evidence from the carry-forward path.
+
+    Regression: the provenance filter was added with the wrong number of SQL
+    bindings -- the provenance value was extended into the arg list twice, so
+    `live_only=True` raised "Incorrect number of bindings" whenever a cutoff was
+    also present. The bug only appeared on the collector's live_only path and
+    only when max_age_s was set, which is exactly the combination the collector
+    uses, so every call site that mattered was broken while the default path
+    (live_only=False, empty provenance list) kept working and hid it.
+
+    This exercises all four combinations of (cutoff present/absent) x
+    (live_only true/false) so the binding order is pinned, not assumed.
+    """
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    recent = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    old = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(
+        timespec="seconds")
+
+    # A genuine reading and an imported one for the same key, both recent.
+    repo.record_measurement(vid, recent, "pack_voltage", "bat_mgmt", "UDS-0x22",
+                            "0x1E3B", "V", "reported", "builtin", "documented",
+                            "1A2B", 431.25)
+    repo.record_measurement(vid, recent, "soc_abs", "bat_mgmt", "UDS-0x22",
+                            "0x028C", "%", "imported: Car Scanner CSV",
+                            "carscanner-export", "inferred", "csv-line", 81.2)
+
+    # 1. No cutoff, live_only=False: both keys present (imported included).
+    all_rows = repo.latest_measurements(vid)
+    assert "pack_voltage" in all_rows and "soc_abs" in all_rows
+
+    # 2. No cutoff, live_only=True: imported soc_abs excluded, reported kept.
+    live = repo.latest_measurements(vid, live_only=True)
+    assert "pack_voltage" in live
+    assert "soc_abs" not in live, "imported row leaked into the live-only view"
+
+    # 3. With cutoff, live_only=False: the binding count that used to break.
+    bounded = repo.latest_measurements(vid, max_age_s=60)
+    assert "pack_voltage" in bounded and "soc_abs" in bounded
+
+    # 4. With cutoff AND live_only=True: both optional clauses present at once.
+    #    This is the collector's actual call shape and the one that raised.
+    bounded_live = repo.latest_measurements(vid, max_age_s=60, live_only=True)
+    assert "pack_voltage" in bounded_live
+    assert bounded_live["pack_voltage"]["value"] == 431.25
+    assert "soc_abs" not in bounded_live
+
+    # An old reported row is excluded by the cutoff regardless of provenance.
+    repo.record_measurement(vid, old, "battery_temp", "bat_mgmt", "UDS-0x22",
+                            "0x2A0B", "degC", "reported", "builtin",
+                            "documented", "78", 20.0)
+    assert "battery_temp" in repo.latest_measurements(vid, live_only=True)
+    assert "battery_temp" not in repo.latest_measurements(
+        vid, max_age_s=60, live_only=True)
+
+
 def test_raw_response_preserved(repo):
     vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
     repo.record_measurement(vid, "2026-09-01T10:00:00+00:00", "k", "ecu",

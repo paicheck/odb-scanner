@@ -12,6 +12,12 @@ from .models import SCHEMA_SQL, SCHEMA_VERSION
 
 log = logging.getLogger(__name__)
 
+# Rows whose provenance starts with this were NOT measured by this tool. The
+# canonical list lives here because the data layer owns the provenance
+# vocabulary; analysis/provenance.py imports it rather than restating it, so
+# the two cannot drift into disagreeing about what counts as imported.
+IMPORTED_PREFIX = "imported"
+
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -242,7 +248,8 @@ class Repository:
         ).fetchall()
 
     def latest_measurements(self, vehicle_id: int,
-                            max_age_s: float | None = None) -> dict:
+                            max_age_s: float | None = None,
+                            live_only: bool = False) -> dict:
         """Most recent successful value per key.
 
         `max_age_s` bounds how old a cached value may be and still be returned.
@@ -266,24 +273,55 @@ class Repository:
         if max_age_s is None:
             cutoff = None
             inner_age = ""
-            args: tuple = (vehicle_id,)
         else:
             cutoff = (datetime.now(timezone.utc)
                       - timedelta(seconds=max_age_s)).isoformat(
                           timespec="seconds")
             inner_age = "AND m2.ts >= ?"
-            args = (vehicle_id, cutoff, cutoff)
+        # Carried-forward values feed derived numbers -- pack power, SoH,
+        # charging detection -- so a row this tool did not measure must
+        # never stand in for one it did. An imported Car Scanner export is
+        # evidence about the car, not a reading of it by us, and the age
+        # bound alone does not exclude it: a re-import of a session taken
+        # an hour ago lands inside any reasonable bound and would be
+        # silently re-stamped as ours.
+        #
+        # Both the outer row and the inner "latest" lookup must exclude it.
+        # Excluding only the inner one would let an imported outer row pair
+        # with a genuine inner row, mixing two different epochs in one
+        # result.
+        if live_only:
+            outer_prov = "AND m.provenance NOT LIKE ? "
+            inner_prov = "AND m2.provenance NOT LIKE ? "
+            prov_arg: str | None = IMPORTED_PREFIX + "%"
+        else:
+            outer_prov = ""
+            inner_prov = ""
+            prov_arg = None
+        # Arg order must follow the clause order in the query below exactly:
+        # vehicle_id, [outer cutoff], [outer prov], [inner cutoff], [inner
+        # prov]. Each optional clause contributes one binding only when present.
+        args: list = [vehicle_id]
+        if cutoff is not None:
+            args.append(cutoff)
+        if prov_arg is not None:
+            args.append(prov_arg)
+        if cutoff is not None:
+            args.append(cutoff)
+        if prov_arg is not None:
+            args.append(prov_arg)
         rows = self.conn.execute(
             "SELECT key, value, text_value, unit, provenance, ts, doc_status "
             "FROM measurements m "
-            "WHERE vehicle_id=? AND success=1 "
+            "WHERE m.vehicle_id=? AND m.success=1 "
             + ("" if cutoff is None else "AND m.ts >= ? ")
+            + outer_prov
             + "AND id = (SELECT m2.id FROM measurements m2 "
             "             WHERE m2.vehicle_id = m.vehicle_id "
             "               AND m2.key = m.key AND m2.success=1 "
-            + inner_age +
+            + inner_age + inner_prov +
             "             ORDER BY m2.ts DESC, m2.id DESC LIMIT 1)",
-            args,
+            tuple(args),
         ).fetchall()
         return {r["key"]: dict(r) for r in rows}
 

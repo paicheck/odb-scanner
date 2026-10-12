@@ -427,7 +427,8 @@ class Collector:
         # mix fresh and week-old readings -- which then becomes the baseline
         # that anomaly.py compares against.
         latest = self.repo.latest_measurements(self.vehicle_id,
-                                               max_age_s=self.max_value_age_s)
+                                               max_age_s=self.max_value_age_s,
+                                               live_only=True)
 
         def val(key, field=None):
             if key in snap:
@@ -491,7 +492,8 @@ class Collector:
             # missed read must not resurrect the mode from days ago and hold a
             # charging session open (or close a live one) on stale evidence.
             latest = self.repo.latest_measurements(
-                self.vehicle_id, max_age_s=self.max_value_age_s)
+                self.vehicle_id, max_age_s=self.max_value_age_s,
+                live_only=True)
             m = latest.get("charge_mode")
             mode = m["value"] if m else None
         charging = mode in (1, 2, 3)
