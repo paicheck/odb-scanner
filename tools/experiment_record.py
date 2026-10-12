@@ -289,6 +289,37 @@ ARMS: list[Arm] = [
         data_rate="n/a (classical CAN)",
         addressing="ATSH 0710 (energy, 11-bit, 3-digit) / ATCP 00",
     ),
+    Arm(
+        exp_id="EXP-18",
+        hypothesis="The energy module (11-bit) needs its receive filter pinned "
+                   "to its response ID (0x77A), just like the BMS needed "
+                   "ATCRA 17FE007B. Without it, the adapter discards the "
+                   "0x77A response and the request appears as '?' (adapter "
+                   "refusal) or NO DATA. Car Scanner sends ATCRA per-PID.",
+        request="ATSP6, ATCP 00, ATSH 000710, ATCAF0, ATCRA 0000077A, then "
+                "03 22 2A B8 55 x8",
+        expected="62 2A B8 <data> from 0x77A. A '?' means the filter was not "
+                 "the issue. NO DATA means the request transmitted but the "
+                 "module is silent.",
+        config=["ATSP6", "ATCP 00", "ATSH 000710", "ATCAF0", "ATCRA 0000077A"],
+        can_mode="ATSP6 (CAN 11/500)", bitrate="500 kbit/s",
+        data_rate="n/a (classical CAN)",
+        addressing="ATSH 000710 (energy, 11-bit) / ATCP 00 / ATCRA 0000077A",
+    ),
+    Arm(
+        exp_id="EXP-19",
+        hypothesis="The climate module (11-bit) needs its receive filter pinned "
+                   "to its response ID (0x7B0), same pattern as energy and BMS.",
+        request="ATSP6, ATCP 00, ATSH 000746, ATCAF0, ATCRA 000007B0, then "
+                "03 22 26 09 55 x8",
+        expected="62 26 09 <data> from 0x7B0. A '?' means the filter was not "
+                 "the issue. NO DATA means the request transmitted but the "
+                 "module is silent.",
+        config=["ATSP6", "ATCP 00", "ATSH 000746", "ATCAF0", "ATCRA 000007B0"],
+        can_mode="ATSP6 (CAN 11/500)", bitrate="500 kbit/s",
+        data_rate="n/a (classical CAN)",
+        addressing="ATSH 000746 (climate, 11-bit) / ATCP 00 / ATCRA 000007B0",
+    ),
 ]
 
 # Arms whose job is to change exactly one thing about the baseline. Kept as a

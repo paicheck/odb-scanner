@@ -469,6 +469,97 @@ def test_energy_module_11bit_3digit_header(t: Elm327Transport) -> None:
     send_raw(t, f"ATSP{PINNED_PROTOCOL}", "restore 29-bit")
 
 
+def test_energy_module_11bit_3digit_header(t: Elm327Transport) -> None:
+    """EXP-17: Energy module with a 3-digit ATSH under ATSP6.
+
+    Under protocol 6 (11-bit) the ELM327 specifies a 3-digit header, but
+    set_module() always sends the 6-digit MEB form ('ATSH 000710'). The clone
+    accepts it -- no '?' on the AT command itself -- and then refuses the data
+    frame with '?'. The simulator (a proper ELM327 emulation) answers anyway,
+    which is why the suite stays green while the car refuses.
+
+    This arm isolates the header width as the single variable: same protocol,
+    same ATCP, same CAF, same frame. Only ATSH 0710 vs ATSH 000710 differs.
+    """
+    begin("EXP-17")
+    log("=== EXP-17: Energy module 0x710 with 3-digit ATSH ===")
+    send_raw(t, "ATSP6", "11-bit protocol")
+    send_raw(t, "ATCP 00", "priority 0x00")
+    send_raw(t, "ATSH 0710", "energy module header (3-digit, as ATSP6 specifies)")
+    send_raw(t, "ATCAF0", "disable CAF")
+
+    payload = "222AB8"
+    wire = f"03{payload}5555555555555555"[:16]
+    send_raw(t, wire, "Energy 0x2AB8 (3-digit header)")
+
+    payload = "222AB2"
+    wire = f"03{payload}5555555555555555"[:16]
+    send_raw(t, wire, "Energy 0x2AB2 (3-digit header)")
+
+    payload = "222AF7"
+    wire = f"03{payload}5555555555555555"[:16]
+    send_raw(t, wire, "Energy 0x2AF7 (3-digit header)")
+
+    send_raw(t, f"ATSP{PINNED_PROTOCOL}", "restore 29-bit")
+
+
+def test_energy_module_with_atcra(t: Elm327Transport) -> None:
+    """EXP-18: Energy module (11-bit) with receive filter pinned to 0x77A.
+
+    The BMS breakthrough proved the clone's default filter drops 17FExxxx
+    responses. The energy module responds at 0x77A (11-bit). If the filter
+    isn't pinned to 0x77A, the response is discarded and the frame is refused
+    with '?'. This arm adds ATCRA 0000077A before the DID reads.
+    """
+    begin("EXP-18")
+    log("=== EXP-18: Energy module 0x710 with ATCRA 0000077A ===")
+    send_raw(t, "ATSP6", "11-bit protocol")
+    send_raw(t, "ATCP 00", "priority 0x00")
+    send_raw(t, "ATSH 000710", "energy module header (6-digit form)")
+    send_raw(t, "ATCAF0", "disable CAF")
+    send_raw(t, "ATCRA 0000077A", "pin receive filter to energy response id")
+
+    payload = "222AB8"
+    wire = f"03{payload}5555555555555555"[:16]
+    send_raw(t, wire, "Energy 0x2AB8 (with ATCRA)")
+
+    payload = "222AB2"
+    wire = f"03{payload}5555555555555555"[:16]
+    send_raw(t, wire, "Energy 0x2AB2 (with ATCRA)")
+
+    payload = "222AF7"
+    wire = f"03{payload}5555555555555555"[:16]
+    send_raw(t, wire, "Energy 0x2AF7 (with ATCRA)")
+
+    send_raw(t, f"ATSP{PINNED_PROTOCOL}", "restore 29-bit")
+
+
+def test_climate_module_with_atcra(t: Elm327Transport) -> None:
+    """EXP-19: Climate module (11-bit) with receive filter pinned to 0x7B0.
+
+    Same pattern as energy: climate responds at 0x7B0. Without ATCRA the
+    response is discarded. Car Scanner's per-PID start commands include
+    ATCRA for every module.
+    """
+    begin("EXP-19")
+    log("=== EXP-19: Climate module 0x746 with ATCRA 000007B0 ===")
+    send_raw(t, "ATSP6", "11-bit protocol")
+    send_raw(t, "ATCP 00", "priority 0x00")
+    send_raw(t, "ATSH 000746", "climate module header")
+    send_raw(t, "ATCAF0", "disable CAF")
+    send_raw(t, "ATCRA 000007B0", "pin receive filter to climate response id")
+
+    payload = "222609"
+    wire = f"03{payload}5555555555555555"[:16]
+    send_raw(t, wire, "Climate 0x2609 (with ATCRA)")
+
+    payload = "222613"
+    wire = f"03{payload}5555555555555555"[:16]
+    send_raw(t, wire, "Climate 0x2613 (with ATCRA)")
+
+    send_raw(t, f"ATSP{PINNED_PROTOCOL}", "restore 29-bit")
+
+
 def test_dcdc_module_29bit(t: Elm327Transport) -> None:
     """EXP-10: DC/DC module (0x17FC00B9) on 29-bit addressing"""
     begin("EXP-10")
@@ -617,6 +708,14 @@ def run_all_experiments(tcp=None):
             # Energy module with a 3-digit header -- isolates header width as
             # the single variable against the 6-digit form above.
             test_energy_module_11bit_3digit_header(t)
+            time.sleep(0.2)
+
+            # Energy module with receive filter pinned to 0x77A.
+            test_energy_module_with_atcra(t)
+            time.sleep(0.2)
+
+            # Climate module with receive filter pinned to 0x7B0.
+            test_climate_module_with_atcra(t)
             time.sleep(0.2)
 
             # DC/DC module (29-bit)
