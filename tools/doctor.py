@@ -38,6 +38,10 @@ sys.path.insert(0, str(ROOT))
 
 from config import ConfigError, load_config  # noqa: E402
 from diagnostic import obd2, uds  # noqa: E402
+from diagnostic.discovery import (  # noqa: E402
+    DeviceClass,
+    discover_and_classify,
+)
 from diagnostic.elm327 import (  # noqa: E402
     PINNED_PROTOCOL,
     Elm327Transport,
@@ -46,7 +50,6 @@ from diagnostic.elm327 import (  # noqa: E402
 from diagnostic.interface import (  # noqa: E402
     AdapterNotFoundError,
     CommunicationError,
-    detect_serial_ports,
 )
 
 OK, WARN, FAIL, SKIP = "OK", "WARN", "FAIL", "SKIP"
@@ -165,28 +168,39 @@ class Doctor:
         if self.tcp:
             s.line("skipped (TCP mode)")
             return s
-        ports = detect_serial_ports()
-        if not ports:
+        # Discovery classifies each port from its real enumerated metadata
+        # (VID/PID, reported product strings) rather than guessing. A port is
+        # never treated as an OBD adapter just because it exists: the class and
+        # the evidence level say how much is actually known.
+        classified = discover_and_classify()
+        if not classified:
             s.warn("pyserial reports no serial ports at all")
             s.note("On Windows, check Device Manager > Ports (COM & LPT). "
                    "An unpaired Bluetooth SPP port does not appear here.")
             return s
         wanted = self.port_override or self.cfg.get("adapter.port", "auto")
-        for p in ports:
-            mark = "  <-- configured" if p["port"] == wanted else ""
-            s.line(f"{p['port']:<8} {p['description']}{mark}")
-        s.data["ports"] = [p["port"] for p in ports]
+        for c in classified:
+            d = c.device
+            mark = "  <-- configured" if d.port == wanted else ""
+            vidpid = (f"  VID:PID={d.vid:04X}:{d.pid:04X}"
+                      if d.vid is not None and d.pid is not None else "")
+            s.line(f"{d.port:<8} [{c.device_class.value}] "
+                   f"{d.description}{vidpid}{mark}")
+            s.line(f"{'':8} evidence={c.evidence.value}: {c.reason}")
+            if c.device_class == DeviceClass.VENDOR_SPECIFIC:
+                s.warn(f"{d.port} is a vendor-specific interface; it will NOT "
+                       "work as an ELM327 serial adapter")
+        s.data["ports"] = [c.device.port for c in classified]
+        s.data["classified"] = classified
 
         if wanted not in ("auto", None, "") and wanted not in s.data["ports"]:
             # The single most common cause of "it doesn't connect": a COM port
             # that does not exist, or the wrong half of a Bluetooth pair.
-            bt = [p for p in ports if "bluetooth" in p["description"].lower()
-                  or "standard serial over bluetooth" in
-                  p["description"].lower()]
+            bt = [c.device.port for c in classified
+                  if c.device_class == DeviceClass.BLUETOOTH_SPP]
             s.fail(f"{wanted} is not present")
             if bt:
-                s.note("Bluetooth SPP ports visible: "
-                       + ", ".join(p["port"] for p in bt))
+                s.note("Bluetooth SPP ports visible: " + ", ".join(bt))
                 s.note("Windows creates TWO ports per Bluetooth serial "
                        "device: the OUTGOING one carries your bytes and the "
                        "INCOMING one does not. Connecting to the incoming "

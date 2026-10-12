@@ -68,6 +68,19 @@ OBD_PID_KEYS = {
 }
 
 
+def _int_hint(value) -> int | None:
+    """Parse an optional VID/PID config hint. Accepts an int or a hex string
+    ("0x0403" / "0403"); anything unusable is None, never a crash."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value), 0)
+    except (TypeError, ValueError):
+        return None
+
+
 def build_transport(cfg):
     a = cfg
     if a.get("adapter.type") == "elm327_tcp":
@@ -80,6 +93,11 @@ def build_transport(cfg):
         port=a.get("adapter.port", "auto"),
         baudrate=int(a.get("adapter.baudrate", 38400)),
         timeout=float(a.get("adapter.timeout", 5.0)),
+        # Optional discovery hints. They prioritise matching devices during
+        # auto-detection but never bypass the ATI probe, so a stale or wrong
+        # hint degrades to the normal behaviour rather than mis-selecting.
+        vid_hint=_int_hint(a.get("adapter.vid")),
+        pid_hint=_int_hint(a.get("adapter.pid")),
     )
 
 

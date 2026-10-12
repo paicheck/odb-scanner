@@ -26,6 +26,16 @@ adapter:
   timeout: 5.0
   tcp_host: "127.0.0.1"
   tcp_port: 35000
+  # Optional discovery hints, used only when port is "auto". They PRIORITISE a
+  # matching device during the scan; they never bypass the ATI probe, so a wrong
+  # hint just changes the order ports are tried. Accepts an int or hex string.
+  #
+  # A hint is a chip/product identifier, NOT proof of OBD support. VID 0403 is
+  # FTDI, a chip vendor shared by thousands of unrelated products (and by some
+  # Ross-Tech HEX interfaces) -- it identifies the chip, never the protocol.
+  # Run `python tools/discover_adapters.py` to see real VID/PID values first.
+  # vid: 0x1A86             # e.g. a CH340-based USB adapter
+  # pid: 0x7523
 
 collector:
   poll_interval: 5.0        # fast poll (battery) seconds

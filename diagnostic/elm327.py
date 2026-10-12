@@ -31,7 +31,6 @@ from .interface import (
     AdapterNotFoundError,
     CommunicationError,
     OBDInterface,
-    detect_serial_ports,
 )
 
 log = logging.getLogger(__name__)
@@ -55,12 +54,21 @@ class Elm327Transport(OBDInterface):
         timeout: float = 5.0,
         host: str | None = None,
         tcp_port: int | None = None,
+        vid_hint: int | None = None,
+        pid_hint: int | None = None,
     ) -> None:
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
         self.host = host
         self.tcp_port = tcp_port
+        # Optional VID/PID hints from config. These PRIORITISE matching devices
+        # during auto-detection; they never verify protocol on their own (a
+        # VID/PID match still has to answer ATI). A hint identifying a chip
+        # vendor such as FTDI (0403) says nothing about whether the device
+        # speaks OBD -- see diagnostic/discovery.py.
+        self.vid_hint = vid_hint
+        self.pid_hint = pid_hint
         self._dev = None
         self._opened = False
         self.identity = "unknown"
@@ -114,14 +122,55 @@ class Elm327Transport(OBDInterface):
             raise AdapterNotFoundError(f"Cannot open {port}: {exc}") from exc
         log.info("Opened serial adapter %s @ %d baud", port, self.baudrate)
 
-    def _autodetect_serial(self) -> str:  # pragma: no cover - needs hardware
+    def _autodetect_serial(self) -> str:
+        """Find an ELM327-class adapter by enumerating, classifying, probing.
+
+        Discovery (diagnostic/discovery.py) enumerates the real serial
+        interfaces and classifies each from its metadata. Vendor-specific
+        interfaces are skipped: they will not answer ATI, and probing one only
+        wastes time and mislabels the failure. Candidates are probed in
+        confidence order and the first that answers ATI with an ELM327-family
+        identity wins.
+
+        The ATI probe is what makes this safe for the Bluetooth Veepeak:
+        Windows enumerates TWO ports per Bluetooth serial device and only the
+        OUTGOING one carries bytes. Metadata alone cannot tell them apart --
+        both look identical -- so an actual exchange is the only way to pick
+        the working one. Classification narrows the field; verification chooses
+        within it.
+        """
         try:
             import serial
         except ImportError as exc:
             raise AdapterNotFoundError("pyserial not installed") from exc
-        for info in detect_serial_ports():
+        from .discovery import DeviceClass, discover_and_classify
+
+        classified = discover_and_classify()
+        order = {DeviceClass.ELM327_USB_SERIAL: 0, DeviceClass.BLUETOOTH_SPP: 1,
+                 DeviceClass.USB_SERIAL_OTHER: 2, DeviceClass.UNKNOWN: 3}
+
+        def hint_rank(c) -> int:
+            """0 for a device matching the configured VID/PID hint, else 1.
+
+            Hints only reorder the probe; they do not select. A hinted device
+            still has to answer ATI, so a wrong hint cannot make a dead port
+            win -- it just gets tried first.
+            """
+            if self.vid_hint is None and self.pid_hint is None:
+                return 1
+            d = c.device
+            matches = ((self.vid_hint is None or d.vid == self.vid_hint)
+                       and (self.pid_hint is None or d.pid == self.pid_hint))
+            return 0 if matches else 1
+
+        candidates = sorted(
+            (c for c in classified
+             if c.device_class != DeviceClass.VENDOR_SPECIFIC),
+            key=lambda c: (hint_rank(c), order.get(c.device_class, 4)))
+        for c in candidates:
+            port = c.device.port
             try:
-                dev = serial.Serial(info["port"], self.baudrate, timeout=0.5)
+                dev = serial.Serial(port, self.baudrate, timeout=0.5)
             except (serial.SerialException, OSError):
                 continue
             try:
@@ -129,7 +178,7 @@ class Elm327Transport(OBDInterface):
                 resp = self.send_command("ATI")
                 ident = " ".join(resp).upper()
                 if any(h in ident for h in _ADAPTER_HINTS):
-                    return info["port"]
+                    return port
             except CommunicationError:
                 pass
             finally:
@@ -139,9 +188,13 @@ class Elm327Transport(OBDInterface):
                     dev.close()
                 except Exception:
                     pass
+        found = ", ".join(f"{c.device.port}[{c.device_class.value}]"
+                          for c in classified) or "none"
         raise AdapterNotFoundError(
-            "No ELM327-compatible adapter found. Set adapter.port in config.yaml "
-            "to the COM port of your device (see Windows Device Manager)."
+            "No ELM327-compatible adapter answered ATI. Serial interfaces "
+            f"found: {found}. Set adapter.port in config.yaml to the COM port "
+            "of your device (see Windows Device Manager), or run "
+            "python tools/discover_adapters.py to inspect them."
         )
 
     def close(self) -> None:
