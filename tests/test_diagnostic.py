@@ -438,6 +438,61 @@ def test_draining_before_a_write_does_not_eat_the_current_answer():
     assert t.send_command("ATI") == ["OK"]
 
 
+def test_set_module_programs_the_receive_filter():
+    """The clone's default filter silently drops 17FExxxx module responses.
+
+    The car proved this: 'ATCRA 17FE007B' produced the first BMS answer this
+    project has had (62 02 8C B3, SoC 71.6 %). Without the filter pinned to
+    the module's response id, the request is transmitted correctly and the
+    answer is discarded -- indistinguishable from a silent module.
+    """
+    stub = _StubTransport()
+    from diagnostic.elm327 import Elm327Transport
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t.meb_addressing = True
+    t._meb_module = None
+
+    assert t.set_module(0x17FC007B, 0x17FE007B) is True
+    assert "ATCRA 17FE007B" in stub.sent, (
+        "the receive filter was not pinned to the module's response id")
+
+    # A second call for the same module must not re-send it.
+    stub.sent.clear()
+    assert t.set_module(0x17FC007B, 0x17FE007B) is True
+    assert "ATCRA" not in stub.sent
+
+    # Switching module re-pins the filter.
+    stub.sent.clear()
+    assert t.set_module(0x17FC00B9, 0x17FE00B9) is True
+    assert "ATCRA 17FE00B9" in stub.sent
+
+
+def test_restoring_functional_addressing_clears_the_filter():
+    """A pinned filter must not outlive the module read.
+
+    If the filter stayed at 17FE007B, every later functional read (mode 01
+    answers from 18DAF1xx) would time out -- a silent bus, looking exactly
+    like the vehicle-asleep condition the collector already reports.
+    """
+    stub = _StubTransport()
+    from diagnostic.elm327 import Elm327Transport
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t.meb_addressing = True
+    t._meb_module = None
+
+    assert t.set_module(0x17FC007B, 0x17FE007B) is True
+    assert t._atcra == 0x17FE007B
+
+    stub.sent.clear()
+    assert t.set_module(None) is True
+    assert "ATCRA" in stub.sent, "the filter was not restored"
+    assert stub.sent.count("ATCRA") == 1, (
+        "plain ATCRA (no argument) must be the form that clears it")
+    assert t._atcra is None
+
+
 def test_set_module_switches_header_and_caf_mode():
     stub = _StubTransport()
     from diagnostic.elm327 import Elm327Transport
@@ -1873,7 +1928,7 @@ def test_the_tx_log_records_the_bytes_that_went_on_the_wire():
         def __init__(self):
             self.sent: list[str] = []
 
-        def set_module(self, target):
+        def set_module(self, target, rx29=None):
             return target is not None
 
         def send_command(self, wire):

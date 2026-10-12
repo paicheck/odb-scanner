@@ -270,6 +270,25 @@ ARMS: list[Arm] = [
         can_mode=MEB["can_mode"], bitrate=MEB["bitrate"],
         data_rate=MEB["data_rate"], addressing=MEB["addressing"],
     ),
+    Arm(
+        exp_id="EXP-17",
+        hypothesis="Under ATSP6 (11-bit) the ELM327 expects a 3-digit header, "
+                   "but we send 6-digit 'ATSH 000710'. The clone accepts it "
+                   "and then refuses the data frame with '?'. A 3-digit "
+                   "'ATSH 0710' is the form the protocol actually specifies "
+                   "for 11-bit, so if this answers where EXP-9 was refused, "
+                   "the 6-digit header is the Track B defect.",
+        request="ATSP6, ATCP 00, ATSH 0710 (3-digit), ATCAF0, then "
+                "03 22 2A B8 55 x8",
+        expected="62 2A B8 <data> from 0x77A, or NO DATA if the clone still "
+                 "refuses the frame. A '?' here means the clone accepts the "
+                 "3-digit header but still refuses the frame, which would "
+                 "point at the frame itself rather than the header.",
+        config=["ATSP6", "ATCP 00", "ATSH 0710", "ATCAF0"],
+        can_mode="ATSP6 (CAN 11/500)", bitrate="500 kbit/s",
+        data_rate="n/a (classical CAN)",
+        addressing="ATSH 0710 (energy, 11-bit, 3-digit) / ATCP 00",
+    ),
 ]
 
 # Arms whose job is to change exactly one thing about the baseline. Kept as a

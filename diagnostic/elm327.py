@@ -78,6 +78,10 @@ class Elm327Transport(OBDInterface):
         self._meb_module: int | None = None   # None = functional addressing
         self._caf = 1                          # CAN auto-formatting on/off
         self._proto = PINNED_PROTOCOL          # active ATSP protocol
+        # CAN receive filter currently programmed (None = default/unknown).
+        # The clone's default filter silently drops 17FExxxx module responses,
+        # so a module read must pin this to the module's response id.
+        self._atcra: int | None = None
         # Set when the link may be holding an unanswered request, so the next
         # send_command drains before writing. See _drain_input.
         self._needs_drain = False
@@ -217,6 +221,7 @@ class Elm327Transport(OBDInterface):
         self._caf = None        # unknown, not "off": this adapter is gone
         self._proto = None
         self._meb_module = None
+        self._atcra = None
 
     # -- raw line I/O -------------------------------------------------------
     def send_command(self, command: str) -> list[str]:
@@ -448,22 +453,21 @@ class Elm327Transport(OBDInterface):
         # to CAN id 0x000. An earlier comment here called it a "best-effort
         # accept-all filter", which was simply wrong.
         #
-        # It is nevertheless harmless on this adapter, and that is measured
-        # rather than assumed: this is issued during initialize(), and the OBD
-        # warm-up immediately after still returns live frames
-        # (18DAF10506410098180001 ...), which a filter on 0x000 would suppress.
-        # So this clone ignores CRA outright. An earlier field note records that
-        # it refuses the plain `ATCRA` that clears a filter, which is consistent
-        # with that: neither form is implemented.
+        # It used to be harmless here, and that was measured rather than
+        # assumed: the warm-up after this still returned live frames, which a
+        # filter on 0x000 would suppress, so this clone was taken to ignore
+        # CRA outright. The car has since disproved that. In the 2026-10-12
+        # matrix, 'ATCRA 17FE007B' produced this project's first BMS answer
+        # (62 02 8C B3), which means CRA is fully implemented and was
+        # silently discarding every 17FExxxx response up to that point.
+        # Warm-up frames arrive on 18DAF1xx, a different id range, so they
+        # were never evidence about the module filter at all.
         #
-        # The per-module values that DO reach this bus, per spot2000 (the only
-        # source that states ATCRA per DID), are the module's own response id:
-        # BMS 17fe007b, DC/DC 17fe00b9, vehicle info 17fe0076, climate
-        # 000007b0, GPS 000007d1. Those are NOT applied here: they change
-        # addressing behaviour that cannot currently be observed against the
-        # car, so setting them blind would trade a harmless ignored command for
-        # a deaf one. Deliberately deferred -- see
-        # docs/MEB_DIAGNOSTIC_REFERENCE.md 5.1.
+        # This command is left in place because the plain `ATCRA` that clears
+        # the filter is refused by this clone (it accepts only the form with
+        # an argument), and a filter pinned to 0x000 would deafen the link.
+        # The per-module filter is set by set_module() instead, where the
+        # module's own response id is known.
         self.send_command("ATCRA0")
         if not self._restore_functional():
             log.warning("Functional header restore refused - resetting adapter")
@@ -546,7 +550,7 @@ class Elm327Transport(OBDInterface):
         self._negotiate_meb()
         return False
 
-    def set_module(self, tx29: int | None) -> bool:
+    def set_module(self, tx29: int | None, rx29: int | None = None) -> bool:
         """Switch addressing between functional (None) and one MEB module.
 
         Also flips CAN auto-formatting: module reads use ATCAF0 with a
@@ -556,8 +560,22 @@ class Elm327Transport(OBDInterface):
         `tx29` may be either MEB form: a 29-bit id (0x17FC007B) or an 11-bit
         one (0x710). Both are programmed as ATCP <priority> + ATSH <6 hex
         digits>, which is what the community tooling sends; the protocol is
-        chosen to match the id. Returns False when the switch was refused and
-        the caller should fall back to functional addressing.
+        chosen to match the id.
+
+        `rx29` is the module's response id, programmed as the CAN receive
+        filter. It is not optional in practice: this clone's default filter
+        accepts functional responses (18DAF1xx) but silently drops MEB
+        module responses (17FExxxx), so a module read that sets no filter
+        times out with NO DATA even though the request was transmitted
+        correctly. The car proved this decisively -- EXP-15 in the 2026-10-12
+        matrix was the first BMS answer this project has had:
+        'ATCRA 17FE007B' then '03 22 02 8C 55 x8' returned
+        '17FE007B0462028CB3' (SoC 0xB3 = 71.6 %). Car Scanner does the same
+        per-PID start commands (ATCRA7E8,ATFCSH7E0,...), which is the one
+        thing it does that this transport did not.
+
+        Returns False when the switch was refused and the caller should
+        fall back to functional addressing.
         """
         if not self.meb_addressing:
             return tx29 is None
@@ -566,12 +584,20 @@ class Elm327Transport(OBDInterface):
         # on the right protocol is not enough if auto-formatting is not in the
         # mode the hand-framed request needs. _set_protocol() clears _caf to
         # None whenever it switches, so this correctly misses the cache then.
+        # The filter belongs here for the same reason: a module switch that
+        # leaves the previous module's response id pinned misses the new one.
         if (tx29 == self._meb_module and self._proto == want_proto
-                and self._caf == 0):
+                and self._caf == 0 and self._atcra == rx29):
             return True
         if tx29 is None:
             if not self._restore_functional():
                 return self._recover()
+            # Restore the default filter. Leaving a module's response id pinned
+            # here would deafen every later functional read (mode 01 etc.
+            # answer from 18DAF1xx), and the failure would look like a silent
+            # bus rather than like what it is.
+            self.send_command("ATCRA")
+            self._atcra = None
             if self._caf != 1:
                 self.send_command("ATCAF1")
                 self._caf = 1
@@ -585,6 +611,14 @@ class Elm327Transport(OBDInterface):
         if self._caf != 0:
             self.send_command("ATCAF0")
             self._caf = 0
+        if rx29 is not None:
+            resp = self.send_command(f"ATCRA {rx29:08X}")
+            if any("?" in r for r in resp):
+                log.warning("Adapter refused ATCRA %08X", rx29)
+                return self._recover()
+            self._atcra = rx29
+        else:
+            self._atcra = None
         self._meb_module = tx29
         return True
 

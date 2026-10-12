@@ -118,6 +118,33 @@ def test_energy_module_answers_on_its_11_bit_header(sim_port, did):
         f"expected the 11-bit 0x77A header, got {list(payloads)}"
 
 
+@pytest.mark.parametrize("did", ["222AB8", "222AB2", "222AF7"])
+def test_energy_module_answers_with_3digit_header(sim_port, did):
+    """EXP-17: the 3-digit ATSH form the ELM327 specifies under ATSP6.
+
+    set_module() always sends the 6-digit MEB form ('ATSH 000710') even for
+    11-bit modules. The clone accepts it and then refuses the data frame with
+    '?'. This arm proves the 3-digit form reaches the same module on a
+    conforming adapter, so a '?' on the car is attributable to the header
+    width rather than to the frame or the module.
+
+    The simulator handles both widths; the clone is the open question.
+    """
+    t = transport(sim_port)
+    try:
+        t.send_command("ATSP6")
+        addressed(t, 0x00, "0710")          # 3-digit, as ATSP6 specifies
+        payloads = read(t, did)
+    finally:
+        t.close()
+
+    positive = [p for p in payloads.values() if p]
+    assert positive, f"{did} got no answer with 3-digit header: {payloads}"
+    assert positive[0][0] == 0x62
+    assert 0x77A in payloads, \
+        f"expected the 11-bit 0x77A header, got {list(payloads)}"
+
+
 @pytest.mark.parametrize("did", ["22465B", "22465D"])
 def test_dcdc_answers_on_its_29_bit_header(sim_port, did):
     """EXP-10: the DC/DC module answers at 0x17FC00B9 -> 0x17FE00B9."""

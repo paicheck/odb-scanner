@@ -382,8 +382,19 @@ class SimHandler(socketserver.BaseRequestHandler):
             self.current_ecu = (0x7DF, 0x7E8)
         elif tx in ECU_TABLE:
             self.current_ecu = (tx, ECU_TABLE[tx])
-        else:                                      # no ECU lives there
-            self.current_ecu = None
+        else:
+            # A 3-digit header under ATSP6 can also address a MEB module whose
+            # 29-bit id fits in 11 bits (energy 0x00000710, climate 0x00000746).
+            # The 6-digit path reaches those via MEB_MODULES; the 3-digit path
+            # must too, or the simulator answers the 6-digit form and stays
+            # silent on the 3-digit one -- which would make EXP-17 untestable
+            # offline and hide a real difference between the two.
+            hdr = (self.cp << 24) | tx
+            if hdr in MEB_MODULES:
+                self.meb_module = hdr
+                self.current_ecu = (0x7E0, 0x7E8)
+            else:                                  # no ECU lives there
+                self.current_ecu = None
 
     def _handle_cmd(self, cmd: str) -> list[str]:  # noqa: C901
         import diagnostic.uds as uds

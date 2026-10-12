@@ -53,7 +53,7 @@ class DiagnosticConnection:
         meb = bool(getattr(self.t, "meb_addressing", False)) and target is not None
         wire = hexcmd
         if callable(set_module) and getattr(self.t, "meb_addressing", False):
-            if meb and set_module(target):
+            if meb and set_module(target, getattr(ecu, "rx29", None)):
                 body = hexcmd
                 # Single-frame ISO-TP: one length byte then up to 7 data
                 # bytes. The slicing below would silently drop anything past
