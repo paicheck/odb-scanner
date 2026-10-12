@@ -154,6 +154,12 @@ def _cell_temp(raw: bytes) -> float:
 
 
 def _energy_counters(raw: bytes) -> dict:
+    # Both halves are required. A slice short of 8 bytes used to leave
+    # raw[4:8] empty, and int.from_bytes(b"") is 0 -- so a truncated answer
+    # recorded lifetime energy discharged as exactly 0.0 kWh rather than as a
+    # failed read. u32be now refuses the first half; this guards the second.
+    if len(raw) < 8:
+        raise IndexError(f"energy counters need 8 bytes, got {len(raw)}")
     charged = u32be(raw, 0) / ENERGY_COUNT_WH
     used = abs(int.from_bytes(raw[4:8], "big", signed=True)) / ENERGY_COUNT_WH
     return {"charged_kwh": charged, "used_kwh": used}
@@ -227,8 +233,12 @@ def _energy_content_wh(raw: bytes) -> float:
 
 
 def _odometer_km(raw: bytes) -> float:
-    n = int.from_bytes(raw[:3], "big")
-    return float(n)
+    # Slicing silently accepts 1-2 bytes and returns a smaller, entirely
+    # plausible mileage (0BBF -> 3007 km), which is indistinguishable from a
+    # real reading once stored.
+    if len(raw) < 3:
+        raise IndexError(f"odometer needs 3 bytes, got {len(raw)}")
+    return float(int.from_bytes(raw[:3], "big"))
 
 
 def _gear(raw: bytes) -> str:

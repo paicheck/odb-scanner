@@ -106,14 +106,35 @@ def key_states(repo, vehicle_id: int, registry, *,
         # no successful read -- no separate `missing` key, which would only be
         # a second name for the same number.
         bucket[row["state"]] += 1
-        # Keep the freshest sample as the representative value.
-        if record and (bucket["ts"] is None
-                       or (row["age_s"] or 0) < (bucket["age_s"] or 0)):
+        # Keep the freshest sample as the representative value. A row whose
+        # timestamp would not parse has age_s None deliberately, so that a
+        # corrupt stamp cannot make data look live -- and `or 0` turned that
+        # None into age 0, the freshest value possible, so an unknown-age slot
+        # always displaced a genuinely fresh one and the group then displayed
+        # its value and its unparseable timestamp.
+        if record and row["age_s"] is not None and (
+                bucket["age_s"] is None or row["age_s"] < bucket["age_s"]):
             bucket["value"] = row["value"]
             bucket["ts"] = row["ts"]
             bucket["age_s"] = row["age_s"]
             bucket["source"] = row["source"]
         bucket["unverified"] = bucket["unverified"] and row["unverified"]
+
+    for bucket in rolled.values():
+        # Derive the group's own state from the slots. It used to keep the
+        # "unavailable" it was created with, however many slots had answered,
+        # so /sources rendered a grey "unavailable" badge directly beside the
+        # text "108 live / 108 known", and summary() counted both rollups as
+        # unavailable -- undercounting live by the 126 of 157 registry keys
+        # that sit inside them.
+        #
+        # Precedence is live > imported > stale, with the counts shown next to
+        # it: a group holding any live slot is live, and the numbers say how
+        # much of it answered.
+        for state in ("live", "imported", "stale"):
+            if bucket[state]:
+                bucket["state"] = state
+                break
 
     core = ("soc_abs", "soc_normal", "pack_voltage", "pack_current",
             "battery_temp", "pack_power_kw")

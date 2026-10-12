@@ -122,4 +122,24 @@ def u16be(raw: bytes, off: int = 0) -> int:
 
 
 def u32be(raw: bytes, off: int = 0) -> int:
-    return int.from_bytes(raw[off : off + 4], "big")
+    """Big-endian u32, refusing a payload too short to hold one.
+
+    This must fail the same way u16be does. u16be indexes, so a short payload
+    raises IndexError, which DIDSpec.decode_value turns into a logged None --
+    the safe outcome. int.from_bytes accepts 0-3 bytes happily, so slicing
+    here used to fail OPEN and return a plausible-looking number instead:
+
+        pack_current  raw=06BD  ->  -1482.75 A     (4-byte value is 1.98 A)
+        hv_energy_max raw=0428  ->      0.81 Wh
+
+    Nothing downstream can tell that apart from a real reading. collector.py
+    turns -1482.75 A into pack_power_kw = -639 kW, charging detection
+    inverts, and the anomaly baseline adopts it as normal. uds.reassemble
+    already documents this exact hazard and guards the multi-frame path; the
+    single-frame path reached the decoder unguarded.
+    """
+    chunk = raw[off : off + 4]
+    if len(chunk) != 4:
+        raise IndexError(
+            f"u32be needs 4 bytes at offset {off}, got {len(chunk)}")
+    return int.from_bytes(chunk, "big")

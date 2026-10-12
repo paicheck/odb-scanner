@@ -203,6 +203,70 @@ def test_cell_group_counts_reachable_and_unreachable_slots(repo, now):
     assert group["unavailable"] == 8
     assert group["known"] == 108
     assert group["value"] == 3.99
+    # The group's own state has to follow the slots. It kept the
+    # "unavailable" it was created with, so the page showed a grey
+    # "unavailable" badge beside the text "100 live / 108 known".
+    assert group["state"] == "live"
+
+
+def test_a_fully_live_rollup_does_not_report_itself_unavailable(repo, now):
+    """Every slot answered, so the group is live -- and summary() must agree.
+
+    While the rollup's state was pinned at "unavailable", the headline counts
+    on /sources and in the GUI counted both rollups as unavailable, which
+    undercounts live by the 126 of 157 registry keys that live inside them.
+    """
+    from analysis.provenance import key_states, summary
+    latest = {
+        f"cell_v_{i:03d}": {"provenance": "reported", "value": 3.99,
+                            "ts": stamp(now, 30)}
+        for i in range(108)
+    }
+    rows = key_states(make_repo(latest), 1, FakeRegistry(), now=now)
+    group = next(r for r in rows if r["key"] == "cell_voltages")
+    assert (group["live"], group["known"]) == (108, 108)
+    assert group["state"] == "live"
+
+    # Measured against the all-empty case so the assertion does not depend on
+    # how many other keys the fake registry carries: filling every cell slot
+    # must move exactly one row -- the rollup -- out of unavailable.
+    empty = summary(key_states(make_repo({}), 1, FakeRegistry(), now=now))
+    full = summary(rows)
+    assert full["unavailable"] == empty["unavailable"] - 1, (
+        "the fully-live cell rollup is still counted as unavailable")
+    assert full["live"] == empty["live"] + 1
+
+
+def test_an_imported_only_rollup_reports_imported(repo, now):
+    """Precedence is live > imported > stale, not "whatever it started as"."""
+    from analysis.provenance import key_states
+    latest = {
+        f"cell_v_{i:03d}": {"provenance": "imported: Car Scanner CSV",
+                            "value": 3.99, "ts": stamp(now, 30)}
+        for i in range(108)
+    }
+    rows = key_states(make_repo(latest), 1, FakeRegistry(), now=now)
+    group = next(r for r in rows if r["key"] == "cell_voltages")
+    assert group["state"] == "imported"
+
+
+def test_an_unparseable_stamp_cannot_become_a_rollups_value(repo, now):
+    """age_s None means unknown age, and `or 0` made it the freshest possible.
+
+    An unknown-age slot therefore always displaced a genuinely fresh one, and
+    the group displayed that slot's value with its unreadable timestamp.
+    """
+    from analysis.provenance import key_states
+    latest = {
+        "cell_v_000": {"provenance": "reported", "value": 3.99,
+                       "ts": stamp(now, 10)},
+        "cell_v_001": {"provenance": "reported", "value": 9.99,
+                       "ts": "garbage"},
+    }
+    rows = key_states(make_repo(latest), 1, FakeRegistry(), now=now)
+    group = next(r for r in rows if r["key"] == "cell_voltages")
+    assert group["value"] == 3.99, "an unknown-age slot became the value"
+    assert group["ts"] != "garbage"
 
 
 def test_unverified_is_a_flag_not_a_state(repo, now):

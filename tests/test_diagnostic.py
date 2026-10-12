@@ -902,6 +902,40 @@ def test_obd2_dtc_decode():
     assert obd2.decode_obd2_dtc(0x04, 0x20) == "P0420"
 
 
+def test_short_payloads_fail_closed_in_every_width():
+    """u16be raises on a short payload; u32be used to return a plausible number.
+
+    The two helpers behaved oppositely on the same defect. u16be indexes, so a
+    short payload raises IndexError, which DIDSpec.decode_value logs and turns
+    into None -- a failed read. u32be sliced, and int.from_bytes accepts 0-3
+    bytes, so a truncated answer decoded as real data:
+
+        pack_current 06BD -> -1482.75 A   (the 4-byte value is 1.98 A)
+
+    collector.py then records pack_power_kw = -639 kW as a calculated value,
+    charging detection inverts, and the anomaly baseline adopts it as normal.
+    """
+    import pytest as _pytest
+
+    from decoders.meb import _energy_counters, _odometer_km, _pack_current
+    from decoders.registry import u16be, u32be
+
+    # The widths the real DIDs use, each one byte short of what it needs.
+    for fn, short in ((u16be, b"\x06"),
+                      (u32be, b"\x06\xBD"),
+                      (u32be, b"\x04\x28\x0A"),
+                      (_pack_current, b"\x06\xBD"),
+                      (_odometer_km, b"\x0B\xBF"),
+                      (_energy_counters, b"\x00\x02\x4A\xB6")):
+        with _pytest.raises(IndexError):
+            fn(short)
+
+    # ...and the full-width values still decode exactly as before.
+    assert u32be(b"\x00\x02\x4A\xB6") == 150198
+    assert _pack_current(b"\x00\x02\x4A\xB6") == 1.98
+    assert _odometer_km(b"\x0B\xBF\x7F") == 769919.0
+
+
 def test_parse_mode03_honours_the_can_dtc_count_byte():
     """On CAN the response is 43 <count> <pairs>, not 43 <pairs>.
 
