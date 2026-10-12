@@ -7,6 +7,7 @@ unreadable, or two commands running at once and fighting over the serial port.
 
 No test here needs a car, an adapter, or a visible window.
 """
+import os
 import queue
 import sys
 import time
@@ -258,3 +259,59 @@ def test_runner_sets_utf8_so_output_cannot_fail_to_decode():
     assert captured.get("PYTHONIOENCODING") == "utf-8"
     assert captured.get("PYTHONUTF8") == "1"
     assert codes == [0]
+
+
+# --- the launch path a user actually takes -----------------------------------
+
+def test_gui_runs_as_a_script_from_a_foreign_working_directory(tmp_path):
+    """`python gui\\app.py` must work when nothing else put the root on the path.
+
+    Regression, and the reason --selftest exists. Run as a script, sys.path[0]
+    is the script's own directory, so `import analysis` failed and the window
+    opened showing "Could not read the database: No module named 'analysis'".
+    Every test passed anyway: conftest.py inserts the repo root, and each
+    headless check imported gui.app after doing the same. The app was only
+    broken the way a user launches it.
+
+    So this runs it as a real subprocess, with cwd somewhere else and a
+    PYTHONPATH that does NOT include the project -- reproducing the double-click
+    / Start-Process case rather than the in-process one.
+    """
+    import subprocess
+
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)          # must not smuggle the root in
+    env["PYTHONIOENCODING"] = "utf-8"
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "gui" / "app.py"), "--selftest"],
+        cwd=str(tmp_path), env=env, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=120)
+    out = (proc.stdout or "") + (proc.stderr or "")
+    assert "No module named" not in out, out
+    assert proc.returncode == 0, f"exit {proc.returncode}: {out}"
+    assert "SELFTEST OK" in out, out
+
+    # And it must read the SAME database the repo-root launch reads. A second
+    # bug hid behind the first: database.path is relative ("data/real_car.db"),
+    # so a foreign cwd resolved it against the wrong directory, created an empty
+    # database there, and reported every key as "unavailable" -- which reads as
+    # "this car never reported this" rather than "this is the wrong database".
+    # Comparing the two runs is the invariant; either count on its own is only
+    # meaningful relative to the other.
+    root_env = dict(os.environ)
+    root_env.pop("PYTHONPATH", None)
+    root_env["PYTHONIOENCODING"] = "utf-8"
+    from_root = subprocess.run(
+        [sys.executable, str(ROOT / "gui" / "app.py"), "--selftest"],
+        cwd=str(ROOT), env=root_env, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=120)
+    root_out = (from_root.stdout or "") + (from_root.stderr or "")
+    assert "SELFTEST OK" in root_out, root_out
+
+    def counts_of(text: str) -> str:
+        return text.split("counts=", 1)[1].strip() if "counts=" in text else ""
+
+    assert counts_of(out) == counts_of(root_out), (
+        "a foreign working directory read a different database:\n"
+        f"  foreign cwd : {counts_of(out)}\n"
+        f"  repo root   : {counts_of(root_out)}")

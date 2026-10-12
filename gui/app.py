@@ -31,6 +31,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Run as `python gui\app.py`, sys.path[0] is the script's own directory
+# (...\odb_scanner\gui), NOT the project root -- so `import analysis` fails even
+# though the package is right there. The tests never caught this because
+# conftest.py inserts the repo root, and so did every headless check: the app
+# was only broken when launched the way a user launches it.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 try:
     import tkinter as tk
     from tkinter import scrolledtext, ttk
@@ -499,9 +507,39 @@ class App(tk.Tk):
         self.destroy()
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
+    """Entry point. `--selftest` exercises the import and data path headlessly.
+
+    The flag exists because of a bug the widget tests could not see: launched as
+    `python gui\app.py`, sys.path[0] is the script's own directory, so
+    `import analysis` failed at runtime while every test passed -- conftest and
+    each headless check had already put the project root on the path. A
+    subprocess launched from a foreign cwd is the only thing that reproduces how
+    a user actually starts this, so it is worth an entry point to drive it.
+    """
+    # The .bat files all begin `cd /d "%~dp0"` for the same reason. config.yaml
+    # gives database.path as "data/real_car.db", a RELATIVE path: launched from
+    # anywhere but the project root it resolved against the wrong directory,
+    # created an empty database there, and the window reported every measurement
+    # as "unavailable" -- which reads as "this car never reported the data"
+    # rather than "this is not the database". A desktop shortcut has whatever
+    # working directory the shell gives it, so this must not depend on the user
+    # launching from the right place.
+    try:
+        os.chdir(ROOT)
+    except OSError:  # pragma: no cover - only if the tree moved mid-run
+        pass
+    args = sys.argv[1:] if argv is None else list(argv)
+    if "--selftest" in args:
+        rows, counts, vin, note = load_state()
+        if note:
+            print(f"SELFTEST FAIL: {note}")
+            return 1
+        print(f"SELFTEST OK vin={vin} keys={len(rows)} counts={counts}")
+        return 0
     App().mainloop()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
