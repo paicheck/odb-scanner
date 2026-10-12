@@ -248,6 +248,36 @@ which keeps suppressing cell collection even if reads start working mid-run.
 
 ---
 
+## 6. Track B — energy/climate (11-bit modules)
+
+**The `?` refusals on energy and climate are a separate, narrower problem from
+Track A.** The BMS fix (`ATCRA <rx29>`) does not apply here because the car
+never transmitted the requests — the adapter refused them with `?` before they
+reached the bus. The simulator confirms energy (0x77A) and climate (0x7B0)
+answer when `ATCRA` is pinned to their response IDs.
+
+**Hypothesis:** the adapter also requires `ATCRA <response-id>` for the 11-bit
+modules, just like the BMS. The collector's `set_module()` already sends
+`ATCRA <rx29>` for energy (0x77A) and climate (0x7B0) because `ecus.py`
+defines those `rx29` values and `connection.py` passes them to `set_module()`.
+So the fix is **already in the data path** — the next live run will test it.
+
+**New matrix arms (simulator-verified):**
+
+| Exp | Hypothesis | Simulator |
+|---|---|---|
+| EXP-18 | Energy with `ATCRA 0000077A` | ✅ answers 0x2AB8/0x2AB2/0x2AF7 |
+| EXP-19 | Climate with `ATCRA 000007B0` | ✅ answers 0x2609/0x2613 |
+
+**EXP-17 (3-digit header) was refuted** — both 3-digit and 6-digit headers
+were refused on the car, so header width is not the Track B defect.
+
+**Next step:** run the matrix against the car with the Veepeak awake. EXP-18
+and EXP-19 will determine whether the energy/climate `?` refusals are also
+just the receive filter.
+
+---
+
 ## 7. Hard constraints (non-negotiable)
 
 1. **Strictly read-only.** Only `0x10 0x01`, `0x22`, `0x19`, `0x3E`,
@@ -272,6 +302,13 @@ reference doc §7), verified against the simulator. Also `tools/elm_console.py` 
 console, explicitly *not* read-only — the one sanctioned exception),
 `tools/doctor.py`, `tools/discover_adapters.py`, `main.py collect`.
 
+## 8. Tooling and partial results already in hand
+
+`tools/diagnose_meb_path.py` — 19-arm read-only matrix (EXP-1…EXP-19, numbered as in
+reference doc §7), verified against the simulator. Also `tools/elm_console.py` (raw
+console, explicitly *not* read-only — the one sanctioned exception),
+`tools/doctor.py`, `tools/discover_adapters.py`, `main.py collect`.
+
 | Exp | Question | Status from normal runs |
 |---|---|---|
 | 4 | MEB addressing accepted | **pass** (`ATCP 17` + `ATSH FC007B` accepted) |
@@ -279,12 +316,16 @@ console, explicitly *not* read-only — the one sanctioned exception),
 | 9 | energy module, 11-bit `ATSP6` | **invalid** — adapter refused (`?`), never transmitted (Track B) |
 | 10 | DC/DC, 29-bit | **inconclusive** — 1 `NO DATA`, 14 `?` (Track B) |
 | 11 | functional `0x22` routing | **`7F 22 31`** (5 Oct) — functional does not route |
+| 15 | BMS receive filter | **ANSWERED** — `ATCRA 17FE007B` → `62 02 8C B3` (Track A solved) |
+| 17 | energy 3-digit header | `?` — **refuted** on car |
+| 18 | energy with `ATCRA 0000077A` | **simulator ✅** — next car run will test |
+| 19 | climate with `ATCRA 000007B0` | **simulator ✅** — next car run will test |
 
-Untested: EXP-6 (`ATBI`), EXP-7/7b/8 (session / tester-present / combined), EXP-12
+EXP-6 (`ATBI`), EXP-7/7b/8 (session / tester-present / combined), EXP-12
 (BMS on 11-bit `0x7E5`), EXP-13 (CAN-FD probe, cheap), EXP-14 (flow control),
-EXP-15 (receive filter), EXP-16 (full reference config). **EXP-6, 14, 15, 16 are the
-Track A discriminators to order first.** Track B should be fixed before EXP-9/10 are
-re-run, otherwise they cannot produce a meaningful result.
+EXP-16 (full reference config). EXP-15 answered; EXP-17 refuted. **EXP-18/19 are
+the Track B discriminators to order first.** Track B should be fixed before
+EXP-9/10 are re-run, otherwise they cannot produce a meaningful result.
 
 ---
 
@@ -299,7 +340,11 @@ re-run, otherwise they cannot produce a meaningful result.
    behind the `7F 22 31`, since the NRC's meaning depends on it.
 4. Is a per-module session required despite evDash/ABRP not sending one? (EXP-7
    falsifies the `10 03` theory if a `10 01` arm answers.)
-5. Operational: after the 12 Oct re-pair Windows exposes **two** outgoing SPP ports
+5. **Do energy and climate (11-bit) also need their receive filter pinned?**
+   EXP-18 and EXP-19 will test this on the next car run. The simulator confirms
+   both answer when `ATCRA` is pinned to 0x77A / 0x7B0. The collector's
+   `set_module()` already sends these filters automatically.
+6. Operational: after the 12 Oct re-pair Windows exposes **two** outgoing SPP ports
    (`COM3`, `COM4`, both "Standard Serial over Bluetooth link"). Prove the live port
    (`discover_adapters.py`, then per-port `ATI`) before any car work.
 
@@ -316,7 +361,7 @@ re-run, otherwise they cannot produce a meaningful result.
 | `diagnostic/elm327.py` | transport; `_negotiate_meb`, `set_module`, init |
 | `diagnostic/ecus.py` | module address registry (`tx29`/`rx29`) |
 | `diagnostic/uds.py` | `validate_request()` — policy choke point |
-| `tools/diagnose_meb_path.py` | 16-arm read-only matrix |
+| `tools/diagnose_meb_path.py` | 19-arm read-only matrix |
 | `decoders/meb.py`, `decoders/registry.py` | 157 DID specs (16 fast / 141 slow) |
 | `collector.py` | `discover_ecus()` — status mapping defect (§4), cell-sweep bug (§6) |
 | `data/real_car.db` | 318 measurements (266 Car Scanner imports + 52 real OBD-II); `tx_log` holds the wire evidence above |

@@ -469,40 +469,6 @@ def test_energy_module_11bit_3digit_header(t: Elm327Transport) -> None:
     send_raw(t, f"ATSP{PINNED_PROTOCOL}", "restore 29-bit")
 
 
-def test_energy_module_11bit_3digit_header(t: Elm327Transport) -> None:
-    """EXP-17: Energy module with a 3-digit ATSH under ATSP6.
-
-    Under protocol 6 (11-bit) the ELM327 specifies a 3-digit header, but
-    set_module() always sends the 6-digit MEB form ('ATSH 000710'). The clone
-    accepts it -- no '?' on the AT command itself -- and then refuses the data
-    frame with '?'. The simulator (a proper ELM327 emulation) answers anyway,
-    which is why the suite stays green while the car refuses.
-
-    This arm isolates the header width as the single variable: same protocol,
-    same ATCP, same CAF, same frame. Only ATSH 0710 vs ATSH 000710 differs.
-    """
-    begin("EXP-17")
-    log("=== EXP-17: Energy module 0x710 with 3-digit ATSH ===")
-    send_raw(t, "ATSP6", "11-bit protocol")
-    send_raw(t, "ATCP 00", "priority 0x00")
-    send_raw(t, "ATSH 0710", "energy module header (3-digit, as ATSP6 specifies)")
-    send_raw(t, "ATCAF0", "disable CAF")
-
-    payload = "222AB8"
-    wire = f"03{payload}5555555555555555"[:16]
-    send_raw(t, wire, "Energy 0x2AB8 (3-digit header)")
-
-    payload = "222AB2"
-    wire = f"03{payload}5555555555555555"[:16]
-    send_raw(t, wire, "Energy 0x2AB2 (3-digit header)")
-
-    payload = "222AF7"
-    wire = f"03{payload}5555555555555555"[:16]
-    send_raw(t, wire, "Energy 0x2AF7 (3-digit header)")
-
-    send_raw(t, f"ATSP{PINNED_PROTOCOL}", "restore 29-bit")
-
-
 def test_energy_module_with_atcra(t: Elm327Transport) -> None:
     """EXP-18: Energy module (11-bit) with receive filter pinned to 0x77A.
 
