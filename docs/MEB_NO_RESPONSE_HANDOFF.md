@@ -311,7 +311,9 @@ transition (see §9).
 ## 8. Tooling and partial results already in hand
 
 `tools/diagnose_meb_path.py` — 21-arm read-only matrix (EXP-1…EXP-21, numbered as in
-reference doc §7), verified against the simulator. Also `tools/elm_console.py` (raw
+reference doc §7), verified against the simulator. Also `tools/collect_acceptance.py`
+(one bounded collector run, then reads the database back — the product-level check
+that Track A reaches the dashboard), `tools/elm_console.py` (raw
 console, explicitly *not* read-only — the one sanctioned exception),
 `tools/doctor.py`, `tools/discover_adapters.py`, `main.py collect`.
 
@@ -351,7 +353,9 @@ Expanded per-arm evidence from the 13 Oct run lives in the local (gitignored)
    right after the refused ATSP6 block, so CAF0+8-byte is the suspect.
 2. **Track A is solved:** `ATCRA 17FE007B` answers the BMS (EXP-15/16, 13 Oct).
    The remaining Track A question is only whether the collector drives it in a
-   real cycle.
+   real cycle — answer it with `tools/collect_acceptance.py` (one bounded run,
+   then it asserts `pack_voltage` / `soc_abs` / a per-cell sweep landed in the
+   database and stayed read-only).
 3. Who actually answers functionally? Resolve the identity behind source `0x0A` and
    behind the `7F 22 31`, since the NRC's meaning depends on it.
 4. Is a per-module session required despite evDash/ABRP not sending one? (EXP-7
@@ -400,3 +404,10 @@ The last live result is the 13 Oct run: **EXP-15/16 answered `62 02 8C B2`
 local `docs/experiment_record_results.md`. The work that follows needs no car:
 EXP-17/20/21 are implemented and simulator-verified, and the discriminating
 result is one matrix run away.
+
+When comms are back, run **`tools/collect_acceptance.py` first** (highest value:
+proves Track A reaches the database in a real cycle, including after the 11-bit
+energy/climate excursion — open question 5), then the matrix to settle Track B.
+The acceptance tool writes named PASS/FAIL rows per check and exits 2 (not 1)
+when the adapter/vehicle cannot be reached, so a Bluetooth failure cannot be
+mistaken for bad data.

@@ -266,6 +266,7 @@ on Linux/macOS, where the compiled wheels differ.
 | `python main.py serve` | Web dashboard at `localhost:8000` |
 | `python main.py report` | Print AI report to console (`--question "..."`) |
 | `python tools/smoke_test.py` | Offline end-to-end self-test (no car, no Ollama) |
+| `python tools/collect_acceptance.py` | One bounded live run, then check the database holds pack voltage / SoC / cells (`--sim` for an offline self-test) |
 | `python tools/elm_console.py` | Raw ELM327 console for live debugging (`--tcp` for simulator) |
 | `python tools/start_scanner.py` | Start/stop the simulated stack (`--status`, `--stop`) |
 | `python tools/import_carscanner.py "export.csv"` | Import a Car Scanner CSV as evidence labelled `imported` (`--dry-run` previews) |
