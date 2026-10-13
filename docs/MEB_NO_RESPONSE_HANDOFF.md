@@ -248,33 +248,46 @@ which keeps suppressing cell collection even if reads start working mid-run.
 
 ---
 
-## 6. Track B — energy/climate (11-bit modules)
+## 6. Track B — the `?` refusals (11-bit modules)
 
-**The `?` refusals on energy and climate are a separate, narrower problem from
-Track A.** The BMS fix (`ATCRA <rx29>`) does not apply here because the car
-never transmitted the requests — the adapter refused them with `?` before they
-reached the bus. The simulator confirms energy (0x77A) and climate (0x7B0)
-answer when `ATCRA` is pinned to their response IDs.
+**The 2026-10-13 car run refuted the receive-filter theory for Track B.** With
+the Veepeak awake and ignition on, EXP-18 (energy + `ATCRA 0000077A`) and EXP-19
+(climate + `ATCRA 000007B0`) both still returned `?`. So pinning the filter —
+the fix that solved the BMS — is **not** what the 11-bit modules need.
 
-**Hypothesis:** the adapter also requires `ATCRA <response-id>` for the 11-bit
-modules, just like the BMS. The collector's `set_module()` already sends
-`ATCRA <rx29>` for energy (0x77A) and climate (0x7B0) because `ecus.py`
-defines those `rx29` values and `connection.py` passes them to `set_module()`.
-So the fix is **already in the data path** — the next live run will test it.
+What that run did establish:
 
-**New matrix arms (simulator-verified):**
+- **`?` means the adapter refused the request, not that the module was silent.**
+  A `?` arrives instantly (a parse/parameter error); silence is `NO DATA`.
+  Every `ATSP6` (11-bit) data frame returned `?`; every `ATSP7` (29-bit) frame
+  transmitted (then `NO DATA` or an answer). The car never saw the 11-bit
+  request.
+- **The clone did accept all the AT configuration** (`ATSP6`, `ATCP 00`,
+  `ATSH 000710`, `ATCAF0`, `ATCRA …` each returned `OK`) and then refused the
+  *data frame* `03222AB855555555`.
 
-| Exp | Hypothesis | Simulator |
+Two candidates remain, and the matrix now has one arm for each:
+
+| Exp | Isolates | vs |
 |---|---|---|
-| EXP-18 | Energy with `ATCRA 0000077A` | ✅ answers 0x2AB8/0x2AB2/0x2AF7 |
-| EXP-19 | Climate with `ATCRA 000007B0` | ✅ answers 0x2609/0x2613 |
+| **EXP-17** (new form) | `ATSH 710` — the 3-digit header the protocol specifies | EXP-18 (6-digit `ATSH 000710`), same everything else |
+| **EXP-20** | a 7-byte frame (`03 22 2A B8 55 x7`) | EXP-18 (8-byte frame) |
 
-**EXP-17 (3-digit header) was refuted** — both 3-digit and 6-digit headers
-were refused on the car, so header width is not the Track B defect.
+**Note on EXP-17.** The first version of the arm sent `ATSH 0710` — *four* hex
+digits, not three. The clone refused the ATSH itself with `?`, so the true
+3-digit form (`710`) was never exercised. Its hypothesis was therefore never
+tested, and the record now sends `710`.
 
-**Next step:** run the matrix against the car with the Veepeak awake. EXP-18
-and EXP-19 will determine whether the energy/climate `?` refusals are also
-just the receive filter.
+**Also fixed:** EXP-21 re-runs the DC/DC module (29-bit, like the BMS) **with**
+`ATCRA 17FE00B9`. EXP-10 read it with no filter and was refused `?`, even though
+the identical framing for the BMS (EXP-5) transmitted fine — so the DC/DC
+module, like the BMS, may have needed only its receive filter. That is a likely
+free win and is now its own arm.
+
+**Order at the car:** run the matrix as-is. EXP-17 answering → the 6-digit
+header is the Track B defect. EXP-20 answering → the 11-bit send limit is 7
+bytes. Both `?` → the remainder is the CAF mode or the `ATSP6`→`ATSP7`
+transition (see §9).
 
 ---
 
@@ -284,7 +297,7 @@ just the receive filter.
    `0x01/0x03/0x09`, plus adapter-local `AT*`. **Never** `0x27`, `0x2E`, `0x31`,
    `0x14`, `0x30`, writes, coding, adaptations, actuator tests, ECU reset, flashing.
 2. **Never weaken `diagnostic/uds.py` `validate_request()`** — the single choke
-   point. Suite must stay green (325 tests, ruff clean, `smoke_test.py` 24/0/1,
+   point. Suite must stay green (355 tests, ruff clean, `smoke_test.py` 24/0/1,
    `guard-test`); new tests must fail on pre-fix code.
 3. **No blind CAN-ID scans, no arbitrary UDS.** Experiments go through
    `tools/diagnose_meb_path.py`, whose arms are allow-listed and verified end-to-end
@@ -297,14 +310,7 @@ just the receive filter.
 
 ## 8. Tooling and partial results already in hand
 
-`tools/diagnose_meb_path.py` — 16-arm read-only matrix (EXP-1…EXP-16, numbered as in
-reference doc §7), verified against the simulator. Also `tools/elm_console.py` (raw
-console, explicitly *not* read-only — the one sanctioned exception),
-`tools/doctor.py`, `tools/discover_adapters.py`, `main.py collect`.
-
-## 8. Tooling and partial results already in hand
-
-`tools/diagnose_meb_path.py` — 19-arm read-only matrix (EXP-1…EXP-19, numbered as in
+`tools/diagnose_meb_path.py` — 21-arm read-only matrix (EXP-1…EXP-21, numbered as in
 reference doc §7), verified against the simulator. Also `tools/elm_console.py` (raw
 console, explicitly *not* read-only — the one sanctioned exception),
 `tools/doctor.py`, `tools/discover_adapters.py`, `main.py collect`.
@@ -314,39 +320,52 @@ console, explicitly *not* read-only — the one sanctioned exception),
 | 4 | MEB addressing accepted | **pass** (`ATCP 17` + `ATSH FC007B` accepted) |
 | 5 | BMS answers physically | **silent** — 472 reads, `NO DATA` (Track A) |
 | 9 | energy module, 11-bit `ATSP6` | **invalid** — adapter refused (`?`), never transmitted (Track B) |
-| 10 | DC/DC, 29-bit | **inconclusive** — 1 `NO DATA`, 14 `?` (Track B) |
+| 10 | DC/DC, 29-bit, no filter | **`?`** — refused even though it is 29-bit |
 | 11 | functional `0x22` routing | **`7F 22 31`** (5 Oct) — functional does not route |
-| 15 | BMS receive filter | **ANSWERED** — `ATCRA 17FE007B` → `62 02 8C B3` (Track A solved) |
-| 17 | energy 3-digit header | `?` — **refuted** on car |
-| 18 | energy with `ATCRA 0000077A` | **simulator ✅** — next car run will test |
-| 19 | climate with `ATCRA 000007B0` | **simulator ✅** — next car run will test |
+| 15 | BMS receive filter | **ANSWERED** (13 Oct) — `ATCRA 17FE007B` → `62 02 8C B2` (Track A solved) |
+| 16 | BMS full reference config | **ANSWERED** (13 Oct) — `62 02 8C B2` |
+| 17 | energy 3-digit header | `ATSH 0710` (4-digit) refused at the ATSH step; **now sends `710`** |
+| 18 | energy with `ATCRA 0000077A` | **`?`** (13 Oct) — filter is *not* the Track B fix |
+| 19 | climate with `ATCRA 000007B0` | **`?`** (13 Oct) |
+| 20 | energy, 7-byte frame | **not run** — length discriminator |
+| 21 | DC/DC with `ATCRA 17FE00B9` | **not run** — likely free win |
 
 EXP-6 (`ATBI`), EXP-7/7b/8 (session / tester-present / combined), EXP-12
-(BMS on 11-bit `0x7E5`), EXP-13 (CAN-FD probe, cheap), EXP-14 (flow control),
-EXP-16 (full reference config). EXP-15 answered; EXP-17 refuted. **EXP-18/19 are
-the Track B discriminators to order first.** Track B should be fixed before
-EXP-9/10 are re-run, otherwise they cannot produce a meaningful result.
+(BMS on 11-bit `0x7E5`), EXP-13 (CAN-FD probe), EXP-14 (flow control) were all
+silent or refused. **EXP-17 and EXP-20 are the Track B discriminators to run
+first; EXP-21 is the likely DC/DC win.**
+
+Expanded per-arm evidence from the 13 Oct run lives in the local (gitignored)
+`docs/experiment_record_results.md`.
 
 ---
 
 ## 9. Open questions the plan must answer
 
-1. **Track B:** why does the adapter answer `?` to a well-formed data frame after a
-   module switch, while `set_module()` reports success? Does the `ATSP6` switch clear
-   or invalidate the header? Reproducible offline against the simulator.
-2. **Track A:** which difference blocks physical `0x22` to the BMS — `ATBI`, flow
-   control, per-module `ATCRA`, or a combination?
+1. **Track B:** why does the clone `?` a well-formed 11-bit data frame while
+   accepting every AT configuration command? Two arms now discriminate:
+   EXP-17 (3-digit `ATSH 710` vs the 6-digit form `set_module` sends) and
+   EXP-20 (7-byte frame vs the 8-byte frame). If both are still `?`, the
+   remainder is the CAF mode under ATSP6 or state left over from the
+   `ATSP6`→`ATSP7` transition — EXP-11 (ATSP7, CAF1, short request) transmitted
+   right after the refused ATSP6 block, so CAF0+8-byte is the suspect.
+2. **Track A is solved:** `ATCRA 17FE007B` answers the BMS (EXP-15/16, 13 Oct).
+   The remaining Track A question is only whether the collector drives it in a
+   real cycle.
 3. Who actually answers functionally? Resolve the identity behind source `0x0A` and
    behind the `7F 22 31`, since the NRC's meaning depends on it.
 4. Is a per-module session required despite evDash/ABRP not sending one? (EXP-7
    falsifies the `10 03` theory if a `10 01` arm answers.)
-5. **Do energy and climate (11-bit) also need their receive filter pinned?**
-   EXP-18 and EXP-19 will test this on the next car run. The simulator confirms
-   both answer when `ATCRA` is pinned to 0x77A / 0x7B0. The collector's
-   `set_module()` already sends these filters automatically.
+5. **Does the collector recover 29-bit framing after reading an 11-bit module?**
+   The clone refused the first 29-bit CAF0 8-byte send *after* the ATSP6 block
+   (EXP-10). The collector interleaves 29-bit (BMS) and 11-bit (energy/climate)
+   reads every cycle, so if the transition is sticky the BMS would break after
+   the first energy read. Worth an arm before trusting a long collector run.
 6. Operational: after the 12 Oct re-pair Windows exposes **two** outgoing SPP ports
    (`COM3`, `COM4`, both "Standard Serial over Bluetooth link"). Prove the live port
-   (`discover_adapters.py`, then per-port `ATI`) before any car work.
+   (`discover_adapters.py`, then per-port `ATI`) before any car work. (On 13 Oct
+   COM3 opened once, then later gave `OSError(22, 'semaphore timeout')` — the
+   paired-but-not-connected state.)
 
 **Out of scope** (tracked separately, unblocked by the above): pack-current sign,
 `0x2AF7` sub-field offsets, `0x2AB8` divisor.
@@ -361,16 +380,23 @@ EXP-9/10 are re-run, otherwise they cannot produce a meaningful result.
 | `diagnostic/elm327.py` | transport; `_negotiate_meb`, `set_module`, init |
 | `diagnostic/ecus.py` | module address registry (`tx29`/`rx29`) |
 | `diagnostic/uds.py` | `validate_request()` — policy choke point |
-| `tools/diagnose_meb_path.py` | 19-arm read-only matrix |
+| `tools/diagnose_meb_path.py` | 21-arm read-only matrix |
 | `decoders/meb.py`, `decoders/registry.py` | 157 DID specs (16 fast / 141 slow) |
 | `collector.py` | `discover_ecus()` — status mapping defect (§4), cell-sweep bug (§6) |
 | `data/real_car.db` | 318 measurements (266 Car Scanner imports + 52 real OBD-II); `tx_log` holds the wire evidence above |
 
-## 11. Current live state (12 Oct)
+## 11. Current live state (13 Oct)
 
-Comms with the car are **down**: the Veepeak's Bluetooth is asleep (car slept after
-the last run; the stack was stopped cleanly). To resume: reconnect the dongle
-(unplug/replug, ignition on, Windows → Bluetooth → Connect), then confirm the live
-SPP port before experiments. Web dashboard (port 8000) is up; collector is not
-running. No data lost. **Track B needs none of this** — it can start immediately
-against the simulator.
+Comms with the car are **down again**: the 13 Oct matrix run completed (the BMS
+answered, Track A reconfirmed), then COM3 later failed to open with
+`OSError(22, 'semaphore timeout period has expired')` — Windows showing the
+pairing as present while the RFCOMM link is not actually up. That is the same
+sleep state as before: reconnect the dongle (unplug/replug, ignition on,
+Windows → Bluetooth → Connect), then confirm the live SPP port before
+experiments.
+
+The last live result is the 13 Oct run: **EXP-15/16 answered `62 02 8C B2`
+(SoC 71.2 %)**; EXP-9/17/18/19/10/12 were `?`. That run is captured in the
+local `docs/experiment_record_results.md`. The work that follows needs no car:
+EXP-17/20/21 are implemented and simulator-verified, and the discriminating
+result is one matrix run away.

@@ -272,22 +272,29 @@ ARMS: list[Arm] = [
     ),
     Arm(
         exp_id="EXP-17",
-        hypothesis="Under ATSP6 (11-bit) the ELM327 expects a 3-digit header, "
-                   "but we send 6-digit 'ATSH 000710'. The clone accepts it "
-                   "and then refuses the data frame with '?'. A 3-digit "
-                   "'ATSH 0710' is the form the protocol actually specifies "
-                   "for 11-bit, so if this answers where EXP-9 was refused, "
-                   "the 6-digit header is the Track B defect.",
-        request="ATSP6, ATCP 00, ATSH 0710 (3-digit), ATCAF0, then "
-                "03 22 2A B8 55 x8",
+        hypothesis="Under ATSP6 (11-bit) the ELM327 specifies a 3-digit "
+                   "header, but set_module() sends the 6-digit MEB form "
+                   "('ATSH 000710'). The clone accepts that and then refuses "
+                   "the data frame with '?'. This arm is EXP-18 with the "
+                   "header narrowed to the protocol's own 3-digit form, so the "
+                   "header width is the only variable: if it answers where "
+                   "EXP-18 was refused, the 6-digit form is the Track B "
+                   "defect.",
+        request="ATSP6, ATCP 00, ATSH 710 (3-digit), ATCAF0, "
+                "ATCRA 0000077A, then 03 22 2A B8 55 x8",
         expected="62 2A B8 <data> from 0x77A, or NO DATA if the clone still "
                  "refuses the frame. A '?' here means the clone accepts the "
                  "3-digit header but still refuses the frame, which would "
                  "point at the frame itself rather than the header.",
-        config=["ATSP6", "ATCP 00", "ATSH 0710", "ATCAF0"],
+        config=["ATSP6", "ATCP 00", "ATSH 710", "ATCAF0", "ATCRA 0000077A"],
         can_mode="ATSP6 (CAN 11/500)", bitrate="500 kbit/s",
         data_rate="n/a (classical CAN)",
-        addressing="ATSH 0710 (energy, 11-bit, 3-digit) / ATCP 00",
+        addressing="ATSH 710 (energy, 11-bit, 3-digit) / ATCP 00 / "
+                   "ATCRA 0000077A",
+        notes="The 2026-10-13 car run of the earlier version of this arm sent "
+              "'ATSH 0710' (4 digits); the clone refused the ATSH itself with "
+              "'?', so the true 3-digit form was never exercised. The header "
+              "here is 710, not 0710.",
     ),
     Arm(
         exp_id="EXP-18",
@@ -319,6 +326,44 @@ ARMS: list[Arm] = [
         can_mode="ATSP6 (CAN 11/500)", bitrate="500 kbit/s",
         data_rate="n/a (classical CAN)",
         addressing="ATSH 000746 (climate, 11-bit) / ATCP 00 / ATCRA 000007B0",
+    ),
+    Arm(
+        exp_id="EXP-20",
+        hypothesis="The clone's 11-bit (ATSP6) send path may cap at 7 data "
+                   "bytes, so the 8-byte ISO-TP single frame this project "
+                   "builds ('03 22 2A B8 55 x8') is refused with '?'. This arm "
+                   "is EXP-18 with one padding byte dropped, so the frame "
+                   "length is the only variable: if it answers where EXP-18 "
+                   "was refused, the 11-bit send limit is 7 bytes.",
+        request="ATSP6, ATCP 00, ATSH 000710, ATCAF0, ATCRA 0000077A, then "
+                "03 22 2A B8 55 x7 (7-byte frame)",
+        expected="62 2A B8 <data> from 0x77A, or NO DATA. A '?' here rules out "
+                 "the 8-byte length as the cause, leaving the header form "
+                 "(EXP-17) as the remaining variable.",
+        config=["ATSP6", "ATCP 00", "ATSH 000710", "ATCAF0",
+                "ATCRA 0000077A"],
+        can_mode="ATSP6 (CAN 11/500)", bitrate="500 kbit/s",
+        data_rate="n/a (classical CAN)",
+        addressing="ATSH 000710 (energy, 11-bit) / ATCP 00 / ATCRA 0000077A",
+        notes="Same adapter state as EXP-18; only the frame is one byte "
+              "shorter. A single-frame ISO-TP message needs no padding, so "
+              "the vehicle sees the same request either way.",
+    ),
+    Arm(
+        exp_id="EXP-21",
+        hypothesis="The DC/DC module is 29-bit like the BMS, so it should "
+                   "need its receive filter pinned exactly as the BMS did. "
+                   "EXP-10 read it with no ATCRA and was refused; this arm "
+                   "adds ATCRA 17FE00B9 and nothing else.",
+        request="ATSP7, ATCP 17, ATSH FC00B9, ATCAF0, ATCRA 17FE00B9, then "
+                "03 22 46 5B 55 x8",
+        expected="62 46 5B <data> from 17FE00B9, or NO DATA. If this answers "
+                 "where EXP-10 was refused, the DC/DC module needed only the "
+                 "per-module receive filter, exactly like the BMS.",
+        config=["ATCP 17", "ATSH FC00B9", "ATCAF0", "ATCRA 17FE00B9"],
+        can_mode=MEB["can_mode"], bitrate=MEB["bitrate"],
+        data_rate=MEB["data_rate"],
+        addressing="ATSH FC00B9 (DC/DC, 29-bit) / ATCP 17 / ATCRA 17FE00B9",
     ),
 ]
 

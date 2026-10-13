@@ -435,36 +435,55 @@ def test_energy_module_11bit(t: Elm327Transport) -> None:
     send_raw(t, f"ATSP{PINNED_PROTOCOL}", "restore 29-bit")
 
 
-def test_energy_module_11bit_3digit_header(t: Elm327Transport) -> None:
-    """EXP-17: Energy module with a 3-digit ATSH under ATSP6.
+def test_energy_module_3digit_header_atcra(t: Elm327Transport) -> None:
+    """EXP-17: Energy module with the protocol's own 3-digit ATSH under ATSP6.
 
     Under protocol 6 (11-bit) the ELM327 specifies a 3-digit header, but
     set_module() always sends the 6-digit MEB form ('ATSH 000710'). The clone
-    accepts it -- no '?' on the AT command itself -- and then refuses the data
-    frame with '?'. The simulator (a proper ELM327 emulation) answers anyway,
-    which is why the suite stays green while the car refuses.
+    accepts that and then refuses the data frame with '?'. The simulator (a
+    proper ELM327 emulation) answers either way, which is why the suite stays
+    green while the car refuses.
 
-    This arm isolates the header width as the single variable: same protocol,
-    same ATCP, same CAF, same frame. Only ATSH 0710 vs ATSH 000710 differs.
+    This arm is EXP-18 with the header narrowed to 3 digits, so header width is
+    the only variable. (The first version of this arm sent 'ATSH 0710' -- four
+    digits, which the clone refused at the ATSH step -- so it never exercised
+    the 3-digit form its own hypothesis named.)
     """
     begin("EXP-17")
-    log("=== EXP-17: Energy module 0x710 with 3-digit ATSH ===")
+    log("=== EXP-17: Energy module 0x710 with 3-digit ATSH 710 ===")
     send_raw(t, "ATSP6", "11-bit protocol")
     send_raw(t, "ATCP 00", "priority 0x00")
-    send_raw(t, "ATSH 0710", "energy module header (3-digit, as ATSP6 specifies)")
+    send_raw(t, "ATSH 710", "energy module header (3-digit, as ATSP6 specifies)")
     send_raw(t, "ATCAF0", "disable CAF")
+    send_raw(t, "ATCRA 0000077A", "pin receive filter to energy response id")
 
-    payload = "222AB8"
-    wire = f"03{payload}5555555555555555"[:16]
-    send_raw(t, wire, "Energy 0x2AB8 (3-digit header)")
+    for payload in ("222AB8", "222AB2", "222AF7"):
+        wire = f"03{payload}5555555555555555"[:16]
+        send_raw(t, wire, f"Energy {payload[2:]} (3-digit header)")
 
-    payload = "222AB2"
-    wire = f"03{payload}5555555555555555"[:16]
-    send_raw(t, wire, "Energy 0x2AB2 (3-digit header)")
+    send_raw(t, f"ATSP{PINNED_PROTOCOL}", "restore 29-bit")
 
-    payload = "222AF7"
-    wire = f"03{payload}5555555555555555"[:16]
-    send_raw(t, wire, "Energy 0x2AF7 (3-digit header)")
+
+def test_energy_module_7byte_frame(t: Elm327Transport) -> None:
+    """EXP-20: Energy module (11-bit) with a 7-byte frame instead of 8.
+
+    EXP-9/18/19 all sent the 8-byte hand-built single frame ('03 22 2A B8'
+    plus four 55 pad bytes) under ATSP6 and were refused with '?'. This arm is
+    EXP-18 with a single pad byte dropped, so frame length is the only
+    variable. A single-frame ISO-TP message does not need padding, so the
+    request the module sees is identical.
+    """
+    begin("EXP-20")
+    log("=== EXP-20: Energy module 0x710 with a 7-byte frame ===")
+    send_raw(t, "ATSP6", "11-bit protocol")
+    send_raw(t, "ATCP 00", "priority 0x00")
+    send_raw(t, "ATSH 000710", "energy module header (6-digit form)")
+    send_raw(t, "ATCAF0", "disable CAF")
+    send_raw(t, "ATCRA 0000077A", "pin receive filter to energy response id")
+
+    for payload in ("222AB8", "222AB2", "222AF7"):
+        wire = f"03{payload}55555555555555"[:14]      # 14 hex = 7 bytes
+        send_raw(t, wire, f"Energy {payload[2:]} (7-byte frame)")
 
     send_raw(t, f"ATSP{PINNED_PROTOCOL}", "restore 29-bit")
 
@@ -544,6 +563,27 @@ def test_dcdc_module_29bit(t: Elm327Transport) -> None:
     payload = "22465D"
     wire = f"03{payload}5555555555555555"[:16]
     send_raw(t, wire, "DC/DC 0x465D")
+
+
+def test_dcdc_module_with_atcra(t: Elm327Transport) -> None:
+    """EXP-21: DC/DC module (0x17FC00B9) with its receive filter pinned.
+
+    EXP-10 read the DC/DC module with the same framing as the working BMS arm
+    (EXP-5) but no ATCRA, and the clone refused the frame with '?'. The DC/DC
+    module is 29-bit like the BMS, so this arm adds ATCRA 17FE00B9 and changes
+    nothing else.
+    """
+    begin("EXP-21")
+    log("=== EXP-21: DC/DC module 0x17FC00B9 with ATCRA 17FE00B9 ===")
+    send_raw(t, f"ATSP{PINNED_PROTOCOL}", "29-bit protocol")
+    send_raw(t, "ATCP 17", "priority")
+    send_raw(t, "ATSH FC00B9", "DC/DC header")
+    send_raw(t, "ATCAF0", "disable CAF")
+    send_raw(t, "ATCRA 17FE00B9", "pin receive filter to DC/DC response id")
+
+    for payload in ("22465B", "22465D"):
+        wire = f"03{payload}5555555555555555"[:16]
+        send_raw(t, wire, f"DC/DC {payload[2:]} (with ATCRA)")
 
 
 def test_gateway_routing(t: Elm327Transport) -> None:
@@ -671,13 +711,19 @@ def run_all_experiments(tcp=None):
             test_energy_module_11bit(t)
             time.sleep(0.2)
 
-            # Energy module with a 3-digit header -- isolates header width as
-            # the single variable against the 6-digit form above.
-            test_energy_module_11bit_3digit_header(t)
+            # Energy module with the protocol's own 3-digit header. EXP-18 is
+            # the same arm with the 6-digit form, so header width is the only
+            # variable between them.
+            test_energy_module_3digit_header_atcra(t)
             time.sleep(0.2)
 
             # Energy module with receive filter pinned to 0x77A.
             test_energy_module_with_atcra(t)
+            time.sleep(0.2)
+
+            # EXP-20: same as EXP-18 but one pad byte shorter (7-byte frame),
+            # isolating frame length from header width.
+            test_energy_module_7byte_frame(t)
             time.sleep(0.2)
 
             # Climate module with receive filter pinned to 0x7B0.
@@ -686,6 +732,11 @@ def run_all_experiments(tcp=None):
 
             # DC/DC module (29-bit)
             test_dcdc_module_29bit(t)
+            time.sleep(0.2)
+
+            # EXP-21: DC/DC with its receive filter pinned, the one thing
+            # EXP-10 lacked.
+            test_dcdc_module_with_atcra(t)
             time.sleep(0.2)
 
             # Gateway routing

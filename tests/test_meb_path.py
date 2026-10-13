@@ -66,6 +66,12 @@ def read(t, hexcmd: str) -> dict:
     return uds.payloads_by_source(t.send_command(wire))
 
 
+def read_wire(t, wire: str) -> dict:
+    """Send an already-built ISO-TP frame and reassemble payloads by sender."""
+    from diagnostic import uds
+    return uds.payloads_by_source(t.send_command(wire))
+
+
 @pytest.mark.parametrize("did,expect_first_byte", [
     ("22028C", 0x62),   # SoC (BMS)
     ("221E3B", 0x62),   # pack voltage
@@ -133,7 +139,7 @@ def test_energy_module_answers_with_3digit_header(sim_port, did):
     t = transport(sim_port)
     try:
         t.send_command("ATSP6")
-        addressed(t, 0x00, "0710")          # 3-digit, as ATSP6 specifies
+        addressed(t, 0x00, "710")           # 3-digit, as ATSP6 specifies
         payloads = read(t, did)
     finally:
         t.close()
@@ -141,6 +147,33 @@ def test_energy_module_answers_with_3digit_header(sim_port, did):
     positive = [p for p in payloads.values() if p]
     assert positive, f"{did} got no answer with 3-digit header: {payloads}"
     assert positive[0][0] == 0x62
+    assert 0x77A in payloads, \
+        f"expected the 11-bit 0x77A header, got {list(payloads)}"
+
+
+@pytest.mark.parametrize("did", ["222AB8", "222AB2", "222AF7"])
+def test_energy_module_answers_with_7byte_frame(sim_port, did):
+    """EXP-20: a 7-byte hand-built single frame reaches the energy module.
+
+    EXP-9/18/19 sent an 8-byte frame under ATSP6 and the clone refused it with
+    '?'. This arm drops one pad byte, isolating frame length. The simulator
+    accepts any length, so this is a contract test: the harness must be able to
+    build and read back the shorter frame before the car is used to decide
+    whether the 8-byte send is the defect.
+    """
+    t = transport(sim_port)
+    try:
+        t.send_command("ATSP6")
+        addressed(t, 0x00, "000710")
+        wire = (f"{len(did) // 2:02X}{did}" + "55" * 8)[:14]   # 7 bytes
+        payloads = read_wire(t, wire)
+    finally:
+        t.close()
+
+    positive = [p for p in payloads.values() if p]
+    assert positive, f"{did} got no answer with a 7-byte frame: {payloads}"
+    assert positive[0][0] == 0x62
+    assert positive[0][1:3] == bytes.fromhex(did[2:])
     assert 0x77A in payloads, \
         f"expected the 11-bit 0x77A header, got {list(payloads)}"
 
@@ -157,6 +190,29 @@ def test_dcdc_answers_on_its_29_bit_header(sim_port, did):
 
     positive = [p for p in payloads.values() if p]
     assert positive, f"{did} got no answer at 0xB9: {payloads}"
+    assert positive[0][0] == 0x62
+    assert 0x17FE00B9 in payloads, list(payloads)
+
+
+@pytest.mark.parametrize("did", ["22465B", "22465D"])
+def test_dcdc_answers_with_receive_filter(sim_port, did):
+    """EXP-21: the DC/DC module with its receive filter pinned.
+
+    EXP-10 read the DC/DC module with the same framing as the working BMS arm
+    and no ATCRA, and was refused. This arm adds ATCRA 17FE00B9, which is the
+    only difference from EXP-10. The simulator ignores filters, so this test
+    asserts the harness programs the filter and still reaches the module.
+    """
+    t = transport(sim_port)
+    try:
+        addressed(t, 0x17, "FC00B9")
+        t.send_command("ATCRA 17FE00B9")
+        payloads = read(t, did)
+    finally:
+        t.close()
+
+    positive = [p for p in payloads.values() if p]
+    assert positive, f"{did} got no answer at 0xB9 with ATCRA: {payloads}"
     assert positive[0][0] == 0x62
     assert 0x17FE00B9 in payloads, list(payloads)
 
@@ -245,5 +301,6 @@ def test_experiment_matrix_runs_end_to_end(sim_port, capsys):
 
     run_all_experiments(tcp=("127.0.0.1", sim_port))
     out = capsys.readouterr().out
-    for exp in ("EXP-1", "EXP-4", "EXP-5", "EXP-9", "EXP-13"):
+    for exp in ("EXP-1", "EXP-4", "EXP-5", "EXP-9", "EXP-13", "EXP-17",
+                "EXP-18", "EXP-20", "EXP-21"):
         assert exp in out, f"{exp} never ran"
