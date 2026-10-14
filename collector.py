@@ -226,7 +226,7 @@ class Collector:
         it, so a positive answer identifies the ECU that really holds that
         data.
 
-        Statuses: responder | no-response | nrc-<code> |
+        Statuses: responder | refused | nrc-<code> | no-response |
         no-dids-registered. Never writes.
         """
         results: dict[str, str] = {}
@@ -259,7 +259,7 @@ class Collector:
                 continue
             status = "no-response"
             try:
-                payloads = self.conn.functional_probe(
+                payloads, refused = self.conn.functional_probe_with_reason(
                     f"22{did:04X}",
                     f"UDS 0x22 DID 0x{did:04X} discovery probe ({key}"
                     + (f", module {spec.tx29:08X}" if spec.tx29 else
@@ -268,6 +268,7 @@ class Collector:
             except CommunicationError as exc:
                 log.debug("ECU %s probe failed: %s", key, exc)
                 payloads = {}
+                refused = False
             for src, p in payloads.items():
                 if (p and p[0] == 0x62 and len(p) >= 3
                         and ((p[1] << 8) | p[2]) == did):
@@ -276,6 +277,8 @@ class Collector:
                     break
                 if p and p[0] == 0x7F and len(p) > 2 and status == "no-response":
                     status = f"nrc-{p[2]:02X}"
+            if refused and status == "no-response":
+                status = "refused"
             self.repo.upsert_ecu(self.vehicle_id, key, spec.name, spec.tx,
                                  spec.rx, status, spec.doc_status)
             results[key] = status
@@ -290,7 +293,8 @@ class Collector:
         # per slow phase -- skip it and say why.
         bat = results.get("bat_mgmt", "")
         if self._cells_readable and (bat.startswith("nrc-")
-                                     or bat == "no-response"):
+                                     or bat == "no-response"
+                                     or bat == "refused"):
             self._cells_readable = False
             log.info("Cell sweep disabled: battery DIDs answer %r on this "
                      "vehicle (BMS not exposed via the OBD surface)", bat)

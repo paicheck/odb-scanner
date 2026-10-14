@@ -117,8 +117,8 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
 
     def bms_refusal():
         """The bat_mgmt discovery status when it proves the battery DIDs are
-        refused through the OBD surface (NRC / no-response), else None. Pages
-        use it to explain WHY the battery data is empty instead of looking
+        refused through the OBD surface (NRC / no-response / refused), else None.
+        Pages use it to explain WHY the battery data is empty instead of looking
         broken -- on such cars the BMS sits on CAN-EV behind the gateway."""
         _, vid = vehicle_and_id()
         if not vid:
@@ -126,7 +126,8 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         for row in repo.list_ecus(vid):
             if row["key"] == "bat_mgmt":
                 status = str(row["status"] or "")
-                if status.startswith("nrc-") or status == "no-response":
+                if (status.startswith("nrc-") or status == "no-response"
+                        or status == "refused"):
                     return status
         return None
 

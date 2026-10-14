@@ -52,9 +52,10 @@ def cmd_discover(cfg) -> int:
                 print(f"  {key:<10} {status}{where}")
             print("\nNOTE: probes are functional (see "
                   "diagnostic/elm327.py set_header): 'no-response' means no "
-                  "ECU answered that DID functionally, which may simply mean "
-                  "it is not reachable with this adapter — see README 'What "
-                  "this can and cannot access'.")
+                  "ECU answered that DID functionally, 'refused' means the "
+                  "adapter explicitly refused the request ('?'), which may "
+                  "simply mean it is not reachable with this adapter — see "
+                  "README 'What this can and cannot access'.")
             dtcs = c.read_and_store_dtcs()
             print(f"DTCs found: {dtcs or 'none'}")
         finally:

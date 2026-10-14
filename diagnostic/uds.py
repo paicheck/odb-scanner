@@ -378,6 +378,19 @@ def reassemble(frames: list[bytes]) -> bytes | None:
     return bytes(data[:total])
 
 
+def adapter_refused(lines: list[str]) -> bool:
+    """Detect if the adapter explicitly refused a request (returned '?').
+
+    The ELM327 returns a single '?' line when the parser refuses a command
+    (e.g. frame too long for the current protocol, invalid syntax). This is
+    distinct from 'NO DATA' (bus silence) or a timeout.
+    """
+    for ln in lines:
+        if ln.strip() == "?":
+            return True
+    return False
+
+
 def payloads_by_source(lines: list[str]) -> dict[int | None, bytes | None]:
     """Reassemble cleaned ELM327 lines per responding ECU.
 

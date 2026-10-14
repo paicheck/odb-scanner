@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS ecus (
     vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
     key TEXT NOT NULL,
     name TEXT, tx_id INTEGER, rx_id INTEGER,
-    status TEXT,                  -- responder | no-response | nrc-<code>
+    status TEXT,                  -- responder | refused | nrc-<code> |
+                                  -- no-response | no-dids-registered
     doc_status TEXT,
     first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
     UNIQUE(vehicle_id, key)

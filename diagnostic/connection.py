@@ -102,6 +102,17 @@ class DiagnosticConnection:
         """
         return uds.payloads_by_source(self._transmit(hexcmd, ecu, purpose))
 
+    def functional_probe_with_reason(self, hexcmd: str, purpose: str,
+                                     ecu: ECUSpec | None = None) \
+            -> tuple[dict[int | None, bytes | None], bool]:
+        """Like functional_probe but also returns whether the adapter refused.
+
+        Returns (payloads_by_header, refused) where refused is True if the
+        adapter explicitly refused the request (returned '?').
+        """
+        lines = self._transmit(hexcmd, ecu, purpose)
+        return uds.payloads_by_source(lines), uds.adapter_refused(lines)
+
     # -- UDS read ------------------------------------------------------------
     def read_did(self, ecu: ECUSpec, did: int) -> bytes:
         """UDS 0x22 ReadDataByIdentifier, sent functionally.

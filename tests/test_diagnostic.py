@@ -214,6 +214,17 @@ def test_18db_prefix_still_strips_and_headerless_lines_stay_payloads():
         (bytes.fromhex("06421E3B0FA0AA"), None)
 
 
+def test_adapter_refused_detects_question_mark():
+    """adapter_refused returns True when ELM327 returns '?' (parser refusal)."""
+    lines_with_refusal = ["OK", "?", "NO DATA"]
+    lines_without = ["OK", "NO DATA", "SEARCHING..."]
+    assert uds.adapter_refused(lines_with_refusal) is True
+    assert uds.adapter_refused(lines_without) is False
+    assert uds.adapter_refused([]) is False
+    assert uds.adapter_refused(["   ?   "]) is True  # whitespace tolerant
+    assert uds.adapter_refused(["???"]) is False  # only exact '?' counts
+
+
 class _StubTransport:
     """Stands in for a serial link: records commands, scripts replies."""
 
@@ -3117,6 +3128,9 @@ def test_cell_sweep_skipped_when_battery_dids_are_refused(repo, tmp_path):
         """Every functional probe answers NRC requestOutOfRange."""
         def functional_probe(self, hexcmd, purpose, ecu=None):
             return {0x18DAF10A: bytes([0x7F, 0x22, 0x31])}
+
+        def functional_probe_with_reason(self, hexcmd, purpose, ecu=None):
+            return {0x18DAF10A: bytes([0x7F, 0x22, 0x31])}, False
 
         def read_did(self, ecu, did):
             raise NegativeResponseError(0x22, 0x31)

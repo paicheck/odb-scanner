@@ -243,6 +243,11 @@ def resolve_anchor(path: Path, override: str | None,
         f"was correct. Pass --anchor to state it yourself.")
 
 
+def _parse_eu_float(s: str) -> float:
+    """Parse a float that may use comma as decimal separator (European format)."""
+    return float(s.replace(",", "."))
+
+
 def read_rows(path: Path) -> list[dict]:
     """Parse the export. Semicolon-delimited, every field quoted."""
     with open(path, newline="", encoding="utf-8-sig") as fh:
@@ -260,7 +265,7 @@ def read_rows(path: Path) -> list[dict]:
         if len(row) < 4 or not row[0].strip():
             continue
         try:
-            seconds = float(row[0])
+            seconds = _parse_eu_float(row[0])
         except ValueError:
             print(f"  line {lineno}: SECONDS {row[0]!r} is not a number, "
                   f"skipped")
@@ -397,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
                     continue
 
             try:
-                value = float(row["value_raw"])
+                value = _parse_eu_float(row["value_raw"])
             except ValueError:
                 skipped_unknown[row["name"]] = \
                     skipped_unknown.get(row["name"], 0) + 1
