@@ -1,0 +1,33 @@
+# Personal overrides for config.yaml -- copy to config.local.yaml.
+#
+#   copy config.local.yaml.example config.local.yaml
+#
+# config.local.yaml is gitignored. Everything in it is deep-merged over
+# config.yaml, so list ONLY the keys you want to change: nested sections merge
+# key by key and any key you leave out keeps its config.yaml value.
+#
+# Delete a key here to fall back to config.yaml again.
+
+# adapter:
+#   port: COM7              # Device Manager port; omit for autodetect
+#   tcp_port: 35000         # only for adapter.type: elm327_tcp
+
+# ollama:
+#   model: llama3.1:8b
+#   host: http://localhost:11434
+
+# web:
+#   # config.yaml binds 0.0.0.0 so a tablet on the wifi can reach the
+#   # dashboard. Any bind other than 127.0.0.1 REQUIRES an access token; the
+#   # first run generates one, writes it to this file, and prints the URL.
+#   # Setting it here overrides that generated value.
+#   host: 127.0.0.1         # loopback only: no token, not reachable by others
+#   # auth_token: "paste-the-token-here"   # or let it be generated for you
+
+# database:
+#   path: data/real_car.db
+#   backup_dir: backups     # where `main.py backup` writes snapshots
+
+# analysis:
+#   trend_window_days: 30
+#   charging_window_days: 90

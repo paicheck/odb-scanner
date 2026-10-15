@@ -7,7 +7,7 @@ mode 03 returns legislated emissions DTCs only (VW-specific DTCs need UDS).
 """
 from __future__ import annotations
 
-from .uds import ProtocolError, line_to_frame, reassemble
+from .uds import ProtocolError, payloads_by_source
 
 DTC_LETTERS = {0b00: "P", 0b01: "C", 0b10: "B", 0b11: "U"}
 
@@ -18,31 +18,45 @@ def decode_obd2_dtc(b1: int, b2: int) -> str:
 
 
 def _payload_after(lines: list[str], marker: bytes) -> bytes | None:
-    """Reassemble ELM lines, then return the bytes starting at `marker`."""
-    frames = [f for f in (line_to_frame(ln) for ln in lines) if f]
-    payload = reassemble(frames)
-    if payload is None:
-        return None
-    idx = payload.find(marker)
-    if idx < 0:
-        return None
-    return payload[idx:]
+    """Reassemble ELM lines per responding ECU, then return the bytes
+    starting at `marker` from the first payload that contains it.
+
+    Several ECUs may answer one functional request (and some of them
+    negatively); picking per sender is what keeps their frames apart.
+    """
+    for payload in payloads_by_source(lines).values():
+        if payload is None:
+            continue
+        idx = payload.find(marker)
+        if idx >= 0:
+            return payload[idx:]
+    return None
 
 
 def parse_vin_response(lines: list[str]) -> str:
     """Parse mode 09 02 output.
 
-    Handles (1) headers-on ISO-TP frames (ATH1) and (2) the header-off
-    ELM format with '014' line-count preamble and '0:'/'1:' index prefixes.
+    Handles (1) ISO-TP frames (headers-on 11-bit or 29-bit, or headers
+    off), reassembled per responding ECU so that several ECUs answering
+    one functional request cannot corrupt each other's frames, and (2)
+    the header-off ELM format with '014' line-count preamble and
+    '0:'/'1:' index prefixes.
     """
-    # 1) ISO-TP frame reconstruction (headers-on)
-    frames = [f for f in (line_to_frame(ln) for ln in lines) if f]
-    payload = reassemble(frames) if frames else None
-    if payload:
+    # 1) per-responder ISO-TP reassembly
+    payloads = payloads_by_source(lines)
+    for payload in payloads.values():
+        if not payload:
+            continue
         vin = _vin_from_payload(payload)
         if vin:
             return vin
-    # 2) header-off indexed format
+    # 2) header-off indexed format. Also the fallback when "frames" parsed
+    # but held no VIN: the indexed format's '0:' prefixes merge into the
+    # hex and can fake a short single frame, so path 1 alone must not be
+    # trusted to rule the format out. (The corrupt-VIN regression
+    # 'WVW!ZZZE1ZM"P0870' came from 29-bit header lines failing path 1
+    # entirely and being concatenated raw down here -- those now parse
+    # per responder above, so a real VIN never reaches this path.)
     from .uds import clean_hex
 
     hexcat = ""
@@ -90,13 +104,29 @@ def parse_mode03(lines: list[str]) -> list[str]:
     payload = _payload_after(lines, b"\x43")
     if payload is None:
         return []
-    dtcs = []
+    # ISO 15765-4 (CAN) response: 43 <count> [(b1,b2) x count], where <count>
+    # is the number of DTCs reported. The count byte exists on CAN and not on
+    # the older serial protocols, and this transport is CAN-only (ATSP6/7), so
+    # it is always present.
+    #
+    # It used to be consumed as the high byte of the first DTC, which shifted
+    # every pair by one byte: '43 01 01 43' -- one DTC, P0143 -- decoded as
+    # P0101, and the real code's low byte was left dangling and dropped. Each
+    # result goes straight into upsert_dtc() and on to the dashboard and the
+    # LLM evidence packet, so this invented faults that were never set while
+    # losing the one that was.
     body = payload[1:]
-    # response: 43 + [(b1,b2) x N]; 0000 bytes are padding/empty
-    body = body[: (len(body) // 2) * 2]
+    if not body:
+        return []
+    count, body = body[0], body[1:]
+    if count == 0:
+        return []
+    body = body[: (len(body) // 2) * 2]     # whole pairs only
+    body = body[: count * 2]                # ignore any padding past the count
+    dtcs = []
     for i in range(0, len(body), 2):
         b1, b2 = body[i], body[i + 1]
-        if (b1, b2) == (0, 0):
+        if (b1, b2) == (0, 0):              # padding inside the counted region
             continue
         dtcs.append(decode_obd2_dtc(b1, b2))
     return dtcs
@@ -164,4 +194,86 @@ def parse_uds_dtc_response(payload: bytes) -> list[dict]:
             continue
         out.append({"code": decode_vag_dtc(b1, b2, b3), "status_byte": status})
     return out
+
+
+def encode_vag_dtc(code: str) -> bytes:
+    """Inverse of decode_vag_dtc: 'U112300' -> b'\\xD1\\x23\\x00'.
+
+    Raises ValueError on anything malformed. Fail closed: these bytes go
+    on the wire inside a 0x19 0x04 request, so a guessed encoding is
+    worse than no request at all.
+    """
+    inverse = {letter: bits for bits, letter in DTC_LETTERS.items()}
+    c = (code or "").strip().upper()
+    if len(c) != 7 or c[0] not in inverse:
+        raise ValueError(f"Malformed DTC code: {code!r}")
+    try:
+        d1 = int(c[1])
+        if not 0 <= d1 <= 3:
+            raise ValueError(f"DTC digit out of range: {code!r}")
+        b1 = (inverse[c[0]] << 6) | (d1 << 4) | int(c[2], 16)
+        b2 = (int(c[3], 16) << 4) | int(c[4], 16)
+        b3 = int(c[5:7], 16)
+    except ValueError as exc:
+        raise ValueError(f"Malformed DTC code: {code!r}") from exc
+    return bytes([b1, b2, b3])
+
+
+def parse_uds_dtc_snapshot_response(payload: bytes) -> list[dict]:
+    """Parse UDS 0x19 0x04 (reportDTCSnapshotRecordNumber) positive response.
+
+    Layout [documented ISO 14229]: 59 04 <statusAvailabilityMask>, then
+    DTC(3) <statusOfDTC>(1), then the snapshot records for that DTC:
+    <recordNumber>(1) <numberOfIdentifiers>(1) and identifier blocks of
+    DID(2) + data. A recordNumber of 0xFF means the ECU stores no
+    snapshot for this DTC.
+
+    Snapshot DATA content and per-identifier lengths are
+    manufacturer-defined (VAG does not frame them), so only
+    single-identifier records can be split reliably; everything else is
+    preserved raw rather than guessed. Requests are per-DTC, so only the
+    first DTC block is parsed (mask-based multi-DTC reads are not used).
+
+    Returns [{'code': str, 'status_byte': int, 'records':
+              [{'record': int, 'identifiers': [int, ...],
+                'data': {did_hex: raw_hex} | None, 'raw': str}]}]
+    """
+    if len(payload) < 7 or payload[0] != 0x59 or payload[1] != 0x04:
+        return []
+    entry = {"code": decode_vag_dtc(payload[3], payload[4], payload[5]),
+             "status_byte": payload[6], "records": []}
+    body = payload
+    i = 7
+    while i < len(body):
+        record = body[i]
+        i += 1
+        if record == 0xFF:          # ISO: no snapshot records stored
+            break
+        if i >= len(body):
+            break
+        num_ids = body[i]
+        i += 1
+        identifiers: list[int] = []
+        for _ in range(num_ids):
+            if i + 2 > len(body):
+                break
+            identifiers.append((body[i] << 8) | body[i + 1])
+            i += 2
+        rest = body[i:].hex().upper()
+        data = None
+        if num_ids == 1 and identifiers and rest:
+            # Single identifier: the remaining bytes are unambiguously its
+            # data (nothing else can follow within this DTC's record).
+            data = {f"{identifiers[0]:04X}": rest}
+            i = len(body)
+        entry["records"].append({"record": record,
+                                 "identifiers": identifiers,
+                                 "data": data, "raw": rest})
+        if num_ids != 1:
+            # Multiple identifiers with unframed data: the next record
+            # boundary cannot be located without guessing. Stop here; the
+            # raw bytes are preserved (and the full response lives in the
+            # tx_log anyway).
+            break
+    return [entry]
 

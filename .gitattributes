@@ -1,0 +1,5 @@
+# The Windows shortcuts are .bat files and must keep CRLF endings: cmd.exe
+# misparses labels and goto in a .bat saved with bare LF, and the symptom is
+# a shortcut that silently does nothing. Without this, git's default text
+# handling would rewrite them to LF on checkout on some platforms.
+*.bat text eol=crlf

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Where each measurement comes from</h2>
+
+<div class="warn">
+  A value only counts as <strong>live</strong> if it was read from the car
+  recently. Anything carried over from a Car Scanner export is
+  <strong>imported evidence</strong>, not a reading this tool made &mdash; it is
+  shown because it is real, but it must not be read as current. Nothing on this
+  page is ever filled in with a substitute: a measurement with no reading shows
+  no value at all.
+</div>
+
+<div class="cards">
+  <div class="card">
+    <h3>Live</h3>
+    <div class="big">{{ counts.live }}</div>
+    <div class="note">read from the car recently</div>
+  </div>
+  <div class="card">
+    <h3>Imported</h3>
+    <div class="big">{{ counts.imported }}</div>
+    <div class="note">from a Car Scanner export, not read here</div>
+  </div>
+  <div class="card">
+    <h3>Stale</h3>
+    <div class="big">{{ counts.stale }}</div>
+    <div class="note">read once, not refreshed</div>
+  </div>
+  <div class="card">
+    <h3>Unavailable</h3>
+    <div class="big">{{ counts.unavailable }}</div>
+    <div class="note">known to this car, never read</div>
+  </div>
+  <div class="card">
+    <h3>Unverified scale</h3>
+    <div class="big">{{ counts.unverified }}</div>
+    <div class="note">decoder is reverse-engineered, not from a VW document</div>
+  </div>
+</div>
+
+<table style="margin-top:16px;">
+  <tr>
+    <th>Measurement</th><th>Value</th><th>State</th><th>Source</th>
+    <th>When</th>
+  </tr>
+  {% for row in sources %}
+  <tr>
+    <td>
+      {{ row.name }} <span style="color:#888;font-size:12px;">{{ row.key }}</span>
+      {% if row.unverified %}<span class="tag" style="background:#fff3cd;color:#7a5d00;">unverified scale</span>{% endif %}
+    </td>
+    <td>
+      {% if row.value is none %}
+        <span style="color:#999;">&mdash;</span>
+      {% else %}
+        {{ '%.4g'|format(row.value) }}{% if row.unit %} {{ row.unit }}{% endif %}
+      {% endif %}
+    </td>
+    <td>
+      {% if row.state == 'live' %}<span class="tag" style="background:#d4f4dd;color:#136b2c;">live</span>
+      {% elif row.state == 'imported' %}<span class="tag" style="background:#dbe7fb;color:#1b4f8f;">imported</span>
+      {% elif row.state == 'stale' %}<span class="tag" style="background:#fff3cd;color:#7a5d00;">stale</span>
+      {% else %}<span class="tag" style="background:#eceff1;color:#546e7a;">unavailable</span>{% endif %}
+      {% if row.known and row.known > 1 %}
+        <span style="color:#888;font-size:12px;">{{ row.live }} live / {{ row.known }} known</span>
+      {% endif %}
+    </td>
+    <td style="font-size:12px;color:#666;">{{ row.source or '—' }}</td>
+    <td style="font-size:12px;color:#666;">{{ row.ts or '—' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

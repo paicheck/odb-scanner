@@ -28,6 +28,44 @@ This system performs **no writes to the vehicle**. Enforced structurally in
   (safety manifest).
 * The LLM has no path to the adapter whatsoever.
 
+**One deliberate exception: `tools/elm_console.py` is not read-only.** It is a
+raw console that sends whatever you type, with no allow-list, so `2E`, `31`,
+`1002` and `14` reach the vehicle if you enter them. That is the point of a
+discovery tool, and it is why the guarantee above does not extend to it. It
+says so on startup. Everything else — `collect`, `discover`, `doctor`,
+`guard-test`, the dashboard — goes through the allow-list.
+
+### Network exposure — read this before connecting it to anything
+
+`config.yaml` binds the dashboard to `0.0.0.0` so a tablet on the same Wi-Fi
+can open it. Because that bind is reachable from the network, the dashboard
+**requires an access token** (`web/auth.py`):
+
+* On the first run a token is generated, written to `config.local.yaml`
+  (gitignored) and printed at startup, along with the URL to open.
+* Opening `http://<this-machine>:8000/?k=<token>` once exchanges it for an
+  `HttpOnly` cookie, so the token stops appearing in the address bar — and
+  therefore in browser history, bookmarks, screenshots and `Referer` headers.
+  Every later visit works normally.
+* Bind to `127.0.0.1` instead and no token is needed at all: nothing but that
+  machine can open a loopback socket, so there is nobody to authenticate.
+
+Set `web.auth_token` in `config.local.yaml` (or export `ODB_TOKEN`) to choose
+the value yourself. There is still **no CSRF protection**, and the token is
+sent in the clear over plain HTTP — which is the assumption for a home network.
+Further boundaries:
+
+* Do not port-forward or expose the port to the internet.
+* On shared or untrusted Wi-Fi, bind to `127.0.0.1` and reach it over an SSH
+  tunnel, or put a reverse proxy with TLS in front of it.
+* `POST /ai/ask` is rate-limited only by an input length cap. Anything that can
+  authenticate can spend minutes of GPU time per request.
+* The read-only guarantee described above is about the **vehicle**: no request
+  the dashboard can trigger writes to the car. It says nothing about who can
+  reach the dashboard itself.
+* HTML is rendered through Jinja2 with autoescaping on, and no template opts out
+  via `|safe`, so stored vehicle values are not an injection vector.
+
 ## What a cheap ELM327 CAN and CANNOT access on an ID.3
 
 | Data | Standard OBD-II | UDS (this project) |
@@ -50,11 +88,26 @@ corrected later without data loss.
 ```bat
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-copy config.yaml config.local.yaml   :: optional personal overrides
+copy config.local.yaml.example config.local.yaml   :: optional, gitignored
 ```
 
+`config.yaml` holds the shareable defaults and is meant to be committed.
+`config.local.yaml` is optional and gitignored: anything in it is deep-merged
+over `config.yaml`, so you only need to list the keys you want to change.
+
+```yaml
+# config.local.yaml -- personal overrides only
+adapter:
+  port: COM7          # nested sections merge, so adapter.baudrate is kept
+ollama:
+  model: llama3.1:8b
+```
+
+The same three Ollama keys can be set as the environment variables
+`OLLAMA_HOST`, `OLLAMA_MODEL` and `OLLAMA_TIMEOUT`, which win over both files.
+
 Install [Ollama](https://ollama.com) and pull a model, e.g.
-`ollama pull llama3.1:8b`. Set `OLLAMA_MODEL` in `config.yaml`.
+`ollama pull llama3.1:8b`.
 
 ## Testing without a car
 
@@ -87,6 +140,66 @@ Manual equivalent, in two terminals:
 .venv\Scripts\python main.py seed
 ```
 
+## Running the stack continuously
+
+### If the adapter disappears
+
+A Bluetooth SPP link drops — the phone sleeps, walks out of range, or the
+ignition goes off — and the collector tells the difference between *the adapter
+is gone* and *the vehicle is merely asleep*. A car that is off simply refuses
+its DIDs; an adapter that has vanished fails every read, including the OBD-II
+handshake that needs no ECU cooperation. When a cycle fails entirely, the
+collector stops cycling, records the outage as an event, and reconnects on a
+backoff from 5 s to 5 minutes rather than spinning. A successful reconnect
+forces a full slow pass, because the vehicle may have driven or charged while
+the collector was blind.
+
+Previously the two cases looked identical: `collect_once()` returned an empty
+snapshot, the loop kept running at `poll_interval` forever, and each cycle
+wrote a failed row for every registered DID — 146 rows per 3 cycles, with
+nothing in the log to say why.
+
+### If you would rather not type commands
+
+On Windows there are double-clickable shortcuts next to this file, and
+`HOW_IT_WORKS.txt` explains them in plain English. Start with
+**`5_TRY_IT_NOW.bat`** (needs no car) then **`1_START_COLLECTING.bat`**.
+
+| Shortcut | Does |
+|---|---|
+| `1_START_COLLECTING.bat` | check the link, then start collecting + dashboard |
+| `2_DOCTOR.bat` | work out why it will not connect |
+| `2_DOCTOR_ALL_PORTS.bat` | try every COM port (Windows Bluetooth creates two) |
+| `3_STOP.bat` | stop the collector and dashboard |
+| `4_STATUS.bat` | what is running right now |
+| `5_TRY_IT_NOW.bat` | test the whole pipeline with no car |
+
+They only wrap the commands below, so anything you can do here you can do
+by double-clicking instead.
+
+### Doing it by hand
+
+For a live dashboard instead of a one-shot test, `tools/start_scanner.py`
+starts the simulator, collector and dashboard detached, writes logs to
+`data/logs/{simulator,collector,web}.log` and remembers the pids in
+`data/logs/stack.json`. Re-running it is safe: whatever is already up is
+reported and left alone, so nothing is started twice.
+
+```bat
+.venv\Scripts\python tools\start_scanner.py            :: simulator + collector + dashboard
+.venv\Scripts\python tools\start_scanner.py --cycles 1  :: single collection pass, then stop collecting
+.venv\Scripts\python tools\start_scanner.py --no-web    :: adapter + collector only
+.venv\Scripts\python tools\start_scanner.py --status    :: what is running right now
+.venv\Scripts\python tools\start_scanner.py --stop      :: stop everything it started
+
+start http://127.0.0.1:8000                             :: dashboard
+```
+
+The adapter link stays open between polls (`collector.poll_interval`), just like
+a real ELM327 session, so the simulator must not treat an idle read timeout as a
+disconnect — `tools/smoke_test.py` guards that behaviour with an explicit idle
+gap check.
+
 ## With the real car
 
 1. Ignition on (or vehicle awake), adapter plugged into the OBD port.
@@ -96,6 +209,10 @@ Manual equivalent, in two terminals:
    which DIDs; NRC 0x31 answers are recorded, not errors.
 4. `python main.py collect` repeatedly / on a schedule (Task Scheduler) to
    build history. Phase-3 DIDs will be refined against your specific car.
+5. If commands answer `NO DATA`, the vehicle is asleep: the adapter powers
+   itself from the OBD port, but the gateway only answers with ignition on /
+   'ready' mode. Retry after switching ignition on. `python tools/elm_console.py`
+   opens a raw ELM327 console — send `0100` to check whether anything answers.
 
 ## Unit tests
 
@@ -103,6 +220,41 @@ Manual equivalent, in two terminals:
 .venv\Scripts\pip install pytest
 .venv\Scripts\python -m pytest tests -v
 ```
+
+107 tests, no car and no Ollama required. A few drive a fake adapter over a
+real socket and are marked `slow`, so the quick inner loop is:
+
+```bat
+.venv\Scripts\python -m pytest -m "not slow"   :: 98 tests, ~2s
+.venv\Scripts\python -m pytest -m slow         :: the 9 that open sockets
+```
+
+### Linting
+
+```bat
+.venv\Scripts\pip install ruff
+.venv\Scripts\python -m ruff check .
+```
+
+Config lives in `pyproject.toml`. Two rules are switched off on purpose:
+`E402`, because imports sit next to the section they support, and `B905`,
+because the `zip()` calls here pair sequences the caller has already
+length-checked.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs lint, the fast tests, the full suite, the
+offline smoke test and `guard-test` on Python 3.11–3.14. The smoke test and
+the read-only guard are separate steps on purpose: they catch wiring breaks
+and safety regressions that the unit tests would not.
+
+### Dependency pinning
+
+`requirements.txt` holds the accepted version ranges. `requirements-lock.txt`
+pins the exact versions verified working (the 107 tests and the smoke test
+above) if you want a reproducible environment instead of the newest allowed.
+Only direct dependencies are pinned, so the same file is valid on Windows and
+on Linux/macOS, where the compiled wheels differ.
 
 ## Commands
 
@@ -115,8 +267,102 @@ Manual equivalent, in two terminals:
 | `python main.py serve` | Web dashboard at `localhost:8000` |
 | `python main.py report` | Print AI report to console (`--question "..."`) |
 | `python tools/smoke_test.py` | Offline end-to-end self-test (no car, no Ollama) |
+| `python tools/collect_acceptance.py` | One bounded live run, then check the database holds pack voltage / SoC / cells (`--sim` for an offline self-test) |
+| `python tools/elm_console.py` | Raw ELM327 console for live debugging (`--tcp` for simulator) |
+| `python tools/start_scanner.py` | Start/stop the simulated stack (`--status`, `--stop`) |
+| `python tools/import_carscanner.py "export.csv"` | Import a Car Scanner CSV as evidence labelled `imported` (`--dry-run` previews) |
 | `python main.py seed` | Load example 30-day dataset |
 | `python main.py guard-test` | Verify the read-only UDS guard |
+| `python main.py doctor` | **Work out why the adapter is not connecting** |
+| `python main.py prune --days 90` | Drop stale raw response bytes, keeping every parsed value |
+| `python main.py prune --days 90 --hard` | Delete history rows older than 90 days entirely |
+| `python main.py backup` | Consistent database snapshot (safe while a collector runs) |
+
+### Database growth
+
+An always-on collector appends a few hundred rows a minute, so an unattended
+database grows without bound. `prune` never runs automatically — deleting data
+is your call. The default drops only the verbatim vehicle bytes older than
+`--days`, keeping every parsed value, so trends and reports are unaffected.
+`--hard` also deletes the rows, and is the only way to reclaim the space
+promptly (it vacuums). Vehicles, ECUs, sessions, DTCs and generated reports are
+never pruned — and neither is `tx_log`, the safety manifest that records every
+request ever sent to the vehicle. That record exists to be kept, so neither
+prune mode touches it.
+
+### Logs
+
+`data/logs/<component>.log` rotates at 2 MB with three backups kept, so a
+collector left running for months cannot fill the disk and the recent past is
+always still on disk. The names match what the shortcuts tell you to look at:
+`collector.log`, `web.log`, `simulator.log`, `discover.log`. Short-lived
+commands (`guard-test`, `prune`, `backup`) share `maintenance.log`.
+
+`tools/start_scanner.py` separately captures each detached process's raw
+output — tracebacks and uvicorn's own handler — to `data/logs/<name>.out`,
+which it archives rather than appends to forever. The two are deliberately not
+the same file: the rotating log is the one to read.
+
+### Backups
+
+Nothing here backs itself up, so run `python main.py backup` before doing
+anything irreversible (a `--hard` prune, a schema change) and periodically
+afterwards. It uses SQLite's online backup API, so it is safe to run while a
+collector is writing: the result is a single consistent snapshot rather than a
+file copy that would silently miss everything still sitting in the write-ahead
+log. Snapshots are timestamped (`data/backups/real_car-<UTC>.db`) so one bad
+day cannot overwrite the last good copy. Change `database.backup_dir` in
+`config.local.yaml` to keep them on a different drive.
+
+## When it will not connect — run the doctor
+
+`NO DATA` from every request looks identical whether the cause is a wrong COM
+port, an unpaired Bluetooth link, a locked port, a pinned protocol or a sleeping
+car. `python main.py doctor` works out which layer stopped answering:
+
+```
+[1/8] Configuration ......... OK      adapter.port COM3
+[3/8] Port open ............. OK      COM3 opened
+[4/8] Adapter identity ...... OK      ATI  Veepeak BLE+ v3.1
+[5/8] Protocol negotiation .. FAIL    ATSP6 CAN 11-bit 500k  no answer
+                                         ATSP7 CAN 29-bit 500k  no answer
+                                         ...
+[6/8] OBD-II bus ............ FAIL    0100 -> NO DATA
+Verdict
+  1. The adapter works, but the car never answered. This is a vehicle-side or
+     power problem, not a tool problem.
+  1. Turn the ignition ON and leave it on.
+  2. Reseat the OBD plug...
+```
+
+It is read-only: every request that could reach the vehicle goes through
+`uds.validate_request`, so the tool cannot transmit a write even if edited.
+
+```
+python main.py doctor                      # configured adapter
+python main.py doctor --port COM7          # try another port
+python main.py doctor --all-ports          # probe every port until one opens
+python main.py doctor --only-config        # check settings without hardware
+python main.py doctor --tcp 127.0.0.1 35000  # simulator / TCP bridge
+```
+
+The three findings worth knowing about, because they are not guessable:
+
+* **Bluetooth SPP on Windows creates two COM ports** — an outgoing one that
+  carries your bytes and an incoming one that does not. The incoming port opens
+  cleanly and returns nothing at all, so it looks like a dead adapter. Stage 2
+  lists every port with its description and flags the one you configured.
+* **A refused `ATSP` is not a sleeping car.** If the adapter answers `?` to a
+  protocol change, it is pinned to whatever protocol it powered up with, and no
+  amount of waiting will help — unplug it fully to reset. Stage 5 records
+  refusals separately from silence precisely because the two otherwise look
+  identical.
+* **Only one process may hold the port.** The dashboard, `main.py collect` and
+  `tools/elm_console.py` all fail to open it while another holds it, and on
+  Bluetooth SPP there is no sharing at all.
+
+For raw bytes, `python tools/elm_console.py --no-init` shows exactly what is
+arriving when the doctor's verdict is not enough.
 
 ## Key limitations
 
@@ -135,3 +381,11 @@ Manual equivalent, in two terminals:
   re-scaled later without re-reading the car.
 * The LLM output is hypothesis-ranking with confidence levels, never a
   definitive diagnosis; the automated validator flags over-confident wording.
+* A per-day slope needs per-day data. The cell-delta trend reports
+  `insufficient_span` until the samples cover at least 1 day, because
+  extrapolating a slope in mV/day from a few seconds of polling yields
+  meaningless numbers. Override the 1-day floor per call via the
+  `min_span_days` argument to `analysis.battery.cell_delta_trend()`.
+* LLM reports are not persisted while the database has no vehicle row
+  (`llm_reports.vehicle_id` is `NOT NULL`); the report is still returned and a
+  `NOT PERSISTED` warning is attached.

@@ -6,11 +6,17 @@ without hard-coding the pattern: it is a time-window join.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def _parse(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
+
+
+def _iso_days_ago(days: float) -> str:
+    """Same stamp format and bound repository.py uses for its own windows."""
+    return (datetime.now(timezone.utc)
+            - timedelta(days=days)).isoformat(timespec="seconds")
 
 
 def correlate_dtc_with_sessions(repo, vehicle_id: int, days: int = 90,
@@ -18,7 +24,15 @@ def correlate_dtc_with_sessions(repo, vehicle_id: int, days: int = 90,
     """For each DTC occurrence, check whether a charging session ended
     within `window_hours` before it."""
     sessions = repo.charging_sessions(days, vehicle_id)
-    occurrences = repo.dtc_occurrences(vehicle_id)
+    # Window the occurrences too. They used to be fetched all-time with
+    # since=None, so an occurrence older than `days` was compared against a
+    # window it can never fall inside -- it can only ever fail to link, but it
+    # still inflated dtc_occurrences_considered, which sits in the LLM evidence
+    # packet next to a windowed sessions_considered. Two counts over different
+    # windows, presented as one finding, and the model is asked to reason about
+    # the gap. Measured at 500,002 occurrences considered against a 90-day
+    # window containing the same 500,002 but zero sessions.
+    occurrences = repo.dtc_occurrences(vehicle_id, since=_iso_days_ago(days))
     window = timedelta(hours=window_hours)
     links = []
     correlated_codes: set[str] = set()

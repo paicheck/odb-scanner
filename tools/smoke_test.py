@@ -48,7 +48,7 @@ def check(name: str, ok: bool | None, detail: str = "") -> bool:
 
 def scratch_config(port: int, db_path: str) -> Config:
     """config.yaml with the scratch DB and the simulator's TCP port."""
-    with open(DEFAULT_PATH, "r", encoding="utf-8") as fh:
+    with open(DEFAULT_PATH, encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
     data.setdefault("database", {})["path"] = db_path
     adapter = data.setdefault("adapter", {})
@@ -56,6 +56,9 @@ def scratch_config(port: int, db_path: str) -> Config:
     adapter["tcp_host"] = "127.0.0.1"
     adapter["tcp_port"] = port
     data.setdefault("collector", {})["read_cell_voltages"] = True
+    # Long enough that exactly one slow phase runs in any smoke run, so the
+    # cadence check below is deterministic rather than timing-dependent.
+    data["collector"]["slow_poll_interval"] = 3600.0
     return Config(data)
 
 
@@ -83,8 +86,13 @@ def run_adapter_checks(cfg: Config, cycles: int) -> None:
               f"{len(responders)} responder(s): {', '.join(responders) or 'none'}")
 
         snaps: list[dict] = []
+        per_cycle: list[int] = []
         for i in range(cycles):
+            before = repo.conn.execute(
+                "SELECT count(*) FROM measurements").fetchone()[0]
             snaps.append(col.collect_once())
+            per_cycle.append(repo.conn.execute(
+                "SELECT count(*) FROM measurements").fetchone()[0] - before)
             if i + 1 < cycles:
                 time.sleep(0.2)
         merged = {k: v for snap in snaps for k, v in snap.items()}
@@ -93,6 +101,41 @@ def run_adapter_checks(cfg: Config, cycles: int) -> None:
                            ("battery_temp", "battery temperature")):
             value = merged.get(key)
             check(f"collect: {label} decoded", value is not None, f"{value}")
+
+        # Regression guard for the idle-link bug: the real collector polls every
+        # collector.poll_interval, so the adapter link must survive an idle gap
+        # longer than the socket read timeout. The simulator used to close the
+        # connection on recv timeout, after which every later cycle silently
+        # stored nothing (empty snapshots were logged as "cycle N: {}").
+        idle_s = 1.2
+        time.sleep(idle_s)
+        before = repo.conn.execute(
+            "SELECT count(*) FROM measurements").fetchone()[0]
+        after_idle = col.collect_once()
+        per_cycle.append(repo.conn.execute(
+            "SELECT count(*) FROM measurements").fetchone()[0] - before)
+        check(f"link survives an idle gap of {idle_s:.1f}s between polls",
+              after_idle.get("pack_voltage") is not None,
+              f"pack_voltage={after_idle.get('pack_voltage')}")
+
+        # Adapter-load guard. collector.slow_poll_interval is pinned to 3600s above, so
+        # exactly one cycle may read the slow DIDs; every later cycle must cost
+        # only the fast DIDs.
+        fast_budget = len(col.registry.fast()) + 8
+        heavy = [n for n in per_cycle if n > fast_budget]
+        check("slow DIDs polled once per slow phase, not every cycle",
+              len(heavy) <= 1,
+              f"cycles over fast-only budget ({fast_budget}): {heavy or 'none'} "
+              f"| all cycles: {per_cycle}")
+
+        # Within one cycle no DID may be read twice. The per-cell DIDs are read
+        # by _sweep_cells(); if _slow_pass() also read them a cycle would cost
+        # ~224 measurements instead of ~122 and hammer the vehicle for nothing.
+        cycle_budget = len(col.registry.fast()) + len(col.registry.slow()) + 8
+        worst = max(per_cycle)
+        check("no DID polled twice within a cycle", worst <= cycle_budget,
+              f"worst cycle {worst} measurements, budget {cycle_budget} "
+              f"| all cycles: {per_cycle}")
 
         dtcs = col.read_and_store_dtcs()
         check("DTC read (OBD-II mode 03 + UDS 0x19 0x02)", True,
@@ -143,13 +186,18 @@ def run_web_checks(cfg: Config) -> None:
     except Exception as exc:  # pragma: no cover - optional test dependency
         check("web dashboard", None, f"test client unavailable: {exc}")
         return
+    # bind_host="127.0.0.1" is explicit because config.yaml ships 0.0.0.0 so a
+    # tablet can reach the dashboard, and a network-reachable bind now demands
+    # an access token. The smoke test runs in-process against a loopback client
+    # and has no use for the token, so it asks for the loopback behaviour
+    # directly rather than minting a credential it would only discard.
     try:
         from web.dashboard import create_app
-        client = TestClient(create_app(cfg))
-        for path in ("/", "/battery", "/charging", "/dtcs", "/ai"):
-            response = client.get(path)
-            check(f"web {path}", response.status_code == 200,
-                  f"HTTP {response.status_code}, {len(response.content)} bytes")
+        with TestClient(create_app(cfg, bind_host="127.0.0.1")) as client:
+            for path in ("/", "/battery", "/charging", "/dtcs", "/ai"):
+                response = client.get(path)
+                check(f"web {path}", response.status_code == 200,
+                      f"HTTP {response.status_code}, {len(response.content)} bytes")
     except Exception as exc:
         check("web dashboard", False, f"{type(exc).__name__}: {exc}")
 

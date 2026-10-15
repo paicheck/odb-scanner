@@ -1,0 +1,96 @@
+HOW TO RUN THIS -- plain English
+================================
+
+Double-click any of these. No typing.
+
+The numbers are the order to do things in. You never have to
+remember a command.
+
+
+BEFORE YOU DRIVE OUT (indoors, once)
+------------------------------------
+Pair the Veepeak adapter in Windows, plug it into the car,
+turn the ignition ON, then double-click:
+
+    5_TRY_IT_NOW.bat
+
+It takes about 20 seconds and needs no car. Every line should
+say PASS. If it does, the software is fine and any trouble from
+here on is the adapter or the car, not the program.
+
+Also run  2_DOCTOR.bat  indoors so you learn the answer before
+you are parked at a charger with a flat battery.
+
+
+IN THE CAR
+----------
+1. Turn the ignition ON and LEAVE IT ON. Not just on -- stay on.
+   The car drops off the OBD bus a few minutes after lock, so a
+   test started late will blame a sleeping car for no reason.
+
+2. Double-click  1_START_COLLECTING.bat
+
+   It checks the connection first. If the connection is not good
+   it says so in plain words and does NOT start collecting --
+   that is deliberate, because a collector pointed at the wrong
+   port would look like it was working while recording nothing.
+
+3. On the tablet, open  http://PC-IP-ADDRESS:8000
+   for example  http://192.168.1.42:8000
+
+   PC-IP-ADDRESS is this PC's address on the wifi network. The
+   START window reminds you. On the PC itself it is just
+   http://127.0.0.1:8000
+
+   The tablet and the PC must be on the same wifi network.
+
+4. When you are finished, double-click  3_STOP.bat
+
+
+THE FIVE SHORTCUTS
+------------------
+    5_TRY_IT_NOW.bat    test everything without a car
+    2_DOCTOR.bat        work out why it will not connect
+    1_START_COLLECTING.bat   check, then collect + dashboard
+    3_STOP.bat          stop the collector and dashboard
+    4_STATUS.bat        what is running right now
+
+    2_DOCTOR_ALL_PORTS.bat   try every COM port (see below)
+
+Read the words on screen. They say what happened and what to do
+next. Every window stays open until you press a key, so nothing
+scrolls away before you have read it.
+
+
+IF IT SAYS THE PORT IS WRONG
+----------------------------
+Windows creates TWO COM ports for a Bluetooth OBD adapter. The
+INCOMING one opens cleanly and returns total silence, so it looks
+exactly like a dead adapter. The OUTGOING one carries your bytes
+and is almost never COM3.
+
+Double-click  2_DOCTOR_ALL_PORTS.bat. It lists every port with a
+description. Use the one that says OUTGOING, write it into
+config.yaml under:
+
+    adapter:
+      port: COM7          <- whatever it says
+
+Then run  1_START_COLLECTING.bat  again.
+
+
+IF IT SAYS THE ADAPTER REFUSED TO CHANGE PROTOCOL
+-------------------------------------------------
+The adapter is pinned to whatever protocol it powered up with and
+no amount of waiting will help. Unplug it at BOTH ends, wait ten
+seconds, plug it back in. That resets most units.
+
+
+SAFETY
+------
+This tool is read-only. It cannot transmit a write to the car
+even if edited. It only asks the adapter what it is and reads
+diagnostic data.
+
+The dashboard has NO password and works only on a private
+network. Do not expose port 8000 to the internet.

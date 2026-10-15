@@ -42,7 +42,7 @@ class OBDInterface(ABC):
     @abstractmethod
     def is_open(self) -> bool: ...
 
-    def __enter__(self) -> "OBDInterface":
+    def __enter__(self) -> OBDInterface:
         self.open()
         return self
 
@@ -54,12 +54,17 @@ class OBDInterface(ABC):
 
 
 def detect_serial_ports() -> list[dict]:
-    """List available serial ports (USB ELM327/OBDLink adapters)."""
-    try:
-        from serial.tools import list_ports
-    except ImportError:  # pragma: no cover
-        return []
+    """List available serial ports (USB ELM327/OBDLink adapters).
+
+    Backward-compatible shape: a list of {port, description, hwid} dicts, which
+    is what doctor.py and Elm327Transport._autodetect_serial already consume.
+    The actual enumeration now lives in diagnostic.discovery so there is ONE
+    code path that talks to pyserial; this is a thin projection of it. The
+    import is lazy because discovery imports this module's exceptions, and a
+    module-level import here would be circular.
+    """
+    from .discovery import discover_serial_devices
     return [
-        {"port": p.device, "description": p.description, "hwid": p.hwid}
-        for p in list_ports.comports()
+        {"port": d.port, "description": d.description, "hwid": d.hwid}
+        for d in discover_serial_devices()
     ]

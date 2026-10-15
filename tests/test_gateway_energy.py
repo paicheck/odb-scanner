@@ -163,11 +163,43 @@ def test_car_scanner_atcra_argument_is_not_the_response_header():
 
 
 def test_gateway_read_addresses_the_gateway_ecu():
+    """The gateway DID read emits exactly one allow-listed 0x22 -- nothing else.
+
+    Addressing contract CHANGED when this branch merged the newer transport
+    (see connection._transmit). The old implementation called
+    set_header(ecu.tx)/set_receive_address(ecu.rx) before every read, so this
+    test used to assert that 'ATSH792' and 'ATCRA710' were emitted. The merged
+    transport is module-addressing driven: it only touches the adapter's
+    addressing when the transport negotiated MEB addressing AND the ECUSpec
+    carries a 29-bit module address (tx29/rx29). ECUS['gate'] carries none --
+    its 11-bit 0x792/0x710 pair is still the unproven, inferred one -- so the
+    request goes out functionally and no ATSH/ATCRA is sent at all.
+
+    That is a stricter read-only guarantee than before (one command on the
+    wire, not three), but it leaves the response UNFILTERED, so the answering
+    CAN id is no longer constrained by ATCRA. See
+    docs/investigation/meb_gateway_energy.md 3.1 -- the header is still not
+    verified against ECUS['gate'].rx on the read path.
+    """
     t, c = conn_with({"222AB8": frame(bytes.fromhex("622AB8") + REC_2AB8)})
     c.read_did(GATE, 0x2AB8)
     assert t.uds_commands() == ["222AB8"], "only the 0x22 read may be sent"
-    assert f"ATSH{GATE_TX:03X}" in t.commands
-    assert f"ATCRA{GATE_RX:03X}" in t.commands
+    # Nothing that changes addressing, framing or the session may be emitted.
+    assert t.commands == ["222AB8"], (
+        f"unexpected extra traffic on the wire: {t.commands}")
+    # The request must still be on the read-only allow-list.
+    uds.validate_request("222AB8")
+
+
+def test_gateway_ecu_carries_no_29bit_module_address():
+    """`gate` has no tx29/rx29, so it can never be module-addressed.
+
+    This is the concrete reason the read above is unfiltered. If a 29-bit
+    gateway address is ever established, adding tx29/rx29 here is what would
+    make the transport pin the receive filter for this module -- and it would
+    change the assertion above, so the two must be changed together.
+    """
+    assert GATE.tx29 is None and GATE.rx29 is None
 
 
 def test_spec_decode_roundtrip_through_read_did():

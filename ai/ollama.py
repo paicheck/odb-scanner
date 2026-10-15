@@ -6,7 +6,6 @@ JSON evidence and returns text only.
 """
 from __future__ import annotations
 
-import json
 import logging
 
 import requests

@@ -10,25 +10,51 @@ vehicle:
   model: "ID.3"
   variant: "58 kWh (Pro)"
   year: 2021
+  # DID map to use: meb (ID.3/ID.4/Enyaq/Born, 108 cell slots, module
+  # addressing) or eup (e-Up / OVMS-sourced, 102 slots). Only affects decoding
+  # and which module a DID read is addressed to -- never read/write behaviour.
+  did_profile: meb
 
 adapter:
   # elm327_serial  -> USB ELM327 / OBDLink (pyserial)
+  #                   also Bluetooth SPP: "Standard Serial over Bluetooth link"
   # elm327_tcp     -> simulator or TCP-serial bridge
-  type: elm327_tcp          # switch to elm327_serial when attaching the real car
-  port: auto                # e.g. "COM3" (auto = scan ports for ELM327)
-  baudrate: 38400           # OBDLink SX default 38400; try 115200 if unstable
+  type: elm327_serial       # real car via Veepeak OBDCheck BLE+ (Bluetooth SPP)
+  port: COM3                # outgoing "Serial over Bluetooth link" (COM4 is the
+                            # incoming one); set "auto" to scan ports instead
+  baudrate: 38400           # ignored over SPP; relevant for USB adapters
   timeout: 5.0
   tcp_host: "127.0.0.1"
   tcp_port: 35000
+  # Optional discovery hints, used only when port is "auto". They PRIORITISE a
+  # matching device during the scan; they never bypass the ATI probe, so a wrong
+  # hint just changes the order ports are tried. Accepts an int or hex string.
+  #
+  # A hint is a chip/product identifier, NOT proof of OBD support. VID 0403 is
+  # FTDI, a chip vendor shared by thousands of unrelated products (and by some
+  # Ross-Tech HEX interfaces) -- it identifies the chip, never the protocol.
+  # Run `python tools/discover_adapters.py` to see real VID/PID values first.
+  # vid: 0x1A86             # e.g. a CH340-based USB adapter
+  # pid: 0x7523
 
 collector:
   poll_interval: 5.0        # fast poll (battery) seconds
   slow_poll_interval: 60.0  # slow poll (charging, SOH, counters) seconds
   read_cell_voltages: true  # per-cell DID sweep (slow, one DID per cell)
+  # Oldest a cached measurement may be and still be used to fill a gap in the
+  # current battery snapshot. Must exceed slow_poll_interval; beyond this a
+  # missing value is recorded as unknown rather than carried forward.
+  max_value_age_s: 900.0
   read_cell_temperatures: false
 
 database:
-  path: "data/odb_scanner.db"
+  # Real-car sessions get their own file: vehicles are keyed by VIN, and this
+  # keeps simulator data (odb_scanner.db) separate from measured data.
+  path: "data/real_car.db"
+  # Sub-folder (beside the database) that `main.py backup` writes timestamped
+  # snapshots into. Point this at a different drive if this machine is not the
+  # only place a copy of the car's history should live.
+  backup_dir: "backups"
 
 ollama:
   host: "http://localhost:11434"
@@ -37,12 +63,26 @@ ollama:
   timeout: 300
 
 web:
-  host: "127.0.0.1"
-  port: 8000
+  # 0.0.0.0 makes the dashboard reachable from the network so a tablet can
+  # open it. That is only safe because such a bind REQUIRES an access token
+  # (web/auth.py): the first run mints one, saves it to config.local.yaml --
+  # gitignored -- and prints the URL to open. Requests without it get 401.
+  # Set this to 127.0.0.1 to disable the token entirely and keep the dashboard
+  # reachable only from this machine.
+  host: "0.0.0.0"
+  port: 8000                # the tablet: http://<PC-IP>:8000
+  # auth_token: "..."       # normally not set here; see config.local.yaml
 
 analysis:
-  trend_window_days: 30
+  trend_window_days: 30     # battery trend + overview/chart window
+  charging_window_days: 90  # charging sessions + DTC correlation window
   anomaly_zscore: 3.0
+
+battery:
+  # Nominal usable capacity of the pack in Ah. Used ONLY for the ESTIMATED
+  # SOH percentage (CAC / nominal). Published spec, not a measurement.
+  # Default comes from decoders/bms.py (NOMINAL_CAC_AH_58KWH).
+  nominal_cac_ah: 164.0
 
 simulation:
   host: "127.0.0.1"

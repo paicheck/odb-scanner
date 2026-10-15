@@ -4,10 +4,11 @@ The ID.3 OBD-II port is served by the central gateway ECU (J533), which
 bridges the diagnostic lines to the vehicle's internal buses. Consequences:
 
   * Standard OBD-II modes (01/03/09) are answered by the gateway on behalf
-    of the powertrain ECUs (functional 0x7DF requests).
-  * VAG UDS requests are sent with an ECU-specific header (ATSH 7xx). Some
-    ECUs answer directly; others may only respond when the gateway routes
-    the request. Which is true per ECU must be determined experimentally
+    of the powertrain ECUs (functional requests).
+  * UDS requests are also sent functionally (no ATSH -- see
+    diagnostic/elm327.py set_header): whichever ECUs answer are identified
+    by their response headers (18DAF1xx on this car's 29-bit bus). Which
+    ECU answers which DID is determined experimentally
     (`python main.py discover`).
   * The gateway's own diagnostic address was NOT verified on this vehicle;
     see `diagnostic/ecus.py` and the note below.
@@ -48,10 +49,13 @@ resource `profiles7.db`, profile index 342, 308 measurement records). This
 is a THIRD-PARTY static definition recovered by reverse engineering — it is
 not a Volkswagen specification and it has not been confirmed on this car.
 
-| key               | DID    | reference name                                  | off | len | scale |
-|-------------------|--------|-------------------------------------------------|-----|-----|-------|
-| hv_energy_content | 0x2AB8 | [19.Gate] HV Battery energy content             |  2  |  2  | 25 Wh |
-| hv_energy_max     | 0x2AB2 | [19.Gate] Maximum energy content (traction bat.) |  0  |  2  | 50 Wh |
+| key               | DID    | reference name                    | off | len | scale |
+|-------------------|--------|-----------------------------------|-----|-----|-------|
+| hv_energy_content | 0x2AB8 | [19.Gate] HV Battery energy cont. |  2  |  2  | 25 Wh |
+| hv_energy_max     | 0x2AB2 | [19.Gate] Max energy content (tr.)|  0  |  2  | 50 Wh |
+
+(`hv_energy_max` is "Maximum energy content of the traction battery" in
+full; shortened here only to keep this table inside the line limit.)
 
 Both are unsigned, big-endian (`ReversedByteSet` is false in the profile),
 wh (`UN` = 61). 0x2AB8 is the CURRENT usable energy content and 0x2AB2 the

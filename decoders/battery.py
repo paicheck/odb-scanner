@@ -14,7 +14,6 @@ from .registry import (
     DIDRegistry,
     DIDSpec,
     DocStatus,
-    Provenance,
     u16be,
     u32be,
 )

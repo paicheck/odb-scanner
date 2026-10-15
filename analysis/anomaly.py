@@ -32,7 +32,7 @@ def scan_metric(repo, vehicle_id: int, metric: str, description: str,
         ts_list = [r["ts"] for r in hist if r[metric] is not None]
         values = [r[metric] for r in hist if r[metric] is not None]
     else:
-        rows = repo.measurement_series(metric, _since(days), vehicle_id)
+        rows = repo.measurement_series(vehicle_id, metric, days)
         ts_list = [r["ts"] for r in rows]
         values = [r["value"] for r in rows]
     found = detect_series_anomalies(ts_list, values, z_threshold)
@@ -43,9 +43,3 @@ def scan_metric(repo, vehicle_id: int, metric: str, description: str,
             "high" if z > 0 else "low", description,
         )
     return len(found)
-
-
-def _since(days: int) -> str:
-    from datetime import datetime, timedelta, timezone
-    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(
-        timespec="seconds")
