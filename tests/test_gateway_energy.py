@@ -524,3 +524,87 @@ def test_default_registry_gateway_specs_have_provenance():
 
 def test_no_duplicate_spec_keys():
     build_default_registry()  # register() raises on duplicates
+
+
+# --- known limitations (2026-10-15 safety audit) ----------------------------
+# These tests DEMONSTRATE current behaviour. They are not an endorsement of
+# it. Each one will fail loudly if the behaviour is ever changed, so the
+# audit notes in docs/investigation/meb_gateway_energy.md cannot go stale
+# unnoticed.
+
+
+def test_limitation_response_can_header_is_never_verified():
+    """The response CAN header is stripped, never compared to the expected rx.
+
+    A well-formed `62 2A B8 ...` reply arriving on 0x7E8 or 0x7ED is accepted
+    exactly like one on the expected 0x710: `uds.line_to_frame()` strips the
+    first three hex characters without checking them. ATCRA filtering in the
+    ELM327 is the only barrier. The validation runbook therefore has to
+    capture and inspect the raw ELM lines itself.
+    """
+    payload = bytes.fromhex("622AB8") + bytes([0x00, 0x00, 0x01, 0x02])
+    expected = bytes([0x00, 0x00, 0x01, 0x02])
+    for header in (GATE_RX, 0x7E8, 0x7ED, 0x7EA):
+        lines = [f"{header:03X}" + f.hex().upper()
+                 for f in uds.encode_isotp(payload)]
+        _, c = conn_with({"222AB8": lines})
+        assert c.read_did(GATE, 0x2AB8) == expected, f"header 0x{header:03X}"
+
+
+def test_limitation_rx_audit_row_drops_the_can_header():
+    """`tx_log` RX rows store the reassembled UDS payload, header already gone.
+
+    Nothing in the persisted safety manifest records which CAN id answered,
+    so a mis-addressed read cannot be diagnosed from the database alone.
+    """
+    captured: list[dict] = []
+    raw = frame(bytes.fromhex("622AB8") + REC_2AB8)
+    t = FakeTransport({"222AB8": raw})
+    c = DiagnosticConnection(t, tx_logger=lambda **kw: captured.append(kw))
+    c.read_did(GATE, 0x2AB8)
+
+    assert any("710" in ln for ln in raw), "raw line must carry the header"
+    rx = next(k for k in captured if k["direction"] == "RX")
+    assert rx["payload"] == "622AB8AABB010203", "header is not persisted"
+    assert "710" not in rx["payload"]
+
+
+def test_reassemble_rejects_truncation_instead_of_returning_a_short_buffer():
+    """A multi-frame response whose continuation frames never arrive must
+    reassemble to None, NOT to a short buffer.
+
+    HISTORY: this was recorded as a latent defect in section 3.2 of
+    docs/investigation/meb_gateway_energy.md and deliberately left unfixed by
+    that audit. It was subsequently fixed upstream in uds.reassemble(), which
+    now compares the reassembled length against the ISO-TP length field and
+    returns None on a short read (see also
+    test_truncated_multiframe_response_is_rejected in test_diagnostic.py).
+
+    The test was originally written as a characterisation of the BROKEN
+    behaviour. It is now a regression guard on the fix: it still asserts the
+    consequence that mattered -- that no value is decoded from a truncated
+    record -- but it pins it on the corrected path, so silently reintroducing
+    a short buffer will fail here loudly.
+
+    Impact had it stayed broken would have been bounded for these two DIDs
+    (they read near the START of the record, at offsets 0 and 2), but a DID
+    read near the END of a long record would have been silently mis-valued.
+    """
+    payload = bytes.fromhex("622AB8") + bytes([0x11, 0x22, 0x04, 0xD8,
+                                              0xAA, 0xBB, 0xCC, 0xDD, 0xEE])
+    frames = uds.encode_isotp(payload)
+    assert len(frames) > 1, "must be a multi-frame response"
+
+    complete = uds.reassemble(frames)
+    assert complete is not None
+    assert gateway._hv_energy_content(complete[3:]) == 31000.0
+
+    truncated = uds.reassemble(frames[:1])
+    assert truncated is None, (
+        "a truncated multi-frame response must not reassemble to a short "
+        f"buffer; got {truncated!r}")
+    # And nothing downstream may turn a truncated record into a number.
+    _, c = conn_with({"222AB8": [f"{GATE_RX:03X}" + f.hex().upper()
+                                 for f in frames[:1]]})
+    assert c.try_read_did(GATE, 0x2AB8) is None, (
+        "a truncated record must never yield a value")
