@@ -76,12 +76,13 @@ class DIDRegistry:
 
 
 def build_default_registry() -> DIDRegistry:
-    from decoders import battery, charging
+    from decoders import battery, charging, gateway
 
     reg = DIDRegistry()
     battery.register_battery(reg)
     battery.register_cell_specs(reg)
     charging.register_charging(reg)
+    gateway.register_gateway(reg)
     return reg
 
 

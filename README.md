@@ -37,6 +37,7 @@ This system performs **no writes to the vehicle**. Enforced structurally in
 | 12 V ("control module voltage") | ✅ PID 0x42 | ✅ |
 | SOC, pack V/I, cell voltages, BMS temps | ❌ | ⚠️ via DIDs — scale factors from OVMS e-Up docs, **ID.3 applicability must be verified at first connect** |
 | Charging data (AC/DC, mode, timers) | ❌ | ⚠️ via DIDs (same caveat) |
+| HV battery energy content / maximum | ❌ | ⚠️ DIDs `0x2AB8` / `0x2AB2` on the gateway — definitions from the recovered Car Scanner MEB profile, **addressing and offsets not yet confirmed on the car** (`docs/investigation/meb_gateway_energy.md`) |
 | Motor rpm/torque/inverter temps | ❌ | ❌ no verified public DIDs — **not faked** (see `decoders/motor.py`) |
 | Full coding/adaptations | ❌ | deliberately not implemented |
 
@@ -126,5 +127,11 @@ Manual equivalent, in two terminals:
   vs sum of cells).
 * Drive-system live data needs a CAN-capable adapter (python-can /
   OBDLink STN) — planned future phase; no DIDs are invented meanwhile.
+* The gateway energy-content DIDs (`0x2AB8`, `0x2AB2`) were recovered from a
+  third-party static profile, not from a VW document and not from a captured
+  frame. Until the read-only in-car check in
+  `docs/investigation/meb_gateway_energy.md` §7 is done, treat those two rows
+  as *provisional*; raw bytes are stored regardless, so they can be
+  re-scaled later without re-reading the car.
 * The LLM output is hypothesis-ranking with confidence levels, never a
   definitive diagnosis; the automated validator flags over-confident wording.
