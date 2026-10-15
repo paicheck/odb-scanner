@@ -18,6 +18,21 @@
 >   (neither is the measurement table) — those parts are unchanged.
 >
 > Current state, evidence and open questions: **`meb_gateway_energy.md`**.
+>
+> **Further superseded 2026-10-15 (later audit).** §A.2's replacement schema —
+> "3-byte little-endian integers", 3,336,491 flat indices — is *also* wrong. The
+> real format is a count-prefixed sequence of variable-length containers
+> (862 of them) ending in 531,345 `VagMicroItem` records; a flat 3-byte reading
+> is a third failed hypothesis. The §E conclusion that `vag.micro.vag` is not a
+> measurement table still holds and is now **proved**: all four text fields
+> resolve to localized DTC descriptions.
+>
+> On the vehicle, `energy` (`0x710`) and `climate` (`0x746`) have **never**
+> answered — 114/114 and 77/77 no-data — while the 29-bit BMS answers 3,506/3,506.
+> Gateway **addressing**, not scale, is the blocker.
+>
+> Current state: §14 of
+> [`../CAR_SCANNER_REVERSE_ENGINEERING.md`](../CAR_SCANNER_REVERSE_ENGINEERING.md).
 
 **Date**: 2026-10-14  
 **Scope**: Reverse-engineering artefacts only (`C:\Users\kings\AppData\Local\Temp\opencode\*`). No production code modified. No vehicle communication.

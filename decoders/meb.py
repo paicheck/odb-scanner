@@ -75,6 +75,7 @@ ECU_ENERGY = "energy"    # MEB module 0x710 (11-bit)
 ECU_DCDC = "dcdc"        # MEB module 0xB9
 ECU_VEH = "veh_info"     # MEB module 0x76
 ECU_CLIMATE = "climate"  # MEB module 0x746 (11-bit)
+ECU_CHG = "chg"          # MEB module 0x744 (11-bit): HV charger / OBC
 
 _EXP = DocStatus.EXPERIMENTAL
 
@@ -85,8 +86,16 @@ CELL_V_SLOTS = 108
 # those keeps them out of the min/max/curve without discarding the DID.
 CELL_UNUSED = 0x0FFE
 
-# Cell/module temperature points: 0x1EAE..0x1EBD plus 0x7425/0x7426.
-CELL_T_DIDS = list(range(0x1EAE, 0x1EBE)) + [0x7425, 0x7426]
+# Cell/module temperature points: 0x1EAE..0x1EBD plus 0x7425..0x742C.
+# Car Scanner's MEB profile names these "[8C.BMS] HV Battery temp point 1..24"
+# in this order, and declares the same u16/8 - 40 scaling for every one of them.
+CELL_T_DIDS = list(range(0x1EAE, 0x1EBE)) + list(range(0x7425, 0x742D))
+# Car Scanner guards the points from 0x7426 on with
+#   if((A*256+B)>1020;[NaN];(A*256+B)/8-40)
+# i.e. a raw count above 1020 means "sensor absent", not a reading. Without the
+# guard an absent sensor decodes to ~500 degC and poisons the pack temperature
+# range, so it is applied to every point.
+CELL_T_MAX = 1020
 
 # evDash: energy counters are u32 counts at 8583.07123641215 Wh per count.
 ENERGY_COUNT_WH = 8583.07123641215
@@ -149,8 +158,16 @@ def _temp_scaled(raw: bytes) -> float:
     return u16be(raw) / 64.0
 
 
-def _cell_temp(raw: bytes) -> float:
-    return u16be(raw) / 8.0 - 40.0
+def _cell_temp(raw: bytes):
+    """Battery temperature sensor in degC. None when the sensor is absent.
+
+    The >CELL_T_MAX guard is Car Scanner's own, from the formula it declares
+    for points 0x7426..0x742C: `if((A*256+B)>1020;[NaN];(A*256+B)/8-40)`.
+    """
+    v = u16be(raw)
+    if v > CELL_T_MAX:
+        return None
+    return v / 8.0 - 40.0
 
 
 def _energy_counters(raw: bytes) -> dict:
@@ -209,6 +226,76 @@ def _cabin_temp(raw: bytes) -> float:
     return u16be(raw) / 5.0 - 40.0
 
 
+# -- Car Scanner profile-derived fields -------------------------------------
+#
+# The MEB profile in profiles7.db (index 342) states every measurement's layout
+# explicitly: SBI (start byte), DL (length), MUL, DIV, OFS and byte order, with
+# RBS=false -- big-endian -- on all 308 records. These helpers apply exactly that
+# rather than inferring a divisor from a displayed number.
+#
+# SBI matters: several DIDs pack two values, the second starting at byte 2. 0x1E2C
+# and 0x1E2D are "Battery max/min SoC cell %" at byte 0 AND "Battery max/min
+# SoC cell #" at byte 2, and 0x1E33/0x1E34 are the max/min cell INDEX rather
+# than a voltage. Reading either as a single value at byte 0 gives a plausible
+# number that means something else.
+CS_SRC = "CS profiles7.db MEB#342"
+
+
+def _cs_field(raw: bytes, sbi: int, dl: int) -> int:
+    """One big-endian unsigned field at the declared offset and width.
+
+    Refuses a payload short of the field, for the same reason u32be does: a
+    truncated answer must surface as a failed read, not as a plausible number.
+    int.from_bytes would happily accept 1-3 bytes and invent a value.
+    """
+    chunk = raw[sbi:sbi + dl]
+    if len(chunk) != dl:
+        raise IndexError(
+            f"CS field needs {dl} bytes at offset {sbi}, got {max(0, len(raw) - sbi)}")
+    return int.from_bytes(chunk, "big")
+
+
+def _cs_scaled(raw: bytes, *, sbi: int, dl: int, mul: float, div: float,
+               ofs: float) -> float:
+    return _cs_field(raw, sbi, dl) * mul / div + ofs
+
+
+def _cs_field_decoder(*, sbi: int, dl: int, mul: float, div: float, ofs: float):
+    def decode(raw: bytes) -> float:
+        return _cs_scaled(raw, sbi=sbi, dl=dl, mul=mul, div=div, ofs=ofs)
+    return decode
+
+
+def _cs_pair_decoder(*, dl: int, first_mul: float, first_div: float,
+                     first_ofs: float):
+    """A DID carrying two values: a scaled one at byte 0 and a raw index at 2.
+
+    Reads bytes 0..2*dl in one step. Reading the halves independently would let
+    the first succeed while the second is short, which turns a truncated
+    response into a partial result recorded as complete.
+    """
+    def decode(raw: bytes) -> dict:
+        need = 2 * dl
+        if len(raw) < need:
+            raise IndexError(f"pair field needs {need} bytes, got {len(raw)}")
+        return {
+            "value": _cs_scaled(raw, sbi=0, dl=dl, mul=first_mul,
+                                div=first_div, ofs=first_ofs),
+            "index": _cs_field(raw, dl, dl),
+        }
+    return decode
+
+
+def _cs_note(sbi: int, dl: int, mul: float, div: float, ofs: float) -> str:
+    mul_s = f"{mul:g}"
+    div_s = f"{div:g}"
+    mul_s = mul_s if mul_s not in ("1", "1.0") else "1"
+    div_s = div_s if div_s not in ("1", "1.0") else "1"
+    return (f"u16be[{sbi}:{sbi + dl}] * {mul_s}"
+            + (f" / {div_s}" if div_s != "1" else "")
+            + (f" + {ofs:g}" if ofs else "") + f" [{CS_SRC}]")
+
+
 # -- module decoders -------------------------------------------------------
 def _max_energy_wh(raw: bytes) -> float:
     """Rated (maximum) HV energy content in Wh -- the SoH reference value.
@@ -254,6 +341,87 @@ def register_meb(reg: DIDRegistry) -> None:
     _register_bms(reg)
     _register_cells(reg)
     _register_modules(reg)
+    _register_profile_fields(reg)
+
+
+# Fields taken verbatim from the Car Scanner MEB profile. Only modules this
+# transport demonstrably reaches are listed: the BMS (29-bit 0x17FC007B, which
+# answered 3,506/3,506 reads in the logged history) and the charger
+# (11-bit 0x744, 211/211). The gateway and HVAC modules are excluded on
+# purpose -- they have never answered, and adding DIDs there would inflate the
+# registry with rows nothing can collect. See docs/investigation/
+# knowledge_gaps.md.
+#
+# (key, did, name, unit, ecu, sbi, dl, mul, div, ofs)
+_CS_FIELDS: tuple[tuple, ...] = (
+    ("odometer_bms", 0x02BD, "Odometer (BMS copy)", "km", ECU_BAT,
+     1, 3, 1.0, 1.0, 0.0),
+    ("ptc_voltage", 0x1621, "PTC heater voltage", "V", ECU_BAT,
+     0, 1, 0.1, 1.0, 0.0),
+    ("bms_pcb_temp", 0x1622, "BMS PCB temperature", "degC", ECU_BAT,
+     0, 1, 1.0, 1.0, -50.0),
+    ("ptc_medium_temp_1", 0x1623, "PTC medium temperature 1", "degC", ECU_BAT,
+     0, 1, 1.0, 1.0, -50.0),
+    ("ptc_medium_temp_2", 0x1624, "PTC medium temperature 2", "degC", ECU_BAT,
+     0, 1, 1.0, 1.0, -50.0),
+    ("bat_v_after_contacts", 0x189B, "Battery voltage after contacts", "V",
+     ECU_BAT, 0, 2, 0.5, 1.0, -1000.0),
+    ("bat_v_before_contacts", 0x1E36, "Battery voltage before contacts", "V",
+     ECU_BAT, 0, 2, 0.0312499784501336, 1.0, 0.0),
+    ("bat_v_after_contacts_2", 0x1E38, "Battery voltage (2nd, after contacts)",
+     "V", ECU_BAT, 0, 2, 0.0312499784501336, 1.0, 0.0),
+    ("bat_charging_voltage", 0x1E39, "Battery charging voltage", "V",
+     ECU_BAT, 0, 2, 0.0312499784501336, 1.0, 0.0),
+    # NOT named cell_v_*: that prefix is the per-cell rollup group in
+    # analysis/provenance.py, and this is a single scalar, not one of the 108
+    # slots. A "cell_v_sum" key would be folded into the rollup and render as
+    # "1/109 live".
+    ("cell_voltage_sum", 0x1E3C, "Sum of all cell voltages", "V",
+     ECU_BAT, 0, 4, 244140.625, 1000000000.0, 0.0),
+    ("pack_current_2", 0x1E3E, "HV pack current (2nd)", "A",
+     ECU_BAT, 0, 4, 0.01, 1.0, -1500.0),
+    ("min_discharge_voltage", 0x5170, "Minimum discharge voltage", "V",
+     ECU_BAT, 0, 2, 1.0, 1.0, 0.0),
+    ("max_charge_voltage", 0x5171, "Maximum charge voltage", "V",
+     ECU_BAT, 0, 2, 1.0, 1.0, 0.0),
+    ("odometer_2", 0x5867, "Odometer (BMS copy 2)", "km",
+     ECU_BAT, 2, 2, 10.0, 1.0, 0.0),
+    ("motor_rpm", 0xF40C, "Motor speed", "rpm", ECU_BAT, 0, 2, 1.0, 4.0, 0.0),
+    ("obc_dc_current", 0x103D, "HV DC current (OBC)", "A", ECU_CHG,
+     0, 2, 0.1, 1.0, 0.0),
+    ("obc_cycle_energy", 0x103E, "Cycle energy transformed", "kWh", ECU_CHG,
+     0, 2, 0.01, 1.0, 0.0),
+    ("socket_a_voltage", 0x1525, "Charge socket A voltage", "V", ECU_CHG,
+     0, 2, 1.0, 1.0, 0.0),
+    ("hv_output_voltage", 0x1DA7, "Charger HV output voltage", "V", ECU_CHG,
+     0, 2, 0.1, 1.0, 0.0),
+    ("socket_a_temp", 0x1DDA, "Charge socket A temperature", "degC", ECU_CHG,
+     1, 2, 0.1, 1.0, -55.0),
+)
+
+# DIDs carrying two values in one response.
+_CS_PAIRS: tuple[tuple, ...] = (
+    ("cell_soc_max", 0x1E2C, "Cell with the highest SoC", "%", ECU_BAT),
+    ("cell_soc_min", 0x1E2D, "Cell with the lowest SoC", "%", ECU_BAT),
+)
+
+
+def _register_profile_fields(reg: DIDRegistry) -> None:
+    for key, did, name, unit, ecu, sbi, dl, mul, div, ofs in _CS_FIELDS:
+        reg.register(DIDSpec(
+            key, ecu, did, name, unit,
+            decode=_cs_field_decoder(sbi=sbi, dl=dl, mul=mul, div=div, ofs=ofs),
+            doc_status=_EXP, slow=True,
+            notes=_cs_note(sbi, dl, mul, div, ofs),
+        ))
+    for key, did, name, unit, ecu in _CS_PAIRS:
+        reg.register(DIDSpec(
+            key, ecu, did, name, unit,
+            decode=_cs_pair_decoder(dl=2, first_mul=0.01, first_div=1.0,
+                                    first_ofs=0.0),
+            doc_status=_EXP, slow=True,
+            notes=f"u16be[0:2] * 0.01 and u16be[2:4] as a cell index [{CS_SRC}]",
+        ))
 
 
 def _register_bms(reg: DIDRegistry) -> None:

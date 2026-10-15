@@ -744,6 +744,134 @@ def test_meb_energy_content_divisor_is_declared_unverified():
     assert spec.did == 0x2AB8
 
 
+def test_car_scanner_profile_fields_decode_at_the_declared_scale():
+    """The profile-derived DIDs must reproduce Car Scanner's declared arithmetic.
+
+    Each case is checked by putting the raw count in, and asserting the value
+    the profile's own SBI/DL/MUL/DIV/OFS produce. The point is not that these
+    numbers look plausible -- it is that they are the same arithmetic the vendor
+    app applies, so a disagreement later is a real defect rather than a
+    different guess.
+    """
+    from decoders.registry import build_default_registry
+
+    reg = build_default_registry("meb")
+
+    def val(key, raw_hex):
+        return reg.get(key).decode_value(bytes.fromhex(raw_hex))
+
+    # (key, raw hex, expected). SBI/DL from CS; see _CS_FIELDS.
+    cases = [
+        ("odometer_bms", "00123456", 0x123456),   # SBI=1 DL=3 -> bytes[1:4]
+        ("odometer_2", "000007A1", 0x07A1 * 10),  # SBI=2 DL=2 -> bytes[2:4], *10
+        ("ptc_voltage", "8C", 14.0),              # DL=1, *0.1
+        ("bms_pcb_temp", "5A", 40.0),             # DL=1, -50
+        # *0.5 - 1000, so the expected value is written in the same form to make the
+        # -1000 visible: 0x0834 * 0.5 = 1050, minus 1000 = 50.
+        ("bat_v_after_contacts", "0834", 0x0834 * 0.5 - 1000.0),
+        # CS gives MUL=0.0312499784501336 (not exactly 1/32), so the expectation is
+        # written with that literal rather than a rounded 1/32.
+        ("bat_v_before_contacts", "2000", 0x2000 * 0.0312499784501336),
+        ("cell_voltage_sum", "01800000", 0x01800000 * 244140.625 / 1e9),
+        ("pack_current_2", "0BB8A000", 0x0BB8A000 * 0.01 - 1500.0),  # u32, -1500
+        ("motor_rpm", "1F40", 2000.0),            # /4
+        ("obc_dc_current", "0064", 10.0),         # *0.1
+        ("obc_cycle_energy", "2710", 100.0),      # *0.01
+        ("socket_a_voltage", "0190", 400.0),      # *1
+        # SBI=1 DL=2, so the value lives in bytes[1:3]: 0x00C8 * 0.1 - 55 = -39.
+        ("socket_a_temp", "0000C8", 0x00C8 * 0.1 - 55.0),
+    ]
+    for key, raw_hex, expected in cases:
+        got = val(key, raw_hex)
+        assert got == pytest.approx(expected), (
+            f"{key}: {raw_hex} -> {got}, expected {expected}")
+
+
+def test_car_scanner_pair_fields_read_both_halves():
+    """0x1E2C/0x1E2D pack a percentage at byte 0 and a cell INDEX at byte 2.
+
+    Reading only byte 0 (as a single scalar would) silently discards the cell
+    number, which is the more interesting half: it answers "which cell", not
+    "how full".
+    """
+    from decoders.registry import build_default_registry
+
+    reg = build_default_registry("meb")
+
+    got = reg.get("cell_soc_max").decode_value(bytes.fromhex("186E002A"))
+    assert got["value"] == pytest.approx(62.54)   # 0x186E * 0.01
+    assert got["index"] == 42                     # 0x002A
+
+    got = reg.get("cell_soc_min").decode_value(bytes.fromhex("0BB8000A"))
+    assert got["value"] == pytest.approx(30.0)    # 0x0BB8 * 0.01
+    assert got["index"] == 10
+
+
+def test_profile_field_decoders_refuse_a_short_payload():
+    """A truncated response must fail closed, not decode a smaller number.
+
+    _cs_field mirrors u32be: int.from_bytes would accept 1-3 bytes for a 4-byte
+    field and return a plausible value, which is how a failed read turns into a
+    recorded measurement.
+    """
+    from decoders.registry import build_default_registry
+
+    reg = build_default_registry("meb")
+    assert reg.get("cell_voltage_sum").decode_value(bytes.fromhex("018000")) is None
+    assert reg.get("motor_rpm").decode_value(bytes.fromhex("")) is None
+    assert reg.get("odometer_bms").decode_value(bytes.fromhex("00")) is None
+    # and the full-length payload still works
+    assert reg.get("motor_rpm").decode_value(bytes.fromhex("1F40")) == \
+        pytest.approx(2000.0)
+
+
+def test_absent_cell_temperature_sensor_reads_as_none_not_as_500_degrees():
+    """Car Scanner guards its temp points: `if(raw>1020;[NaN];raw/8-40)`.
+
+    Without the guard an unpopulated sensor decodes to ~500 degC and poisons the
+    pack temperature range shown on the dashboard.
+    """
+    from decoders.registry import build_default_registry
+
+    reg = build_default_registry("meb")
+    spec = reg.get("cell_t_18")
+    assert spec.did == 0x7427
+    assert spec.decode_value(bytes.fromhex("03FF")) is None      # 1023 > 1020
+    # 1020 is the boundary and must stay valid, so compare the exact stored
+    # value rather than recomputing 1020.0/8.0 - 40.0 (whose float lands a
+    # hair away and makes this an approx() tautology).
+    assert spec.decode_value(bytes.fromhex("03FC")) == 87.5      # 1020/8 - 40
+    # the guard applies to the earlier points too, not only the new ones
+    assert reg.get("cell_t_00").decode_value(bytes.fromhex("FFFF")) is None
+
+
+def test_cell_temperature_bank_covers_points_1_to_24():
+    """Car Scanner names these points 1..24 in registry order; keep them aligned."""
+    from decoders.registry import build_default_registry
+
+    reg = build_default_registry("meb")
+    temps = [s for s in reg.all() if s.key.startswith("cell_t_")]
+    assert len(temps) == 24
+    assert [s.did for s in temps[:16]] == list(range(0x1EAE, 0x1EBE))
+    assert [s.did for s in temps[16:]] == list(range(0x7425, 0x742D))
+
+
+def test_sum_of_cell_voltages_is_not_folded_into_the_per_cell_rollup():
+    """`cell_v_` is the rollup group; the scalar sum must not join it.
+
+    analysis/provenance._KEY_GROUPS turns any key starting with `cell_v_` into
+    one row for all 108 slots. A scalar named cell_v_* would render as "1/109
+    live" and dilute the cell bank.
+    """
+    from analysis.provenance import _group_for
+    from decoders.registry import build_default_registry
+
+    reg = build_default_registry("meb")
+    assert _group_for("cell_voltage_sum") == ("cell_voltage_sum", False)
+    assert _group_for("cell_v_000") == ("cell_voltages", True)
+    assert reg.get("cell_voltage_sum").did == 0x1E3C
+
+
 def test_meb_registry_has_the_full_cell_bank():
     from decoders.registry import build_default_registry
 
@@ -752,7 +880,11 @@ def test_meb_registry_has_the_full_cell_bank():
     assert len(cells) == 108
     assert cells[0].did == 0x1E40 and cells[-1].did == 0x1EAB
     temps = [s for s in reg.all() if s.key.startswith("cell_t_")]
-    assert len(temps) == 18            # 0x1EAE..0x1EBD plus 0x7425/0x7426
+    # 0x1EAE..0x1EBD plus 0x7425..0x742C. Car Scanner's MEB profile names these
+    # "HV Battery temp point 1..24" in that order and declares the same
+    # u16/8 - 40 scaling for all of them.
+    assert len(temps) == 24            # 0x1EAE..0x1EBD plus 0x7425..0x742C
+    assert temps[16].did == 0x7425 and temps[-1].did == 0x742C
 
 
 def test_soh_falls_back_to_reported_max_energy_content():

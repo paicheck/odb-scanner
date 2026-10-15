@@ -1,5 +1,37 @@
 # Car Scanner MEB — Evidence Audit Report
 
+> **SUPERSEDED IN PART — 2026-10-15.** Sections **C** (gateway addressing) and
+> **D** (`hv_energy_content` trace) are **out of date**. The live measurement
+> definitions were subsequently located in the embedded resource
+> `CarScannerMaui.EmbeddedFiles.profiles7.db` (MEB profile index **342**, 308
+> `CustomPID` records), which resolves every "Unresolved" row in §D:
+> `hv_energy_content` = DID **`0x2AB8`** on `[19.Gate]`, unsigned big-endian
+> u16 at payload offset 2 × 25 Wh; `hv_energy_max` = DID **`0x2AB2`**, offset
+> 0 × 50 Wh.
+>
+> Two statements here are also **wrong** and must not be relied on:
+> * §D/§E speculate "Gateway = `0x710`/`0x77A`" and "resp = req+8 (`0x79A`)".
+>   In the profile, `ATCRA = response header + 0x6A` for every 11-bit ECU
+>   class, so `ATCRA77A` is **not** a response CAN id, and `0x792 + 8 = 0x79A`
+>   is unrelated to the observed header `0x710`.
+> * §A/§C conclusions about `vag.micro.vag` / `vagmeb.db` remain valid
+>   (neither is the measurement table) — those parts are unchanged.
+>
+> **Further superseded 2026-10-15 (later audit).** §A.2's replacement schema —
+> "3-byte little-endian integers", 3,336,491 flat indices — is *also* wrong. The
+> real format is a count-prefixed sequence of variable-length containers
+> (862 of them) ending in 531,345 `VagMicroItem` records; a flat 3-byte reading
+> is a third failed hypothesis. The §E conclusion that `vag.micro.vag` is not a
+> measurement table still holds and is now **proved**: all four text fields
+> resolve to localized DTC descriptions.
+>
+> On the vehicle, `energy` (`0x710`) and `climate` (`0x746`) have **never**
+> answered — 114/114 and 77/77 no-data — while the 29-bit BMS answers 3,506/3,506.
+> Gateway **addressing**, not scale, is the blocker.
+>
+> Current state, evidence and open questions: **`meb_gateway_energy.md`** and
+> §14 of [`CAR_SCANNER_REVERSE_ENGINEERING.md`](CAR_SCANNER_REVERSE_ENGINEERING.md).
+
 **Date**: 2026-10-14  
 **Scope**: Reverse-engineering artefacts only (`C:\Users\kings\AppData\Local\Temp\opencode\*`). No production code modified. No vehicle communication.
 

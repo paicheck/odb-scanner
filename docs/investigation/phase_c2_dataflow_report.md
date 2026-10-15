@@ -73,6 +73,15 @@ This is the actual live-measurement definition structure. It carries decoding pa
 
 Measurement names are likely stored in `vag.micro.vag` / `vag.strings.vag` as serialized `CustomPID` collections, or generated dynamically from numeric IDs.
 
+> **RESOLVED 2026-10-15 — this speculation was wrong.** Measurement definitions are
+> **not** in `vag.micro.vag` / `vag.strings.vag`. They live in
+> `CarScannerMaui.EmbeddedFiles.profiles7.db` as `CustomPID` JSON inside the
+> `ProfilePIDs` field of `OBDReaderProfileV2` (MEB = index 342, 308 records).
+> `vag.micro.vag` holds localized **DTC text** and `vag.strings.vag` is the string
+> table it indexes into. See §14 of
+> [`../CAR_SCANNER_REVERSE_ENGINEERING.md`](../CAR_SCANNER_REVERSE_ENGINEERING.md)
+> and [`live_measurement_pipeline.md`](live_measurement_pipeline.md).
+
 ## Task 4: Live-measurement execution path (static evidence)
 
 ```
@@ -126,12 +135,22 @@ The `BinaryDeserilzeFromEmbeddedFileUsingCryptoStream2` method name suggests add
 | Resource | Embedded name | Loader | Transformation | Output type | Consumer | Measurement relevance |
 |---|---|---|---|---|---|---|
 | `vagmeb.db` | `'vagmeb.db'` (ldstr in LoadVAG_MEB) | `BinaryDeserilzeFromEmbeddedFileUsingCryptoStream2` | Unknown (ShiftStream2 likely) | `MQBAdaptationTemplate[]` | `LoadVAG_MEB` → `LoadedCollection` | **NOT live measurements** — coding/adaptation data |
-| `vag.micro.vag` | Unknown (not loaded by LoadVAG_MEB) | Unknown (separate path) | Unknown | Unknown (likely `CustomPID[]`) | Unknown | **Plausible** — may contain live measurement definitions |
+| `vag.micro.vag` | Unknown (not loaded by LoadVAG_MEB) | Unknown (separate path) | Unknown | **Localized DTC text** (not `CustomPID[]`) | — | **RESOLVED 2026-10-15** — "Plausible - may contain live measurement definitions" is **false**; see §14.2 of [`../CAR_SCANNER_REVERSE_ENGINEERING.md`](../CAR_SCANNER_REVERSE_ENGINEERING.md) |
 | `vag.strings.vag` | Unknown (not loaded by LoadVAG_MEB) | Unknown (separate path) | Unknown | Unknown (likely string table) | Unknown | **Plausible** — may contain measurement name strings |
 
 ## Strongest verified discovery
 
-**`vagmeb.db` is definitively NOT the live-measurement definition source.** It is a coding/adaptation database (`MQBAdaptationTemplate`) containing ECU long-coding options. The actual live-measurement definitions use the `CustomPID` type (with `_StartByteId`, `_DataLength`, `_Multiplier`, `_Formula`, `_Units` fields) and are loaded from a separate resource path — likely `vag.micro.vag` / `vag.strings.vag`.
+**`vagmeb.db` is definitively NOT the live-measurement definition source.** It is a coding/adaptation database (`MQBAdaptationTemplate`) containing ECU long-coding options. The actual live-measurement definitions use the `CustomPID` type (with `_StartByteId`, `_DataLength`, `_Multiplier`, `_Formula`, `_Units` fields) and are loaded from a separate resource path - likely `vag.micro.vag` / `vag.strings.vag`.
+
+> **RESOLVED 2026-10-15 — the "likely `vag.micro.vag` / `vag.strings.vag`" guess is
+> wrong.** The loader is `ProfileV2Model.LoadProfiles` →
+> `OBDReaderProfileV2.ImportProfilePids`, reading
+> `CarScannerMaui.EmbeddedFiles.profiles7.db`. The `CustomPID` field set named above
+> (`StartByteId`/`DataLength`/`Multiplier`/`Formula`/`Units`) matches that resource's
+> `SBI`/`DL`/`MUL`/`FR`/`UN` exactly. `vag.micro.vag` = localized DTC text;
+> `vag.strings.vag` = the string table it indexes. See
+> [`live_measurement_pipeline.md`](live_measurement_pipeline.md) and §14 of
+> [`../CAR_SCANNER_REVERSE_ENGINEERING.md`](../CAR_SCANNER_REVERSE_ENGINEERING.md).
 
 ## Most important unresolved question
 
