@@ -150,8 +150,10 @@ def repo():
 
 
 def test_repository_roundtrip(repo):
+    from datetime import datetime, timedelta, timezone
     vid = repo.ensure_vehicle("WVWZZZE1ZMP087053", year=2021)
-    ts = "2026-09-01T10:00:00+00:00"
+    now = datetime.now(timezone.utc)
+    ts = (now - timedelta(days=5)).isoformat(timespec="seconds")
     repo.record_battery_snapshot(vid, ts, soc_normal_pct=70, cell_delta_mv=28)
     hist = repo.battery_history(30, vid)
     assert len(hist) == 1
