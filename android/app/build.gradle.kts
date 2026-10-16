@@ -49,3 +49,9 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
 }
+
+// This project lives inside a OneDrive-synced folder, and OneDrive's sync agent
+// holds locks on files in build/ while Gradle rewrites them, which surfaces as
+// "Unable to delete directory ... cacheable". Point the build output at a
+// non-synced directory under the user home instead.
+layout.buildDirectory.set(file(System.getProperty("user.home") + "/odb-scanner-build/app"))
