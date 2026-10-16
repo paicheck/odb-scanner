@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .state { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .state.live { background:#d6f5d6; color:#1c6b1c; }
+  .state.stale { background:#fff3cd; color:#8a6d00; }
+  .state.imported { background:#d6e9ff; color:#1a5fa8; }
+  .state.unavailable { background:#e6e8ea; color:#6a7076; }
+  .unverified { color:#b06900; font-size:11px; }
+  .ecu-block { margin: 18px 0; }
+  .ecu-block h2 { font-size: 16px; border-bottom: 2px solid #0b2340; padding-bottom: 4px; }
+  .picker { display:flex; gap:12px; align-items:center; margin-bottom: 8px; flex-wrap:wrap; }
+  .picker select { font-size: 14px; padding: 6px 8px; max-width: 460px; }
+  .chartbox { min-height: 260px; }
+  .muted { color:#777; font-size:12px; }
+  table.m tbody tr:hover { background:#f0f5fa; }
+</style>
+
+<h1 style="font-size:18px;margin:0 0 4px;">Live &amp; historical measurements</h1>
+<p class="muted">
+  {{ counts.live }} live · {{ counts.stale }} stale · {{ counts.imported }} imported ·
+  {{ counts.unavailable }} unavailable · {{ counts.unverified }} unverified (of {{ counts.total }})
+</p>
+
+{% if not groups %}
+  <div class="warn">No vehicle data yet. Start the collector (<code>python main.py collect</code>) to begin logging.</div>
+{% else %}
+<div class="card chartbox">
+  <h3>History</h3>
+  <div class="picker">
+    <label for="meas">Measurement:</label>
+    <select id="meas" onchange="loadSeries(this.value)">
+      {% for g in chart_groups %}
+      <optgroup label="{{ g.name }}">
+        {% for s in g.specs %}
+        <option value="{{ s.key }}">{{ s.name }}{% if s.unit %} ({{ s.unit }}){% endif %}</option>
+        {% endfor %}
+      </optgroup>
+      {% endfor %}
+    </select>
+    <span id="series-meta" class="muted"></span>
+  </div>
+  <canvas id="chart" height="90"></canvas>
+  <div id="series-empty" class="warn" style="display:none;">No successful readings in the last {{ days }} days.</div>
+</div>
+
+{% for g in groups %}
+<div class="ecu-block">
+  <h2>{{ g.name }} <span class="muted">({{ g.rows|length }})</span></h2>
+  <table class="m">
+    <thead><tr><th>Measurement</th><th>Unit</th><th>Latest value</th><th>State</th><th>Read at</th></tr></thead>
+    <tbody>
+      {% for it in g.rows %}
+      <tr>
+        <td>{{ it.name }}{% if it.unverified %} <span class="unverified" title="reverse-engineered scale, not a VW document">⚠ unverified</span>{% endif %}</td>
+        <td>{{ it.unit }}</td>
+        <td>{% if it.value is not none %}{{ '%.4g'|format(it.value) }}{% else %}—{% endif %}</td>
+        <td><span class="state {{ it.state }}">{{ it.state }}</span></td>
+        <td class="muted">{{ it.ts[:19] if it.ts else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if groups %}
+<script>
+  let chart = null;
+  const DAYS = {{ days }};
+
+  function fmt(ts) {
+    // "2026-08-02T21:58:22+00:00" -> "08-02 21:58"
+    return ts ? ts.slice(5, 16).replace('T', ' ') : '';
+  }
+
+  async function loadSeries(key) {
+    const meta = document.getElementById('series-meta');
+    const empty = document.getElementById('series-empty');
+    const sel = document.getElementById('meas');
+    const opt = sel.options[sel.selectedIndex];
+    meta.textContent = opt ? opt.textContent : '';
+
+    let data;
+    try {
+      const r = await fetch('/api/measurements/' + encodeURIComponent(key));
+      data = await r.json();
+    } catch (e) {
+      empty.style.display = 'block';
+      return;
+    }
+
+    const n = (data.value || []).length;
+    empty.style.display = n ? 'none' : 'block';
+
+    if (chart) { chart.destroy(); }
+    const ctx = document.getElementById('chart').getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: (data.ts || []).map(fmt),
+        datasets: [{
+          label: key,
+          data: data.value || [],
+          borderColor: '#0b2340',
+          backgroundColor: 'rgba(11,35,64,0.08)',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.15,
+        }]
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 10, font: { size: 10 } } },
+          y: { beginAtZero: false }
+        },
+        animation: false,
+      }
+    });
+  }
+
+  // default: first option (or pack voltage if present)
+  const sel = document.getElementById('meas');
+  const pv = Array.from(sel.options).find(o => o.value === 'pack_voltage');
+  sel.value = pv ? pv.value : sel.options[0].value;
+  loadSeries(sel.value);
+</script>
+{% endif %}
+{% endblock %}

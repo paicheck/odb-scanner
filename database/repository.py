@@ -53,6 +53,22 @@ class SchemaMismatchError(RuntimeError):
     """The database on disk was written by a build with a different schema."""
 
 
+def _can(text: str | None) -> int | None:
+    """'0x710' -> 0x710. The catalogue formats ids for humans; the DB stores ints
+    so it can index and compare them numerically."""
+    if text is None:
+        return None
+    return int(text, 16) if text.lower().startswith("0x") else int(text)
+
+
+def _svc(text: str | None) -> int | None:
+    return _can(text)
+
+
+def _did(text: str | None) -> int | None:
+    return _can(text)
+
+
 class Repository:
     """One per-process handle to the SQLite database.
 
@@ -223,6 +239,195 @@ class Repository:
         )
         self.conn.commit()
         return cur.lastrowid
+
+    # -- definition catalogue ------------------------------------------
+    # Additive: these tables exist alongside `measurements`, which keeps
+    # observations. Nothing here alters an existing table.
+
+    def sync_definitions(self, definitions, ts: str | None = None) -> dict[str, str]:
+        """Insert/update catalogue rows; return {key: version} as stored.
+
+        Re-syncing is idempotent: UNIQUE(key, version) plus INSERT ... ON
+        CONFLICT DO UPDATE means a repeat run does not duplicate rows, and a
+        definition whose content is unchanged keeps its version and therefore
+        keeps its `first_seen`. Only a definition whose digest changed is
+        retired (active=0) and superseded, so the table reads as a history.
+        """
+        stamp = ts or utcnow()
+        import json as _json
+
+        # One column list, built once and used for both the column list and the
+        # placeholder count. A hand-counted "?" list drifted out of step with
+        # the schema and raised "39 values for 41 columns"; deriving both from
+        # the same list makes that impossible.
+        cols = ("key, version, name, unit, confidence, ecu_key, ecu_name, "
+                "request_can_id, response_can_id, address_confidence, transport, "
+                "session_required, service, did, request_bytes, byte_offset, "
+                "byte_length, byte_order, signed, scale, divisor, addend, formula, "
+                "response_length_hint, plausible_min, plausible_max, "
+                "plausible_basis, provenance, doc_status, evidence_kind, "
+                "evidence_source, evidence_artifact, recorded_at, "
+                "validation_method, limitations, falsified_by, "
+                "competing_interpretations, definition_json, first_seen, "
+                "last_seen, active").split(", ")
+        ncols = len(cols)
+        # Everything except the identity triple is refreshed on conflict, so a
+        # corrected definition updates in place and keeps its id. `first_seen`
+        # is deliberately excluded: it records when this version first
+        # appeared, and must survive a re-sync. `last_seen` IS refreshed, or a
+        # repeated sync would leave a stale "last seen" that never advances.
+        refreshed = [c for c in cols if c not in ("key", "version", "first_seen")]
+        conflict = ", ".join(f"{c}=excluded.{c}" for c in refreshed)
+
+        seen: dict[str, str] = {}
+        for d in definitions:
+            row = d.as_dict()
+            payload = _json.dumps(row, sort_keys=True, ensure_ascii=False)
+            values = {
+                "key": row["key"], "version": d.version, "name": row["name"],
+                "unit": row["unit"], "confidence": row["confidence"],
+                "ecu_key": row["ecu_key"], "ecu_name": row["ecu_name"],
+                "request_can_id": _can(row["request_can_id"]),
+                "response_can_id": _can(row["response_can_id"]),
+                "address_confidence": row["address_confidence"],
+                "transport": row["transport"],
+                "session_required": row["session_required"],
+                "service": _can(row["service"]), "did": _can(row["did"]),
+                "request_bytes": row["request_bytes"],
+                "byte_offset": row["byte_offset"],
+                "byte_length": row["byte_length"], "byte_order": row["byte_order"],
+                "signed": None if row["signed"] is None else int(row["signed"]),
+                "scale": row["scale"], "divisor": row["divisor"],
+                "addend": row["addend"], "formula": row["formula"],
+                "response_length_hint": row["response_length_hint"],
+                "plausible_min": row["plausible_min"],
+                "plausible_max": row["plausible_max"],
+                "plausible_basis": row["plausible_basis"],
+                "provenance": row["provenance"], "doc_status": row["doc_status"],
+                "evidence_kind": row["evidence_kind"],
+                "evidence_source": row["evidence_source"],
+                "evidence_artifact": row["evidence_artifact"],
+                "recorded_at": row["recorded_at"],
+                "validation_method": row["validation_method"],
+                "limitations": row["limitations"],
+                "falsified_by": row["falsified_by"],
+                "competing_interpretations": row["competing_interpretations"],
+                "definition_json": payload,
+                "first_seen": stamp, "last_seen": stamp, "active": 1,
+            }
+            missing = set(cols) - set(values)
+            if missing:
+                raise KeyError(f"definition {row['key']}: no value for {missing}")
+            self.conn.execute(
+                f"INSERT INTO measurement_definitions({', '.join(cols)}) "
+                f"VALUES ({', '.join(['?'] * ncols)}) "
+                f"ON CONFLICT(key, version) DO UPDATE SET {conflict}",
+                [values[c] for c in cols])
+            seen[row["key"]] = d.version
+        # retire superseded versions of keys we just synced
+        for key, version in seen.items():
+            self.conn.execute(
+                "UPDATE measurement_definitions SET active=0 WHERE key=? AND "
+                "version<>?", (key, version))
+        self.conn.commit()
+        return seen
+
+    def record_evidence(self, key: str, version: str, observation: str,
+                        kind: str, ts: str | None = None,
+                        confidence_before: str | None = None,
+                        confidence_after: str | None = None,
+                        detail: str | None = None) -> int:
+        row = self.conn.execute(
+            "SELECT id FROM measurement_definitions WHERE key=? AND version=?",
+            (key, version)).fetchone()
+        if row is None:
+            raise KeyError(f"no definition {key}@{version}; sync first")
+        cur = self.conn.execute(
+            "INSERT INTO definition_evidence(definition_id, ts, observation, kind,"
+            " confidence_before, confidence_after, detail) VALUES (?,?,?,?,?,?,?)",
+            (row["id"], ts or utcnow(), observation, kind, confidence_before,
+             confidence_after, detail))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def record_evaluation(self, key: str, version: str, method: str, verdict: str,
+                          n_samples: int, detail: str = "",
+                          ts: str | None = None) -> int:
+        row = self.conn.execute(
+            "SELECT id FROM measurement_definitions WHERE key=? AND version=?",
+            (key, version)).fetchone()
+        if row is None:
+            raise KeyError(f"no definition {key}@{version}; sync first")
+        cur = self.conn.execute(
+            "INSERT INTO definition_evaluations(definition_id, ts, method, verdict,"
+            " n_samples, detail) VALUES (?,?,?,?,?,?)",
+            (row["id"], ts or utcnow(), method, verdict, n_samples, detail))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def definition(self, key: str, active_only: bool = True):
+        sql = "SELECT * FROM measurement_definitions WHERE key=?"
+        if active_only:
+            sql += " AND active=1"
+        sql += " ORDER BY recorded_at DESC, id DESC LIMIT 1"
+        return self.conn.execute(sql, (key,)).fetchone()
+
+    def definitions(self, active_only: bool = True,
+                    confidence: str | None = None) -> list:
+        sql = "SELECT * FROM measurement_definitions WHERE 1=1"
+        args: list = []
+        if active_only:
+            sql += " AND active=1"
+        if confidence:
+            sql += " AND confidence=?"
+            args.append(confidence)
+        sql += " ORDER BY key"
+        return self.conn.execute(sql, args).fetchall()
+
+    def definition_history(self, key: str) -> list:
+        return self.conn.execute(
+            "SELECT version, confidence, recorded_at, active FROM "
+            "measurement_definitions WHERE key=? ORDER BY recorded_at, id",
+            (key,)).fetchall()
+
+    def definition_evidence(self, key: str) -> list:
+        return self.conn.execute(
+            "SELECT e.ts, e.observation, e.kind, e.confidence_before,"
+            " e.confidence_after, e.detail FROM definition_evidence e"
+            " JOIN measurement_definitions d ON d.id=e.definition_id"
+            " WHERE d.key=? ORDER BY e.ts, e.id", (key,)).fetchall()
+
+    def record_frame(self, vehicle_id: int | None, ts: str, ecu: str,
+                     request_bytes: str, response_raw_lines: str | None = None,
+                     response_payload: str | None = None,
+                     did_record: str | None = None,
+                     answer_source_id: int | None = None,
+                     session_state: str | None = None, succeeded: bool = False,
+                     error: str | None = None, note: str | None = None) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO captured_frames(vehicle_id, ts, ecu, request_bytes,"
+            " response_raw_lines, response_payload, did_record, answer_source_id,"
+            " session_state, succeeded, error, note)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (vehicle_id, ts, ecu, request_bytes, response_raw_lines,
+             response_payload, did_record, answer_source_id, session_state,
+             int(succeeded), error, note))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def frames(self, ecu: str | None = None, did_record: str | None = None,
+               limit: int = 1000) -> list:
+        sql = "SELECT * FROM captured_frames WHERE 1=1"
+        args: list = []
+        if ecu:
+            sql += " AND ecu=?"
+            args.append(ecu)
+        if did_record:
+            sql += " AND did_record=?"
+            args.append(did_record)
+        sql += " ORDER BY ts, id LIMIT ?"
+        args.append(limit)
+        return self.conn.execute(sql, args).fetchall()
 
     def measurement_series(self, vehicle_id: int, key: str, days: int = 30):
         """(ts, value) rows for one measurement key, successful reads only,
@@ -501,6 +706,90 @@ class Repository:
             [(vehicle_id, ts, n, v) for n, v in zip(cell_numbers, voltages)],
         )
         self.conn.commit()
+
+    def cell_voltage_series(self, vehicle_id: int, cell_index: int,
+                            days: int = 30):
+        """(ts, value) rows for one physical cell, oldest first.
+
+        Cell voltages live in their own table (not `measurements`), because a
+        single sweep writes 108 rows at once. This is the per-cell read the
+        measurements page uses to chart an individual cell.
+        """
+        return self.conn.execute(
+            "SELECT ts, voltage_v AS value FROM cell_voltages "
+            "WHERE vehicle_id=? AND cell_index=? AND ts>=? ORDER BY ts",
+            (vehicle_id, cell_index, _iso_days_ago(days)),
+        ).fetchall()
+
+    def latest_cell_voltages(self, vehicle_id: int) -> list[dict]:
+        """One row per cell at the most recent sweep.
+
+        'Latest' is the sweep with the highest ts (not the highest id), and
+        within it every cell that answered. A cell that returned NRC on that
+        sweep is simply absent, so a gap is visible rather than invented.
+        """
+        latest_ts = self.conn.execute(
+            "SELECT MAX(ts) FROM cell_voltages WHERE vehicle_id=?",
+            (vehicle_id,)).fetchone()[0]
+        if latest_ts is None:
+            return []
+        return self.conn.execute(
+            "SELECT cell_index, voltage_v, ts FROM cell_voltages "
+            "WHERE vehicle_id=? AND ts=? ORDER BY cell_index",
+            (vehicle_id, latest_ts),
+        ).fetchall()
+
+    # -- retired DIDs (NRC 0x31 or consistently silent) -------------------------
+    def unsupported_did_keys(self, vehicle_id: int) -> set[tuple[str, int]]:
+        """(ecu_key, did) pairs the collector has decided not to poll again.
+
+        Includes both DIDs the car rejected with NRC 0x31 (definitively
+        unsupported) and DIDs that have never succeeded and stayed silent
+        across enough reads (see collector.py silent-DID retirement).
+        """
+        return {
+            (r["ecu_key"], r["did"])
+            for r in self.conn.execute(
+                "SELECT ecu_key, did FROM unsupported_dids WHERE vehicle_id=?",
+                (vehicle_id,),
+            )
+        }
+
+    def mark_did_unsupported(self, vehicle_id: int, ecu_key: str, did: int,
+                             ts: str) -> None:
+        """Record (or bump) a DID the collector is retiring (NRC 0x31 or
+        consistently-silent-never-succeeded)."""
+        self.conn.execute(
+            "INSERT INTO unsupported_dids(vehicle_id, ecu_key, did, first_seen, "
+            "last_seen, count) VALUES (?,?,?,?,?,1) "
+            "ON CONFLICT(vehicle_id, ecu_key, did) DO UPDATE SET "
+            "last_seen=excluded.last_seen, count=unsupported_dids.count+1",
+            (vehicle_id, ecu_key, did, ts, ts),
+        )
+        self.conn.commit()
+
+    def ever_succeeded_keys(self, vehicle_id: int) -> set[tuple[str, int]]:
+        """(ecu_key, did) pairs that have ever produced a successful read.
+
+        The collector uses this as the guard on the silent-DID retirement: a
+        DID that has answered at least once is never retired for being silent,
+        because silence is then "the car is asleep" rather than "the DID is
+        dead". A DID that has NEVER answered and stays silent is the retire
+        candidate.
+        """
+        rows = self.conn.execute(
+            "SELECT ecu, pid FROM measurements WHERE vehicle_id=? AND success=1 "
+            "AND service='UDS-0x22' AND pid LIKE '0x%'",
+            (vehicle_id,),
+        ).fetchall()
+        keys: set[tuple[str, int]] = set()
+        for r in rows:
+            try:
+                did = int(r["pid"], 16)
+            except (ValueError, TypeError):
+                continue
+            keys.add((r["ecu"], did))
+        return keys
 
     # -- charging sessions -------------------------------------------------------
     def open_session(self, vehicle_id: int, ts: str, charge_type: str,

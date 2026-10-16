@@ -189,11 +189,15 @@ def _meb_did_value(req29: int, did: int) -> bytes | None:
             return None
         if req29 == 0x00000710:
             if did == 0x2AB2:
-                return int(_MEB_MAX_ENERGY_WH * 1310.77).to_bytes(4, "big")
+                # SYNTHETIC FIXTURE, not a capture. Layout per the Car Scanner
+                # MEB profile (idx 342): SBI=0, DL=2, MUL=50 Wh.
+                return _enc_u16(round(_MEB_MAX_ENERGY_WH / 50.0))
             if did == 0x2AB8:
-                return int(_MEB_CONTENT_WH * 1310.77).to_bytes(4, "big")
+                # SYNTHETIC FIXTURE, not a capture. SBI=2, DL=2, MUL=25 Wh, so
+                # the value sits at offset 2 behind two filler bytes.
+                return b"\x00\x00" + _enc_u16(round(_MEB_CONTENT_WH / 25.0))
             if did == 0x2AF7:
-                return _enc_u16((_MEB_12V_V - 4.26) * 1024)
+                return _enc_u16((_MEB_12V_V - 4.0) * 1000)
             return None
         if req29 == 0x17FC00B9:
             if did == 0x465B:
@@ -383,17 +387,20 @@ class SimHandler(socketserver.BaseRequestHandler):
         elif tx in ECU_TABLE:
             self.current_ecu = (tx, ECU_TABLE[tx])
         else:
-            # A 3-digit header under ATSP6 can also address a MEB module whose
-            # 29-bit id fits in 11 bits (energy 0x00000710, climate 0x00000746).
-            # The 6-digit path reaches those via MEB_MODULES; the 3-digit path
-            # must too, or the simulator answers the 6-digit form and stays
-            # silent on the 3-digit one -- which would make EXP-17 untestable
-            # offline and hide a real difference between the two.
-            hdr = (self.cp << 24) | tx
-            if hdr in MEB_MODULES:
-                self.meb_module = hdr
+            # A 3-digit header under ATSP6 addresses an 11-bit id directly,
+            # independent of ATCP. The energy (0x710) and climate (0x746)
+            # modules are 11-bit, so Car Scanner's gateway sequence sends
+            # 'ATSH 710' with no ATCP 00 first -- cp may still hold the
+            # previous module's priority byte. Match the bare id before the
+            # (cp << 24) | tx form, which only matches under ATCP 00.
+            if tx in MEB_MODULES:
+                self.meb_module = tx
+                self.current_ecu = (0x7E0, 0x7E8)
+            elif (self.cp << 24) | tx in MEB_MODULES:
+                self.meb_module = (self.cp << 24) | tx
                 self.current_ecu = (0x7E0, 0x7E8)
             else:                                  # no ECU lives there
+                self.meb_module = None
                 self.current_ecu = None
 
     def _handle_cmd(self, cmd: str) -> list[str]:  # noqa: C901

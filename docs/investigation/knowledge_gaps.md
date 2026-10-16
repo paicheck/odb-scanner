@@ -131,7 +131,7 @@ sensors to 24, which is what the profile names them.
 | module | n | header | status |
 |---|---:|---|---|
 | `08.HVAC` | 25 | 746 | **never answers** (0/77) |
-| `19.Gate` | 18 | 710 | **never answers** (0/114) |
+| `19.Gate` | 18 | 710 | **NRC 0x31 at 0x792→0x710**; 0/114 at 0x710→0x77A |
 | `51.ElDrive` | 26 | 17FC007C | untested |
 | `01.ENG` | 18 | 17FC0076 | partial (81/195) |
 | `03.ABS` | 4 | 713 | untested |

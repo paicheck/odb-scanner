@@ -463,12 +463,13 @@ not be retained.
 
 ## 12. Open Questions / Next Steps
 
-1. **Fix the gateway addressing first — it blocks everything else.** On this vehicle
-   `energy` (11-bit `0x710`) and `climate` (11-bit `0x746`) have **never** answered:
-   114/114 and 77/77 responses are `?`, while the 29-bit BMS answers 3,506/3,506
-   (§14.5). No scale can be validated until a gateway DID actually replies. `ecus.py`
-   carries two competing entries (`gate` `0x792→0x710` vs `energy` `0x710→0x77A`) and the
-   decoders bind to the one that has never worked.
+1. **Gateway addressing — RESOLVED (16 Oct).** `energy` (11-bit `0x710`) and `climate`
+   (11-bit `0x746`) now answer: the fix was `ATCAF1` + a bare request + the flow-control
+   preamble (`ATFCSH`/`ATFCSD`/`ATFCSM 1`), not the hand-framed `ATCAF0` 8-byte line
+   (which the clone refused with `?`). See `docs/MEB_NO_RESPONSE_HANDOFF.md` §1.2.
+   `energy` is `0x710→0x77A` (the competing `gate` `0x792→0x710` entry was wrong and has
+   been corrected). The `0x2AB2`/`0x2AB8` scale question (item 2) is now answerable on
+   live data.
 2. **Then resolve the gateway scale** — `profiles7.db` says `0x2AB8` is `u16be × 25`;
    `decoders/meb.py` divides a u32 by 1310.77. Downstream of item 1.
 3. ~~Decode scale/offset from micro file record prefixes~~ — **closed; hypothesis
@@ -479,8 +480,11 @@ not be retained.
 4. **Climate DIDs**: search the MEB profile's 308 `CustomPID` records (§9).
 5. **18DA vs 17FC for Gateway**: Test both `18DAD0F1` and `11-bit 0x710` on hardware —
    Car Scanner uses both paths.
-6. **Flow control necessity**: Is `ATFCSH/ATFCSD/ATFCSM1` strictly required, or does the
-   adapter handle it? (Our `?` responses suggest it is required.)
+6. **Flow control necessity — answered (16 Oct).** The `ATFCSH/ATFCSD/ATFCSM1` preamble
+   is required for the 11-bit modules: it is Car Scanner's wire form, and it is what the
+   ELM327 needs to reassemble the gateway's multi-frame replies. A further quirk: `ATFCSM 1`
+   must be reset (`ATFCSM 0`) before returning to a 29-bit module, or the clone refuses the
+   next 29-bit request (see `MEB_NO_RESPONSE_HANDOFF.md` §9.5).
 7. **Build drift**: an earlier build's `profiles7.db` was 9,919,996 B; this one is
    10,032,980 B. The MEB `ProfilePIDs` blob measures 171,033 B here against 171,289 B
    quoted in the external investigation — a different build, not a parsing error.

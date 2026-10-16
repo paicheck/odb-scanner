@@ -42,10 +42,21 @@ VECTORS: list[tuple[str, bytes, object, str, str]] = [
     ("cell_v_002", b"\x0B\xB5", 3.997, "CS log raw 2997", "captured"),
     ("dyn_charge_limit", b"\x04\x29", 213.0,
      "CS log raw 1065", "captured"),
+    # 0x2AB2/0x2AB8 carry NO captured bytes: data/real_car.db holds only the
+    # decoded values from a Car Scanner export, whose raw_response column holds
+    # an export LINE, not a payload. The vectors below are therefore SYNTHETIC
+    # -- built from the layout the catalogue declares -- and are labelled as
+    # such. They exercise the decode path; they do not validate it.
+    #
+    # 0x04280A64 is kept at 4 bytes because it is the payload that 53,200 Wh
+    # maps to under BOTH competing layouts, and the extra bytes must not change
+    # the answer. If the decoder ever reads all four, this vector breaks.
     ("hv_energy_max", b"\x04\x28\x0A\x64", 53200.0,
-     "CS log raw 69732964", "captured"),
-    ("aux_12v_voltage", b"\x29\x0A", 14.52,
-     "CS log raw 10506", "captured"),
+     "SYNTHETIC from u16be[0:2]x50; no captured bytes exist -- the only real "
+     "evidence is the decoded value 53200 Wh from a Car Scanner CSV export",
+     "derived"),
+    ("aux_12v_voltage", b"\x29\x0A", 14.506,
+     "CS log raw 10506 (10506 x 0.001 + 4.0)", "captured"),
     ("coolant_temps", b"\x05\x80\x05\x80",
      {"outlet_c": 22.0, "inlet_c": 22.0},
      "CS log 05800580 -> 22/22", "captured"),
@@ -54,8 +65,12 @@ VECTORS: list[tuple[str, bytes, object, str, str]] = [
      + int(23447.33770012921 * 8583.07123641215).to_bytes(4, "big"),
      {"charged_kwh": 24422.8195, "used_kwh": 23447.3377},
      "CS log counters 24422.8195 / -23447.3377", "captured"),
-    ("hv_energy_content", int(41200 * 1310.77).to_bytes(4, "big"),
-     41200.0, "CS log 41200-41325 Wh parked", "contested"),
+    # SYNTHETIC: u16be[2:4] x 25 -> 41200 Wh from raw 1648 (0x0670). The two
+    # leading bytes are there because SBI=2 means they must be skipped.
+    ("hv_energy_content", b"\x00\x00\x06\x70",
+     41200.0, "SYNTHETIC from u16be[2:4]x25; no captured bytes exist -- the only "
+     "real evidence is the decoded values 41200/41325 Wh from a Car Scanner "
+     "CSV export", "derived"),
 
     # -- corroborated by spot2000's Calculation column, no raw capture ---------
     ("ptc_current", b"\x00", 0.0, "spot2000 XX/4", "derived"),
@@ -99,14 +114,28 @@ CONTESTED = {
         "evDash and this project: positive = discharge. ABRP (negates) and "
         "spot2000 ('Negative value is out from battery'): negative = "
         "discharge. 2 against 1 against us. Our reasoning from the car's own "
-        "counters establishes Car Scanner's sign, not the DID's. If wrong, "
-        "pack_current is inverted and charging detection, pack-power sign and "
-        "regen history all invert with it."
+        "counters establishes Car Scanner's sign, not the DID's. STILL UNPROVEN: "
+        "no raw capture during charge and discharge has been made, so the "
+        "DID's own convention is untested. If wrong, pack_current is inverted "
+        "and charging detection, pack-power sign and regen history all invert "
+        "with it."
     ),
     "hv_energy_content": (
-        "Divisor 1310.77 is a hypothesis. evDash queues this DID commented out "
-        "and never decodes it; spot2000 lists it '[equation missing]' while "
-        "giving the addressing. No public source derives it, so the value below "
-        "is fitted, not computed."
+        "The OLD u32/1310.77 layout is refuted, not merely doubted. The only "
+        "real-world values for this DID are 41,325 and 41,200 Wh (Car Scanner "
+        "export, data/real_car.db). 41325/1310.77 = 31.5273 and "
+        "41200/1310.77 = 31.4319 are not integers, so no integral u32 can "
+        "produce either; the layout cannot have generated the values it was "
+        "cited as validating. Its 125 Wh LSB also cannot explain the 125 Wh "
+        "step between the two readings (0.095 counts). Independently, two "
+        "readings force the scale to divide gcd(41325,41200)=25, so the "
+        "admissible scales are {1,5,25} and 1310.77 is not among them. The "
+        "LIVE layout is u16be[2:4] x 25 from the Car Scanner profile "
+        "(SBI=2 DL=2 MUL=25), which reproduces both values from integral raw "
+        "counts 1653/1648 and reads the 125 Wh step as exactly 5 counts. "
+        "RESOLVED 2026-10-15: the SBI=2 offset and the 0x710->0x77A address "
+        "pair are confirmed by a passive HCI capture (62 2A B8 00 00 05 7F 00 "
+        "00 00 00 -> 35,175 Wh). Usable-vs-gross remains unresolved. See "
+        "docs/investigation/meb_gateway_energy_passive_capture_20261015.md."
     ),
 }

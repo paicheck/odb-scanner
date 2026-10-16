@@ -54,21 +54,26 @@ class DiagnosticConnection:
         wire = hexcmd
         if callable(set_module) and getattr(self.t, "meb_addressing", False):
             if meb and set_module(target, getattr(ecu, "rx29", None)):
-                body = hexcmd
-                # Single-frame ISO-TP: one length byte then up to 7 data
-                # bytes. The slicing below would silently drop anything past
-                # that, so refuse instead. validate_request caps the request
-                # at the same 7 bytes, so this is unreachable via _transmit --
-                # it is here because a truncated frame produces an ECU error
-                # rather than anything recognisable, and the cost of checking
-                # is one comparison.
-                if len(body) // 2 > 7:
-                    raise CommunicationError(
-                        f"Refusing to send a {len(body) // 2}-byte MEB request: "
-                        f"the single-frame ISO-TP path carries at most 7 data "
-                        f"bytes. Multi-frame is not implemented."
-                    )
-                wire = (f"{len(body) // 2:02X}{body}" + "55" * 8)[:16]
+                if not getattr(self.t, "auto_formatting", False):
+                    body = hexcmd
+                    # Single-frame ISO-TP: one length byte then up to 7 data
+                    # bytes. The slicing below would silently drop anything past
+                    # that, so refuse instead. validate_request caps the request
+                    # at the same 7 bytes, so this is unreachable via _transmit
+                    # -- it is here because a truncated frame produces an ECU
+                    # error rather than anything recognisable, and the cost of
+                    # checking is one comparison.
+                    if len(body) // 2 > 7:
+                        raise CommunicationError(
+                            f"Refusing to send a {len(body) // 2}-byte MEB "
+                            f"request: the single-frame ISO-TP path carries at "
+                            f"most 7 data bytes. Multi-frame is not implemented."
+                        )
+                    wire = (f"{len(body) // 2:02X}{body}" + "55" * 8)[:16]
+                # else: the adapter is in ATCAF1 (auto-formatting), so `wire`
+                # stays as the bare hexcmd -- the adapter adds the ISO-TP PCI
+                # byte, header and flow control. That is the 11-bit gateway's
+                # Car Scanner wire form (the CAF0 8-byte line is refused '?').
             else:
                 set_module(None)
         # Record what goes on the wire, not merely what was asked for. They are

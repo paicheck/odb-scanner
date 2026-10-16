@@ -42,6 +42,13 @@ IMPORTED_PREFIX = IMPORTED_PREFIX
 # voltage specs, and listing them individually would bury the other rows.
 _KEY_GROUPS = (("cell_v_", "cell_voltages"), ("cell_t_", "cell_temperatures"))
 
+# Human name for each rollup group. The first cell's own name ("Cell voltage
+# #001") read as if only one cell existed, so the group gets a distinct label.
+_GROUP_NAMES = {
+    "cell_voltages": "Cell voltages (all cells)",
+    "cell_temperatures": "Cell temperatures (all sensors)",
+}
+
 
 def _age_seconds(ts: str | None, now: datetime | None) -> float | None:
     """Age of an ISO-8601 stamp, or None if it cannot be read.
@@ -95,7 +102,8 @@ def key_states(repo, vehicle_id: int, registry, *,
             rows.append(row)
             continue
         bucket = rolled.setdefault(display, {
-            "key": display, "unit": spec.unit, "name": spec.name,
+            "key": display, "unit": spec.unit,
+            "name": _GROUP_NAMES.get(display, display),
             "state": "unavailable", "source": None, "ts": None, "age_s": None,
             "value": None, "unverified": True, "known": 0, "live": 0,
             "imported": 0, "stale": 0, "unavailable": 0,

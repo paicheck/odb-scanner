@@ -46,6 +46,11 @@ collector:
   # missing value is recorded as unknown rather than carried forward.
   max_value_age_s: 900.0
   read_cell_temperatures: false
+  # A DID that has never succeeded on this vehicle and returns NO DATA (not an
+  # NRC) for this many consecutive reads is retired and not polled again. Raise
+  # it if you collect while the car is asleep; a DID that has EVER answered is
+  # never retired, because silence then means "car asleep", not "DID dead".
+  silent_retire_threshold: 3
 
 database:
   # Real-car sessions get their own file: vehicles are keyed by VIN, and this

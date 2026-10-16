@@ -80,6 +80,30 @@ def test_no_derived_vector_is_presented_as_captured():
             f"{key} is labelled derived but its evidence cites a capture")
 
 
+def test_a_vector_citing_a_capture_must_not_say_synthetic():
+    """The inverse error: labelling a real capture SYNTHETIC would overstate
+    the doubt and throw away real evidence."""
+    for key, _raw, _expected, evidence, _conf in VECTORS:
+        if _conf == "captured":
+            assert "SYNTHETIC" not in evidence, (
+                f"{key} claims a real capture but its evidence says SYNTHETIC")
+
+
+def test_a_synthetic_vector_must_declare_itself_synthetic():
+    """A vector built from a formula must say so in its evidence text.
+
+    The two HV energy DIDs are the case this exists for: both hold decoded
+    values from a Car Scanner export and NO captured bytes, so their vectors
+    are constructed from the declared layout. Anyone reading the table later
+    must not mistake those for validation.
+    """
+    for key in ("hv_energy_content", "hv_energy_max"):
+        entry = next(v for v in VECTORS if v[0] == key)
+        assert entry[4] == "derived", f"{key} has no captured bytes; not 'derived'?"
+        assert "SYNTHETIC" in entry[3], (
+            f"{key}'s synthetic vector does not declare itself")
+
+
 def test_every_contested_decoder_is_flagged_not_silently_resolved():
     """The two known disagreements must reach the table as contested.
 
@@ -100,8 +124,19 @@ def test_contested_notes_name_the_disagreement_not_just_our_answer():
         assert len(note) > 80, f"{key}'s contested note is too thin to be useful"
         lowered = note.lower()
         assert any(w in lowered for w in ("disagree", "contradict", "wrong",
-                                          "hypothesis", "contested")), \
+                                          "hypothesis", "contested",
+                                          "refuted")), \
             f"{key}'s note does not state the nature of the disagreement"
+
+
+def test_a_contested_note_must_still_say_what_remains_unproven():
+    """'Refuted' is a claim about the alternative, not a licence to stop
+    doubting. Every contested note must name the open question too."""
+    for key, note in CONTESTED.items():
+        lowered = note.lower()
+        assert any(w in lowered for w in ("remaining", "never", "untested",
+                                          "unresolved", "no raw", "not seen")), \
+            f"{key}'s note refutes an alternative but names nothing still open"
 
 
 def test_confidence_values_are_from_the_declared_set():

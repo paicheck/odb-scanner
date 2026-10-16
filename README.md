@@ -75,8 +75,8 @@ Further boundaries:
 | 12 V ("control module voltage") | ✅ PID 0x42 | ✅ |
 | SOC, pack V/I, cell voltages, BMS temps | ❌ | ⚠️ via DIDs — scale factors from OVMS e-Up docs, **ID.3 applicability must be verified at first connect** |
 | Charging data (AC/DC, mode, timers) | ❌ | ⚠️ via DIDs (same caveat) |
-| HV battery energy content / maximum | ❌ | ⚠️ DIDs `0x2AB8` / `0x2AB2` on the gateway — definitions from the recovered Car Scanner MEB profile, **addressing and offsets not yet confirmed on the car** (`docs/investigation/meb_gateway_energy.md`) |
-| Motor rpm/torque/inverter temps | ❌ | ❌ no verified public DIDs — **not faked** (see `decoders/motor.py`) |
+| HV battery energy content / maximum | ❌ | ✅ DIDs `0x2AB8` / `0x2AB2` on the gateway (0x710 → 0x77A) — addressing, offsets and multipliers confirmed by a passive HCI capture on 2026-10-15 (`docs/investigation/meb_gateway_energy_passive_capture_20261015.md`) |
+| Motor rpm/torque/inverter temps | ❌ | ⚠️ DIDs from the Car Scanner MEB profile (electric-drive module 0x7C, 29-bit) — **experimental**, not yet confirmed on this car |
 | Full coding/adaptations | ❌ | deliberately not implemented |
 
 Unverified scale factors are labelled `experimentally determined` in the
@@ -374,11 +374,12 @@ arriving when the doctor's verdict is not enough.
 * Drive-system live data needs a CAN-capable adapter (python-can /
   OBDLink STN) — planned future phase; no DIDs are invented meanwhile.
 * The gateway energy-content DIDs (`0x2AB8`, `0x2AB2`) were recovered from a
-  third-party static profile, not from a VW document and not from a captured
-  frame. Until the read-only in-car check in
-  `docs/investigation/meb_gateway_energy.md` §7 is done, treat those two rows
-  as *provisional*; raw bytes are stored regardless, so they can be
-  re-scaled later without re-reading the car.
+  third-party static profile, not from a VW document. Their addressing
+  (0x710 -> 0x77A), offsets and multipliers were confirmed on 2026-10-15 by a
+  passive Bluetooth HCI capture of Car Scanner (see
+  `docs/investigation/meb_gateway_energy_passive_capture_20261015.md`). The
+  gross-vs-usable meaning still rests on the profile names, not a VW document;
+  raw bytes are stored regardless, so they can be re-scaled later.
 * The LLM output is hypothesis-ranking with confidence levels, never a
   definitive diagnosis; the automated validator flags over-confident wording.
 * A per-day slope needs per-day data. The cell-delta trend reports

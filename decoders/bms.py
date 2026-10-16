@@ -54,10 +54,9 @@ def soh_pct_from_energy(max_energy_wh: float | None,
 
 
 DRIVE_SYSTEM_STATUS = (
-    "Electric drive / inverter live data (motor rpm, torque, inverter "
-    "temperatures) has NO verified UDS DIDs in public documentation for the "
-    "ID.3 at this time. Raw CAN monitoring with a CAN-capable adapter is the "
-    "planned future path. No DIDs are registered for the drive system to "
-    "avoid inventing support. If a DID is experimentally identified later, "
-    "register it in decoders/motor.py with doc_status=EXPERIMENTAL."
+    "Electric drive / inverter live data (motor torque, motor speed, inverter "
+    "losses, rotor/stator/PCB temperatures, DC-link voltage/current) is now "
+    "registered from the Car Scanner MEB profile (decoders/meb.py, 'eldrive' "
+    "ECU, module 0x7C). They are EXPERIMENTAL: the scalings are Car Scanner's "
+    "own profile fields, not yet confirmed by this project's capture."
 )

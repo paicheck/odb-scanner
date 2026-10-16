@@ -14,6 +14,17 @@ from __future__ import annotations
 
 SCHEMA_VERSION = 1
 
+# Additive schema notes (Phase B/D, 2026-10-15)
+# -------------------------------------------
+# `measurement_definitions`, `captured_frames`, `definition_evidence` and
+# `definition_evaluations` are all CREATE TABLE IF NOT EXISTS additions that
+# touch no existing table or column, so SCHEMA_VERSION deliberately stays 1.
+# Bumping it would make every existing database -- including data/real_car.db,
+# which holds the only real-world readings of 0x2AB8/0x2AB2 -- refuse to open
+# behind SchemaMismatchError, and that refusal is the guard working as designed
+# for a change it does not need to catch. The existing guard test asserts the
+# literal "expects 1", so the guard's behaviour is unchanged.
+
 SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
@@ -182,5 +193,110 @@ CREATE TABLE IF NOT EXISTS tx_log (
     direction TEXT NOT NULL,       -- TX | RX | NOTE
     ecu TEXT, payload TEXT,
     purpose TEXT                   -- why this was transmitted (safety manifest)
+);
+
+-- ======================================================================
+-- Definition catalogue (additive; see the note above SCHEMA_VERSION)
+-- ======================================================================
+-- Why these tables exist. `measurements` stores OBSERVATIONS and
+-- `decoders/registry.py` stores DECODERS, but nothing recorded the thing a
+-- reader actually needs to judge a number: where the definition came from,
+-- how sure we are, and what would overturn it. That gap had a concrete cost
+-- here -- two byte layouts for DID 0x2AB8 existed for months, the refuted one
+-- shipped as the default, and nothing recorded that it had been refuted.
+-- See docs/investigation/phase_c_energy_validation.md.
+--
+-- `measurement_definitions` is the versioned definition record.
+-- `definition_evidence` is the audit trail of what moved a definition's
+-- confidence, kept separate so the current value and the history cannot
+-- disagree. `captured_frames` stores raw request/response pairs verbatim so
+-- a definition can be re-decoded later under a different version -- the
+-- project rule "raw bytes are never discarded" extended to definitions.
+CREATE TABLE IF NOT EXISTS measurement_definitions (
+    id INTEGER PRIMARY KEY,
+    key TEXT NOT NULL,
+    version TEXT NOT NULL,         -- catalogue version + digest of the layout
+    name TEXT NOT NULL,
+    unit TEXT,
+    confidence TEXT NOT NULL,      -- VERIFIED | PROVISIONAL | UNKNOWN
+    ecu_key TEXT, ecu_name TEXT,
+    request_can_id INTEGER, response_can_id INTEGER,
+    address_confidence TEXT,
+    transport TEXT, session_required TEXT,
+    service INTEGER, did INTEGER,
+    request_bytes TEXT,
+    byte_offset INTEGER, byte_length INTEGER, byte_order TEXT, signed INTEGER,
+    scale REAL, divisor REAL, addend REAL, formula TEXT,
+    response_length_hint INTEGER,
+    plausible_min REAL, plausible_max REAL, plausible_basis TEXT,
+    provenance TEXT, doc_status TEXT,
+    evidence_kind TEXT, evidence_source TEXT, evidence_artifact TEXT,
+    recorded_at TEXT NOT NULL,
+    validation_method TEXT,
+    limitations TEXT, falsified_by TEXT, competing_interpretations TEXT,
+    definition_json TEXT NOT NULL,  -- full record, so nothing is lost
+    first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(key, version)
+);
+CREATE INDEX IF NOT EXISTS ix_defs_key ON measurement_definitions(key, active);
+
+CREATE TABLE IF NOT EXISTS definition_evidence (
+    id INTEGER PRIMARY KEY,
+    definition_id INTEGER NOT NULL REFERENCES measurement_definitions(id),
+    ts TEXT NOT NULL,
+    observation TEXT NOT NULL,    -- what was seen / computed
+    kind TEXT NOT NULL,           -- vehicle_response | arithmetic | refutation
+                                    -- | third_party_definition | review
+    confidence_before TEXT, confidence_after TEXT,
+    detail TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_defev_def ON definition_evidence(definition_id, ts);
+
+CREATE TABLE IF NOT EXISTS captured_frames (
+    id INTEGER PRIMARY KEY,
+    vehicle_id INTEGER REFERENCES vehicles(id),
+    ts TEXT NOT NULL,
+    ecu TEXT NOT NULL,
+    request_bytes TEXT NOT NULL,   -- exact bytes transmitted
+    response_raw_lines TEXT,       -- verbatim adapter lines, unaltered
+    response_payload TEXT,         -- reassembled UDS payload, hex
+    did_record TEXT,               -- after marker + DID echo stripped
+    answer_source_id INTEGER,      -- CAN id the reply arrived on, when known
+    session_state TEXT,            -- e.g. ignition, charging, soC -- context only
+    succeeded INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    note TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_frames_ecu_ts ON captured_frames(ecu, ts);
+CREATE INDEX IF NOT EXISTS ix_frames_did ON captured_frames(request_bytes, ts);
+
+CREATE TABLE IF NOT EXISTS definition_evaluations (
+    id INTEGER PRIMARY KEY,
+    definition_id INTEGER NOT NULL REFERENCES measurement_definitions(id),
+    ts TEXT NOT NULL,
+    method TEXT NOT NULL,          -- offline_replay | arithmetic | live_compare
+    verdict TEXT NOT NULL,         -- PASS | FAIL | INDETERMINATE
+    n_samples INTEGER NOT NULL DEFAULT 0,
+    detail TEXT
+);
+
+-- DIDs the collector has retired from polling. Two kinds:
+--   * NRC 0x31 (requestOutOfRange) -- the car definitively says it does not
+--     implement the DID (the generic Car Scanner MEB profile names it, this
+--     specific ID.3 does not).
+--   * consistently silent -- the DID has never succeeded and has returned NO
+--     DATA for collector.silent_retire_threshold consecutive reads (a sleeping
+--     car looks like this, so a DID that has EVER succeeded is never retired).
+-- The collector skips these rather than re-polling known-dead DIDs every cycle.
+-- Additive, so SCHEMA_VERSION stays 1 (see the note above).
+CREATE TABLE IF NOT EXISTS unsupported_dids (
+    vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
+    ecu_key TEXT NOT NULL,
+    did INTEGER NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (vehicle_id, ecu_key, did)
 );
 """

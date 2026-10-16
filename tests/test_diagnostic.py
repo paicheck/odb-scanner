@@ -597,6 +597,67 @@ def test_protocol_switch_reasserts_auto_formatting_mode():
         "ATCAF0 must be sent after the ATSP that may have reset it")
 
 
+def test_gateway_uses_auto_formatting_not_hand_framing():
+    """The 11-bit gateway is read with ATCAF1 + a bare request, matching Car
+    Scanner's captured sequence. The CAF0 hand-framed 8-byte line is refused
+    ('?') under ATSP6 on this clone (docs/MEB_NO_RESPONSE_HANDOFF.md Track B).
+    """
+    stub = _StubTransport()
+    from diagnostic.elm327 import Elm327Transport
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t.meb_addressing = True
+
+    assert t.set_module(0x710, 0x77A) is True
+    assert "ATCAF1" in stub.sent, "gateway uses auto-formatting (bare request)"
+    assert "ATCAF0" not in stub.sent, "gateway must not hand-frame (refused)"
+    assert t.auto_formatting is True
+    # Car Scanner's flow-control preamble is present too.
+    for cmd in ("ATSH 710", "ATFCSH 710", "ATFCSD 300000", "ATFCSM 1",
+                "ATCRA 77A"):
+        assert cmd in stub.sent, cmd
+
+
+def test_transmit_sends_gateway_did_bare():
+    """_transmit sends the gateway DID request bare, leaving the ISO-TP PCI
+    byte and flow control to the adapter (ATCAF1), unlike the 29-bit modules
+    which it hand-frames into an 8-byte line (ATCAF0)."""
+    from diagnostic.connection import DiagnosticConnection
+    from diagnostic.elm327 import Elm327Transport
+    from diagnostic.ecus import get_ecu
+
+    stub = _StubTransport()
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t.meb_addressing = True
+
+    conn = DiagnosticConnection(t)
+    conn._transmit("222AB2", get_ecu("energy"), "test")
+    assert "222AB2" in stub.sent, "gateway request goes out bare"
+    assert not any(s.startswith("03222AB2") for s in stub.sent), (
+        "gateway request must not be hand-framed")
+
+
+def test_29bit_module_resets_flow_control_after_11bit():
+    """Switching back to a 29-bit module must clear the user-defined flow
+    control an 11-bit module set (ATFCSM 1), or the clone refuses the 29-bit
+    hand-framed request with '?' (the eldrive/veh_info symptom)."""
+    stub = _StubTransport()
+    from diagnostic.elm327 import Elm327Transport
+    t = Elm327Transport(port="TEST")
+    t.send_command = stub.send_command
+    t.meb_addressing = True
+
+    # An 11-bit module sets user-defined flow control.
+    assert t.set_module(0x746, 0x7B0) is True
+    assert "ATFCSM 1" in stub.sent
+
+    # Back to 29-bit: flow control must be reset.
+    stub.sent.clear()
+    assert t.set_module(0x17FC007C, 0x17FE007C) is True
+    assert "ATFCSM 0" in stub.sent, "29-bit module must reset flow control"
+
+
 def test_meb_negotiation_does_not_claim_success_after_a_refused_restore(caplog):
     """A refused functional restore disables MEB addressing -- so do not
     announce the opposite.
@@ -727,21 +788,38 @@ def test_meb_decoders_match_car_scanner_values():
     assert val("outside_temp", "80") == pytest.approx(14.0)   # 14 C ambient
     assert val("inside_temp", "0122") == pytest.approx(18.0)  # 18 C cabin
     assert val("hv_aux_power", "0003") == pytest.approx(0.3)   # u16/10
-    # The DID's own resolution is 1/1024 V, so compare to that not to 1e-5.
-    assert val("aux_12v_voltage", "290A") == pytest.approx(14.52, abs=0.002)
+    # Car Scanner profile scaling: u16 x 0.001 + 4.0 (1 mV per LSB).
+    assert val("aux_12v_voltage", "290A") == pytest.approx(14.506, abs=0.002)
 
 
-def test_meb_energy_content_divisor_is_declared_unverified():
-    """0x2AB8 has no published scale factor; the guess must be labelled.
+def test_meb_energy_content_states_its_status_and_its_refutation():
+    """0x2AB8 carries a scale from the Car Scanner profile, not a guess.
 
-    If this ever becomes verified, the note has to change with it.
+    The live layout is the profile's u16be[2:4] x 25. This used to assert the
+    note said PROVISIONAL / "no raw vehicle response has ever been captured";
+    the 2026-10-15 passive HCI capture returned those bytes, so the note now
+    says CONFIRMED and carries the captured response. The refuted u32/1310.77
+    layout stays callable so its exclusion is reproducible.
     """
+    from decoders.catalogue import build_catalogue, validate_definition
     from decoders.registry import build_default_registry
 
-    spec = build_default_registry("meb").get("hv_energy_content")
-    assert "ASSUMED, UNVERIFIED" in spec.notes
+    reg = build_default_registry("meb")
+    spec = reg.get("hv_energy_content")
     assert spec.ecu_key == "energy"
     assert spec.did == 0x2AB8
+    assert "CONFIRMED" in spec.notes
+    assert "62 2A B8" in spec.notes, (
+        "the note must carry the captured response bytes for this DID")
+    # and the live decoder really is the profile layout
+    assert spec.decode_value(b"\x00\x00\x06\x75") == pytest.approx(41325.0)
+    # the refuted layout stays callable so the exclusion is reproducible
+    from decoders.meb import _energy_content_wh_refuted
+
+    assert _energy_content_wh_refuted(b"\x03\x38\x08\x0C") == pytest.approx(
+        41200.0, rel=1e-3)
+    # ...and the catalogue agrees with whichever decoder ships
+    validate_definition(build_catalogue("meb", reg)["hv_energy_content"], spec)
 
 
 def test_car_scanner_profile_fields_decode_at_the_declared_scale():
@@ -1334,7 +1412,7 @@ def test_decoder_without_function_returns_none_quietly(caplog):
 # --- database -------------------------------------------------------------------
 from database.repository import Repository, utcnow  # noqa: E402
 from analysis.battery import cell_delta_trend  # noqa: E402
-from analysis.dtc import classify_dtc  # noqa: E402
+from analysis.dtc import classify_dtc, describe  # noqa: E402
 from analysis.charging import correlate_dtc_with_sessions  # noqa: E402
 
 
@@ -1470,6 +1548,20 @@ def test_dtc_classification():
     assert "potentially critical" in classify_dtc("P0A7F00")
     assert "active" in classify_dtc("P123400", status_byte=0x01)
     assert "historical" in classify_dtc("P123400", status_byte=0x08)
+
+
+def test_dtc_description_lookup():
+    # the hand-maintained VAG data-bus wording wins over the generic SAE text
+    desc, doc = describe("U112300")
+    assert doc and "Data bus" in desc
+    # the Car Scanner database supplies descriptions for the 5-char base code
+    desc, doc = describe("U1123")
+    assert doc and desc
+    desc, doc = describe("P0143")
+    assert doc and "HO2S" in desc
+    # an unknown code still degrades gracefully
+    desc, doc = describe("B10CD")
+    assert not doc and "No public description" in desc
 
 
 def test_cell_delta_trend(repo):
@@ -2724,7 +2816,8 @@ def test_network_bind_requires_a_token(tmp_path, monkeypatch):
                         raise_server_exceptions=False)
 
     for path in ("/", "/battery", "/dtcs", "/charging", "/ai",
-                 "/api/health", "/api/battery"):
+                 "/measurements", "/api/health", "/api/battery",
+                 "/api/measurements/pack_voltage"):
         r = client.get(path)
         assert r.status_code == 401, f"{path} served without a token"
         assert "WVWZZZE1ZMP" not in r.text, f"{path} leaked vehicle data"
@@ -2734,6 +2827,50 @@ def test_network_bind_requires_a_token(tmp_path, monkeypatch):
 
     assert client.get("/?k=wrong").status_code == 401
     assert client.get("/?k=" + token + "x").status_code == 401
+
+
+def test_measurements_page_lists_and_charts_series(tmp_path):
+    """The interactive /measurements page renders, and the per-key series API
+    returns the recorded values (successful reads only, oldest first)."""
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+    from database.repository import Repository
+    from datetime import datetime, timezone, timedelta
+
+    (tmp_path / "c.yaml").write_text(
+        f"database:\n  path: {tmp_path / 'd.db'}\n"
+        f"vehicle:\n  did_profile: meb\n"
+        f"web:\n  host: \"127.0.0.1\"\n  port: 8000\n", encoding="utf-8")
+    cfg = load_config(tmp_path / "c.yaml", tmp_path / "local.yaml")
+
+    repo = Repository(str(tmp_path / "d.db"))
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    base = datetime.now(timezone.utc)
+    for i, v in enumerate((355.2, 356.0, 355.8)):
+        ts = (base - timedelta(minutes=i)).isoformat(timespec="seconds")
+        repo.record_measurement(vid, ts, "pack_voltage", "bat_mgmt", "UDS-0x22",
+                                "0x1E3B", "V", "reported", "builtin",
+                                "documented", "AABB", v)
+    repo.close()
+
+    app = dash.create_app(cfg, bind_host="127.0.0.1")
+    client = TestClient(app, raise_server_exceptions=False)
+
+    r = client.get("/measurements")
+    assert r.status_code == 200
+    assert "pack_voltage" in r.text
+    assert "Electric drive" in r.text  # the catalog covers every MEB ECU
+
+    r = client.get("/api/measurements/pack_voltage")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["key"] == "pack_voltage"
+    # oldest first, as measurement_series() promises
+    assert body["value"] == [355.8, 356.0, 355.2]
+
+    r = client.get("/api/measurements/no_such_key")
+    assert r.status_code == 200
+    assert r.json()["value"] == []
 
 
 def test_the_401_page_never_contains_the_token(tmp_path, monkeypatch):

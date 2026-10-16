@@ -53,20 +53,18 @@ ECUS: dict[str, ECUSpec] = {
             tx29=0x17FC007B, rx29=0x17FE007B,
         ),
         ECUSpec(
-            "gate", "Central gateway (J533)", 0x792, 0x710,
-            doc_status="inferred (not yet validated on this vehicle)",
-            notes="Serves the Car Scanner '[19.Gate]' measurements. rx 0x710 "
-                  "is the response header those records declare twice: the "
-                  "HDR field and ATFCSH710. Their ATCRA argument is 0x77A, "
-                  "which is NOT 0x710+8 but exactly 0x710+0x6A - and every "
-                  "11-bit ECU class in that profile shows the same +0x6A "
-                  "relation, so ATCRA there is some Car Scanner encoding we "
-                  "have not identified. We therefore filter on the declared "
-                  "response header instead of copying ATCRA. tx 0x792 is the "
-                  "only gateway address named in Car Scanner code; 0x772 "
-                  "(= 0x710-8) is an untested alternative. Expect "
-                  "'no-response' or NRC until verified during discovery - see "
-                  "docs/investigation/meb_gateway_energy.md.",
+            "gate", "Central gateway (J533)", 0x710, 0x77A,
+            doc_status="experimentally determined (passive HCI capture "
+                       "2026-10-15)",
+            notes="Serves the Car Scanner '[19.Gate]' measurements. Addressing "
+                  "0x710 (request) -> 0x77A (response) is CONFIRMED by a "
+                  "passive Bluetooth HCI capture of Car Scanner on 2026-10-15: "
+                  "ATSH710 / ATFCSH710 / ATCRA77A on ATSP6 with flow control "
+                  "ATFCSD300000 + ATFCSM1. The earlier 0x792->0x710 pair and "
+                  "the '+0x6A encoding' reading were wrong: 0x77A really is "
+                  "the response id. See "
+                  "docs/investigation/meb_gateway_energy_passive_capture_"
+                  "20261015.md.",
         ),
         ECUSpec("chg_mgmt", "HV charge management", 0x765, 0x7CF,
                 notes="SOC normal, charge mode, CCS status, remaining time."),
@@ -104,6 +102,23 @@ ECUS: dict[str, ECUSpec] = {
             doc_status="experimentally determined (evDash/ABRP MEB community)",
             notes="MEB module 0x76: odometer, gear position, VIN.",
             tx29=0x17FC0076, rx29=0x17FE0076,
+        ),
+        ECUSpec(
+            "eldrive", "Electric drive (motor/inverter)", 0x7E6, 0x7EE,
+            doc_status="experimentally determined (Car Scanner MEB profile "
+                       "2026-10-15)",
+            notes="MEB module 0x7C: torque, motor speed, inverter losses, DC "
+                  "link, rotor/stator temperatures. 29-bit addressed "
+                  "(0x17FC007C -> 0x17FE007C).",
+            tx29=0x17FC007C, rx29=0x17FE007C,
+        ),
+        ECUSpec(
+            "gps", "GPS / telematics", 0x767, 0x7D1,
+            doc_status="experimentally determined (Car Scanner MEB profile "
+                       "2026-10-15)",
+            notes="MEB module 0x767: satellite counts. 11-bit addressed "
+                  "(ATCP 00 + ATSH 000767 -> 0x7D1).",
+            tx29=0x00000767, rx29=0x000007D1,
         ),
     ]
 }

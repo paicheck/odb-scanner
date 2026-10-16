@@ -254,22 +254,18 @@ SoC to DID `0x2AF7`** — the same DID we decode for 12 V voltage — and lists
 with **no request package at all**, i.e. not yet located.
 
 So `0x2AF7` returns a multi-frame payload holding the 12 V battery block:
-voltage (our `u16/1024 + 4.26`, the first two bytes), and inside the rest,
+voltage (the first two bytes, u16 x 0.001 + 4.0), and inside the rest,
 SoC, current, temperature, capacity and aging — which is exactly the
-`[19.Gate]` 12 V field set Car Scanner reports and which we currently import
-only as `gate_*` keys with no DID.
+`[19.Gate]` 12 V field set Car Scanner reports.
 
-This makes `[19.Gate]` completion tractable without new DID discovery: read
-`0x2AF7` as multi-frame, keep the raw bytes, and locate the sub-fields by
-fitting against the seven simultaneous Car Scanner readings already in the
-import (SoC 93–97 %, current 0.612–0.681 A, temp 22/25 °C, capacity 49 Ah,
-aging 89 %, total charge/discharge 1275/1209 Ah). One raw capture plus eight
-known target values is enough to solve the offsets.
-
-It also means our current `aux_12v_voltage` decoder is correct but silently
-discards the rest of the frame — `reassemble()` already returns the whole
-multi-frame payload, so nothing needs changing to *get* the bytes; only the
-sub-field decoders are missing.
+RESOLVED 2026-10-16: the Car Scanner MEB profile JSON supplies the exact
+offsets and scalings, so all ten 12 V sub-fields are now decoded directly
+(`aux_12v_voltage/current/soc/temp/sensor_temp/total_charge/total_discharge/
+aging_capacity/aging_power/adapted_capacity` in decoders/meb.py). They
+reproduce the imported Car Scanner values exactly (14.52 V, 0.65 A, 95 % SoC,
+22/25 °C, 1275/1209 Ah, 89 % aging, 49 Ah). The voltage scaling switched from
+evDash's `u16/1024 + 4.26` to the profile's `u16 x 0.001 + 4.0`; the raw
+multi-frame payload is preserved throughout, so this stays re-decodable.
 
 ### 2.7 Current sign: a genuine 2-against-1 conflict, unresolved
 
@@ -604,7 +600,7 @@ there and asserts the arms that must answer do:
 17FE007B05621E3B058C      BMS 0x1E3B  ->  058C = 1420 -> 355 V
 17FE007B07621E3D0002469F  BMS 0x1E3D  ->  0002469F = 150175 -> 1.75 A
 77A07622AB204280A64       energy 0x2AB2 (11-bit header, 4 data bytes)
-77A05622AF7290A           energy 0x2AF7 -> 290A = 10506 -> 14.52 V
+77A05622AF7290A           energy 0x2AF7 -> 290A = 10506 -> 14.506 V (x0.001 + 4.0)
 17FE00B90562465B00E2      DC/DC 0x465B -> 00E2 = 226 -> 14.1 A
 ```
 

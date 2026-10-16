@@ -20,7 +20,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from database.repository import Repository  # noqa: E402
+from database.repository import Repository, utcnow  # noqa: E402
 from simulator.vehicle import SimServer  # noqa: E402
 from tools.collect_acceptance import (  # noqa: E402
     Options,
@@ -77,3 +77,132 @@ def test_acceptance_flags_the_observed_october_outcome(sim_env):
     assert any(n.startswith("soc_abs") for n in failed), failed
     assert any(n.startswith("per-cell") for n in failed), failed
     assert any("battery_measurements row" in n for n in failed), failed
+
+
+def test_unsupported_did_round_trip(repo):
+    """mark_did_unsupported upserts per (ecu, did); keys are read back cleanly."""
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    ts = utcnow()
+    repo.mark_did_unsupported(vid, "energy", 0x2AB8, ts)
+    repo.mark_did_unsupported(vid, "energy", 0x2AB8, ts)  # bump, not duplicate
+    repo.mark_did_unsupported(vid, "bat_mgmt", 0x1234, ts)
+    keys = repo.unsupported_did_keys(vid)
+    assert ("energy", 0x2AB8) in keys
+    assert ("bat_mgmt", 0x1234) in keys
+    assert len(keys) == 2
+    # a second vehicle is independent
+    vid2 = repo.ensure_vehicle("WVWZZZE1ZMP099999")
+    assert repo.unsupported_did_keys(vid2) == set()
+
+
+def test_collector_marks_and_skips_unsupported_dids(sim_env):
+    """A DID answered with NRC 0x31 is persisted and then skipped next poll."""
+    from collector import Collector
+    from decoders.registry import DIDSpec
+
+    repo = Repository(sim_env.db_path)
+    col = Collector(sim_env, repo)
+    try:
+        col.open_and_identify()
+        vid = col.vehicle_id
+
+        # The simulator's BMS implements a known DID set only; anything else
+        # answers NRC 0x31 (requestOutOfRange) -- the exact signature the
+        # filter keys on (the dominant failure on a real ID.3 whose Car
+        # Scanner profile is generic MEB).
+        spec = DIDSpec(key="bogus_probe", ecu_key="bat_mgmt", did=0x1234,
+                       name="bogus", unit="")
+
+        assert col.poll_did(spec, utcnow()) is None
+        assert ("bat_mgmt", 0x1234) in col._unsupported
+        assert ("bat_mgmt", 0x1234) in repo.unsupported_did_keys(vid)
+
+        # The next poll skips without touching the wire (no new TX frame).
+        before = repo.conn.execute(
+            "SELECT COUNT(*) AS n FROM tx_log WHERE direction='TX'"
+        ).fetchone()["n"]
+        assert col.poll_did(spec, utcnow()) is None
+        after = repo.conn.execute(
+            "SELECT COUNT(*) AS n FROM tx_log WHERE direction='TX'"
+        ).fetchone()["n"]
+        assert after == before
+    finally:
+        col.close()
+        repo.close()
+
+
+def test_ever_succeeded_keys(repo):
+    """ever_succeeded_keys lists UDS DIDs that have ever answered; failures and
+    non-UDS rows are excluded."""
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    ts = utcnow()
+    repo.record_measurement(vid, ts, "k1", "energy", "UDS-0x22", "0x2AB2",
+                            "Wh", "reported", "builtin", "experimental",
+                            "04280400", 53200.0, None, True, None)
+    repo.record_measurement(vid, ts, "k2", "bat_mgmt", "UDS-0x22", "0x028C",
+                            "%", "reported", "builtin", "experimental",
+                            "B3", 71.6, None, True, None)
+    repo.record_measurement(vid, ts, "k3", "energy", "UDS-0x22", "0x2AF7",
+                            "V", "reported", "builtin", "experimental",
+                            "", None, None, False, "No/undecodable response")
+    keys = repo.ever_succeeded_keys(vid)
+    assert ("energy", 0x2AB2) in keys
+    assert ("bat_mgmt", 0x028C) in keys
+    assert ("energy", 0x2AF7) not in keys  # failed, so not "ever succeeded"
+    # non-UDS rows (service != 'UDS-0x22') are excluded
+    repo.record_measurement(vid, ts, "speed", "mot_elec", "01", "0D",
+                            "km/h", "reported", "builtin", "documented",
+                            "1E", 30.0, None, True, None)
+    assert ("mot_elec", 0x0D) not in repo.ever_succeeded_keys(vid)
+
+
+def _silent_collector(tmp_path, threshold=2):
+    """A Collector whose read_did always returns NO DATA, over a scratch DB."""
+    from collector import Collector
+    from config import Config
+    from diagnostic.interface import CommunicationError
+
+    repo = Repository(str(tmp_path / "c.db"))
+    cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
+                                "max_value_age_s": 900.0,
+                                "silent_retire_threshold": threshold},
+                  "database": {"path": str(tmp_path / "c.db")}})
+    col = Collector(cfg, repo)
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+
+    def boom(ecu, did):
+        raise CommunicationError(f"No/undecodable response to DID 0x{did:04X}")
+    col.conn.read_did = boom
+    return col, repo
+
+
+def test_silent_did_is_retired_after_threshold(tmp_path):
+    """A never-succeeded DID that returns NO DATA for the threshold count of
+    consecutive reads is retired (and skipped thereafter)."""
+    from decoders.registry import DIDSpec
+    col, repo = _silent_collector(tmp_path, threshold=2)
+    try:
+        spec = DIDSpec(key="bogus", ecu_key="bat_mgmt", did=0x1234,
+                       name="b", unit="")
+        assert col.poll_did(spec, utcnow()) is None
+        assert ("bat_mgmt", 0x1234) not in col._unsupported  # 1 < threshold
+        assert col.poll_did(spec, utcnow()) is None
+        assert ("bat_mgmt", 0x1234) in col._unsupported      # 2 == threshold
+        assert ("bat_mgmt", 0x1234) in repo.unsupported_did_keys(col.vehicle_id)
+    finally:
+        repo.close()
+
+
+def test_silent_did_never_retired_if_ever_succeeded(tmp_path):
+    """A DID that has ever answered is never retired for being silent."""
+    from decoders.registry import DIDSpec
+    col, repo = _silent_collector(tmp_path, threshold=2)
+    try:
+        col._ever_succeeded.add(("bat_mgmt", 0x1234))
+        spec = DIDSpec(key="bogus", ecu_key="bat_mgmt", did=0x1234,
+                       name="b", unit="")
+        for _ in range(5):
+            assert col.poll_did(spec, utcnow()) is None
+        assert ("bat_mgmt", 0x1234) not in col._unsupported
+    finally:
+        repo.close()

@@ -5,10 +5,12 @@ only reads from SQLite; collection runs as a separate process (main.py collect).
 
 Network-exposed binds require an access token -- see web/auth.py.
 """
+
 from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -78,15 +80,23 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         yield
         repo.close()
 
-    app = FastAPI(title="ID.3 Diagnostic System", docs_url=None, redoc_url=None,
-                  openapi_url=None, lifespan=lifespan)
+    app = FastAPI(
+        title="ID.3 Diagnostic System",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+    )
 
     host = bind_host if bind_host is not None else cfg.get("web.host", "127.0.0.1")
     token = resolve_token(cfg, host)
     if token:
         log.info(
             "Dashboard bound to %s, so access requires ?%s=... once per "
-            "browser. See the startup message for the value.", host, QUERY)
+            "browser. See the startup message for the value.",
+            host,
+            QUERY,
+        )
     # Order matters, and Starlette applies these OUTERMOST-LAST: whatever is
     # added last is the first to see a request and the last to touch a
     # response. The intended nesting, outside in, is
@@ -126,8 +136,11 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         for row in repo.list_ecus(vid):
             if row["key"] == "bat_mgmt":
                 status = str(row["status"] or "")
-                if (status.startswith("nrc-") or status == "no-response"
-                        or status == "refused"):
+                if (
+                    status.startswith("nrc-")
+                    or status == "no-response"
+                    or status == "refused"
+                ):
                     return status
         return None
 
@@ -140,8 +153,14 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         """
         _, vid = vehicle_and_id()
         if not vid:
-            return [], {"live": 0, "imported": 0, "stale": 0,
-                        "unavailable": 0, "unverified": 0, "total": 0}
+            return [], {
+                "live": 0,
+                "imported": 0,
+                "stale": 0,
+                "unavailable": 0,
+                "unverified": 0,
+                "total": 0,
+            }
         from analysis.provenance import key_states, summary
         from decoders.registry import build_default_registry
 
@@ -150,12 +169,103 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         rows = key_states(repo, vid, registry, stale_after_s=stale_after)
         return rows, summary(rows)
 
+    def measurement_catalog():
+        """All measurements grouped by ECU, for the /measurements page.
+
+        Returns (table_groups, chart_groups, counts) where:
+          table_groups  list of {ecu, name, items:[{key,name,unit,value,ts,
+                        state,unverified}]} with per-cell rolls ups collapsed.
+          chart_groups  list of {name, specs:[{key,name,unit}]} listing EVERY
+                        spec (individual cells included) for the chart picker.
+          counts        provenance summary from measurement_sources().
+        """
+        from decoders.registry import build_default_registry
+        from diagnostic.ecus import ECUS
+
+        registry = build_default_registry(cfg.get("vehicle.did_profile", "eup"))
+        rows, counts = measurement_sources()
+
+        # Per-cell voltages live in the cell_voltages table, not `measurements`,
+        # so key_states() reports the rollup as unavailable. Override it with
+        # the latest sweep's real cell data (delta mV + cell count + state).
+        _, vid = vehicle_and_id()
+        cells = repo.latest_cell_voltages(vid) if vid else []
+        if cells:
+            vs = [r["voltage_v"] for r in cells]
+            sweep_ts = cells[0]["ts"]
+            try:
+                age = (
+                    datetime.now(timezone.utc) - datetime.fromisoformat(sweep_ts)
+                ).total_seconds()
+            except (ValueError, TypeError):
+                age = None
+            state = "live" if (age is not None and age <= 900.0) else "stale"
+            for row in rows:
+                if row["key"] == "cell_voltages":
+                    row["value"] = round((max(vs) - min(vs)) * 1000.0, 1)
+                    row["ts"] = sweep_ts
+                    row["state"] = state
+                    row["known"] = len(cells)
+                    row["live"] = len(cells) if state == "live" else 0
+                    row["unavailable"] = max(0, 108 - len(cells))
+                    break
+
+        def ecu_name(key):
+            return ECUS[key].name if key in ECUS else key
+
+        # key -> ecu for the collapsed table rows (cell rollups belong to BMS)
+        key_to_ecu = {s.key: s.ecu_key for s in registry.all()}
+        key_to_ecu["cell_voltages"] = "bat_mgmt"
+        key_to_ecu["cell_temperatures"] = "bat_mgmt"
+
+        groups: dict[str, list[dict]] = {}
+        for row in rows:
+            groups.setdefault(key_to_ecu.get(row["key"], "other"), []).append(row)
+
+        table_groups = [
+            {
+                "ecu": ecu,
+                "name": ecu_name(ecu),
+                "rows": sorted(items, key=lambda r: r["name"].lower()),
+            }
+            for ecu, items in sorted(
+                groups.items(), key=lambda kv: ecu_name(kv[0]).lower()
+            )
+        ]
+
+        chart: dict[str, list[dict]] = {}
+        for spec in registry.all():
+            chart.setdefault(spec.ecu_key, []).append(
+                {"key": spec.key, "name": spec.name, "unit": spec.unit}
+            )
+        chart_groups = [
+            {
+                "name": ecu_name(ecu),
+                "specs": sorted(specs, key=lambda s: s["name"].lower()),
+            }
+            for ecu, specs in sorted(
+                chart.items(), key=lambda kv: ecu_name(kv[0]).lower()
+            )
+        ]
+
+        return table_groups, chart_groups, counts
+
     def render(name: str, request: Request, **extra):
         vehicle, _ = vehicle_and_id()
-        ctx = {"vehicle": vehicle,
-               "nav": ["Overview", "Battery", "Faults", "Charging",
-                       "AI Analysis", "Sources"],
-               **extra}
+        ctx = {
+            "vehicle": vehicle,
+            "nav": [
+                "Overview",
+                "Progress",
+                "Measurements",
+                "Battery",
+                "Faults",
+                "Charging",
+                "AI Analysis",
+                "Sources",
+            ],
+            **extra,
+        }
         return _templates.TemplateResponse(request, name, ctx)
 
     # ---- pages --------------------------------------------------------------
@@ -170,24 +280,51 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         rows, counts = measurement_sources()
         return render("sources.html", request, sources=rows, counts=counts)
 
+    @app.get("/measurements", response_class=HTMLResponse)
+    def measurements_page(request: Request):
+        groups, chart_groups, counts = measurement_catalog()
+        return render(
+            "measurements.html",
+            request,
+            groups=groups,
+            chart_groups=chart_groups,
+            counts=counts,
+            days=trend_days,
+        )
+
+    @app.get("/progress", response_class=HTMLResponse)
+    def progress_page(request: Request):
+        return render("progress.html", request, p=progress_data())
+
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
         _, vid = vehicle_and_id()
         days = trend_days
-        battery = (battery_analysis.battery_overview(repo, days, vid)
-                   if vid else {})
+        battery = battery_analysis.battery_overview(repo, days, vid) if vid else {}
         dtcs = dtc_analysis.dtc_summary(repo.dtc_list(vid)) if vid else {}
-        charging = (charging_analysis.session_comparison(repo, vid, charging_days)
-                    if vid else {})
+        charging = (
+            charging_analysis.session_comparison(repo, vid, charging_days) if vid else {}
+        )
         anomalies = [dict(a) for a in repo.anomalies(vid, days)] if vid else []
         latest = repo.latest_measurements(vid, max_age_s=86400) if vid else {}
         lv = latest.get("lv_voltage_obd") or {}
         speed = latest.get("vehicle_speed") or {}
-        live = {"lv_voltage_v": lv.get("value"), "lv_voltage_ts": lv.get("ts"),
-                "speed_kmh": speed.get("value")}
-        return render("overview.html", request, battery=battery, dtcs=dtcs,
-                      charging=charging, anomalies=anomalies, days=days,
-                      live=live, bms_refusal=bms_refusal())
+        live = {
+            "lv_voltage_v": lv.get("value"),
+            "lv_voltage_ts": lv.get("ts"),
+            "speed_kmh": speed.get("value"),
+        }
+        return render(
+            "overview.html",
+            request,
+            battery=battery,
+            dtcs=dtcs,
+            charging=charging,
+            anomalies=anomalies,
+            days=days,
+            live=live,
+            bms_refusal=bms_refusal(),
+        )
 
     @app.get("/battery", response_class=HTMLResponse)
     def battery_page(request: Request):
@@ -199,48 +336,70 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             # `or` would treat a genuine 0 % SoC as missing and silently fall
             # back to the absolute figure, which is the one number on this page
             # that must never be fudged.
-            "soc": [_first_number(r["soc_normal_pct"], r["soc_abs_pct"])
-                    for r in rows],
+            "soc": [_first_number(r["soc_normal_pct"], r["soc_abs_pct"]) for r in rows],
             "pack_v": [r["pack_voltage_v"] for r in rows],
             "temp": [r["battery_temp_c"] for r in rows],
         }
-        trend = (battery_analysis.cell_delta_trend(repo, trend_days, vid)
-                 if vid else {"status": "no vehicle"})
-        lv_rows = (repo.measurement_series(vid, "lv_voltage_obd", trend_days)
-                   if vid else [])
-        lv_chart = {"ts": [r["ts"] for r in lv_rows],
-                    "v": [r["value"] for r in lv_rows]}
-        return render("battery.html", request, chart=chart, trend=trend,
-                      days=trend_days, lv_chart=lv_chart,
-                      bms_refusal=bms_refusal())
+        trend = (
+            battery_analysis.cell_delta_trend(repo, trend_days, vid)
+            if vid
+            else {"status": "no vehicle"}
+        )
+        lv_rows = (
+            repo.measurement_series(vid, "lv_voltage_obd", trend_days) if vid else []
+        )
+        lv_chart = {"ts": [r["ts"] for r in lv_rows], "v": [r["value"] for r in lv_rows]}
+        return render(
+            "battery.html",
+            request,
+            chart=chart,
+            trend=trend,
+            days=trend_days,
+            lv_chart=lv_chart,
+            bms_refusal=bms_refusal(),
+        )
 
     @app.get("/dtcs", response_class=HTMLResponse)
     def dtc_page(request: Request):
         _, vid = vehicle_and_id()
-        summary = (dtc_analysis.dtc_summary(repo.dtc_list(vid),
-                                            repo.latest_freeze_frames(vid))
-                   if vid else {})
+        summary = (
+            dtc_analysis.dtc_summary(repo.dtc_list(vid), repo.latest_freeze_frames(vid))
+            if vid
+            else {}
+        )
         return render("dtcs.html", request, dtcs=summary)
 
     @app.get("/charging", response_class=HTMLResponse)
     def charging_page(request: Request):
         _, vid = vehicle_and_id()
         sessions = repo.charging_sessions(charging_days, vid) if vid else []
-        comparison = (charging_analysis.session_comparison(
-            repo, vid, charging_days) if vid else {})
-        corr = (charging_analysis.correlate_dtc_with_sessions(
-            repo, vid, charging_days) if vid else {})
-        return render("charging.html", request,
-                      sessions=[dict(s) for s in sessions],
-                      comparison=comparison, correlation=corr)
+        comparison = (
+            charging_analysis.session_comparison(repo, vid, charging_days) if vid else {}
+        )
+        corr = (
+            charging_analysis.correlate_dtc_with_sessions(repo, vid, charging_days)
+            if vid
+            else {}
+        )
+        return render(
+            "charging.html",
+            request,
+            sessions=[dict(s) for s in sessions],
+            comparison=comparison,
+            correlation=corr,
+        )
 
     @app.get("/ai", response_class=HTMLResponse)
     def ai_page(request: Request):
         _, vid = vehicle_and_id()
         reports = repo.llm_reports(vid) if vid else []
-        return render("ai.html", request, questions=DEFAULT_QUESTIONS,
-                      reports=[dict(r) for r in reports],
-                      ollama_model=svc.llm.model)
+        return render(
+            "ai.html",
+            request,
+            questions=DEFAULT_QUESTIONS,
+            reports=[dict(r) for r in reports],
+            ollama_model=svc.llm.model,
+        )
 
     @app.post("/ai/ask", response_class=HTMLResponse)
     def ai_ask(request: Request, question: str = Form(...)):
@@ -251,18 +410,24 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=400,
                 detail=f"Question is {len(question)} characters; the limit is "
-                       f"{MAX_QUESTION_CHARS}.")
+                f"{MAX_QUESTION_CHARS}.",
+            )
         try:
             result = svc.ask(question)
             report, warnings, error = result["report"], result["warnings"], None
         except OllamaError as exc:
             report, warnings, error = "", [], str(exc)
-        reports_hist = [dict(r) for r in repo.llm_reports(
-            vehicle_and_id()[1])]
-        return render("ai.html", request, questions=DEFAULT_QUESTIONS,
-                      reports=reports_hist, report=report,
-                      warnings=warnings, error=error,
-                      ollama_model=svc.llm.model)
+        reports_hist = [dict(r) for r in repo.llm_reports(vehicle_and_id()[1])]
+        return render(
+            "ai.html",
+            request,
+            questions=DEFAULT_QUESTIONS,
+            reports=reports_hist,
+            report=report,
+            warnings=warnings,
+            error=error,
+            ollama_model=svc.llm.model,
+        )
 
     # ---- JSON API ------------------------------------------------------------
     @app.get("/api/battery")
@@ -276,10 +441,124 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         _, vid = vehicle_and_id()
         dtcs = dtc_analysis.dtc_summary(repo.dtc_list(vid)) if vid else {}
         critical = dtcs.get("by_category", {}).get("potentially critical", 0)
-        return {"vehicle_known": bool(vid), "dtc_total": dtcs.get("total", 0),
-                "critical_dtcs": critical,
-                "ollama_available": svc.llm.available()}
+        return {
+            "vehicle_known": bool(vid),
+            "dtc_total": dtcs.get("total", 0),
+            "critical_dtcs": critical,
+            "ollama_available": svc.llm.available(),
+        }
+
+    @app.get("/api/measurements/{key}")
+    def api_measurement(key: str):
+        """Time series for one measurement key (successful reads, oldest first).
+
+        Cell voltages live in their own table; a `cell_v_NNN` key reads that
+        instead of `measurements`.
+        """
+        _, vid = vehicle_and_id()
+        if vid and key.startswith("cell_v_"):
+            try:
+                idx = int(key.rsplit("_", 1)[1])
+            except ValueError:
+                idx = -1
+            rows = repo.cell_voltage_series(vid, idx, trend_days) if idx >= 0 else []
+        else:
+            rows = repo.measurement_series(vid, key, trend_days) if vid else []
+        return {
+            "key": key,
+            "ts": [r["ts"] for r in rows],
+            "value": [r["value"] for r in rows],
+        }
+
+    def progress_data():
+        """Live collection progress: last activity, recent reads, per-ECU
+        answer rates, and the latest diagnostic events. Read-only."""
+        _, vid = vehicle_and_id()
+        if not vid:
+            return {"vehicle_known": False}
+
+        window_s = 600  # 10-minute sliding window
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(seconds=window_s)).isoformat(timespec="seconds")
+
+        last_ts = repo.conn.execute(
+            "SELECT MAX(ts) FROM measurements WHERE vehicle_id=?", (vid,)
+        ).fetchone()[0]
+        seconds_ago = None
+        if last_ts:
+            try:
+                seconds_ago = round(
+                    (now - datetime.fromisoformat(last_ts)).total_seconds(), 1
+                )
+            except ValueError:
+                seconds_ago = None
+
+        totals = {
+            "measurements": repo.conn.execute(
+                "SELECT COUNT(*) FROM measurements WHERE vehicle_id=?", (vid,)
+            ).fetchone()[0],
+            "battery_snapshots": repo.conn.execute(
+                "SELECT COUNT(*) FROM battery_measurements WHERE vehicle_id=?", (vid,)
+            ).fetchone()[0],
+            "dtcs": repo.conn.execute(
+                "SELECT COUNT(*) FROM dtcs WHERE vehicle_id=?", (vid,)
+            ).fetchone()[0],
+        }
+        recent = {
+            "success": repo.conn.execute(
+                "SELECT COUNT(*) FROM measurements "
+                "WHERE vehicle_id=? AND ts>=? AND success=1",
+                (vid, cutoff),
+            ).fetchone()[0],
+            "failed": repo.conn.execute(
+                "SELECT COUNT(*) FROM measurements "
+                "WHERE vehicle_id=? AND ts>=? AND success=0",
+                (vid, cutoff),
+            ).fetchone()[0],
+            "battery_snapshots": repo.conn.execute(
+                "SELECT COUNT(*) FROM battery_measurements WHERE vehicle_id=? AND ts>=?",
+                (vid, cutoff),
+            ).fetchone()[0],
+        }
+        ecu_rows = repo.conn.execute(
+            "SELECT ecu, SUM(success) AS ok, SUM(1-success) AS bad, MAX(ts) AS last "
+            "FROM measurements WHERE vehicle_id=? AND ts>=? "
+            "GROUP BY ecu ORDER BY ok DESC",
+            (vid, cutoff),
+        ).fetchall()
+        discovered = {r["key"]: str(r["status"] or "") for r in repo.list_ecus(vid)}
+        events = repo.conn.execute(
+            "SELECT ts, kind, description FROM diagnostic_events "
+            "WHERE vehicle_id=? ORDER BY ts DESC LIMIT 12",
+            (vid,),
+        ).fetchall()
+
+        return {
+            "vehicle_known": True,
+            "now": now.isoformat(timespec="seconds"),
+            "last_ts": last_ts,
+            "seconds_ago": seconds_ago,
+            "window_s": window_s,
+            "totals": totals,
+            "recent": recent,
+            "ecus": [
+                {
+                    "ecu": r["ecu"],
+                    "success": r["ok"],
+                    "failed": r["bad"],
+                    "last": r["last"],
+                    "discovery": discovered.get(r["ecu"], ""),
+                }
+                for r in ecu_rows
+            ],
+            "events": [
+                {"ts": e["ts"], "kind": e["kind"], "description": e["description"]}
+                for e in events
+            ],
+        }
+
+    @app.get("/api/progress")
+    def api_progress():
+        return progress_data()
 
     return app
-
-

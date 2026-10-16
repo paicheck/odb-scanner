@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block content %}
+<meta http-equiv="refresh" content="5">
+<style>
+  .status-dot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; }
+  .dot-live { background:#27ae60; }
+  .dot-recent { background:#e0a800; }
+  .dot-stale { background:#999; }
+  .big-num { font-size:24px; font-weight:600; }
+  .ok { color:#1c6b1c; }
+  .bad { color:#c0392b; }
+  .muted { color:#777; font-size:12px; }
+  .event { padding:3px 0; border-bottom:1px solid #eef2f5; font-size:13px; }
+</style>
+
+<h1 style="font-size:18px;margin:0 0 4px;">Collector progress</h1>
+<p class="muted">auto-refreshes every 5 s · window {{ (p.window_s / 60) | round | int }} min</p>
+
+{% if not p.vehicle_known %}
+  <div class="warn">No vehicle data yet. Start the collector to begin logging.</div>
+{% else %}
+  {% set sa = p.seconds_ago %}
+  {% if sa is none %}{% set cls = 'dot-stale' %}{% set label = 'no data yet' %}
+  {% elif sa < 60 %}{% set cls = 'dot-live' %}{% set label = 'collecting' %}
+  {% elif sa < 600 %}{% set cls = 'dot-recent' %}{% set label = 'recent (idle?)' %}
+  {% else %}{% set cls = 'dot-stale' %}{% set label = 'stale' %}{% endif %}
+
+  <div class="cards" style="margin-bottom:16px;">
+    <div class="card"><h3>Status</h3>
+      <div class="big-num"><span class="status-dot {{ cls }}"></span>{{ label }}</div>
+      <div class="muted">{{ p.last_ts.replace('T', ' ')[:19] if p.last_ts else 'never' }} ({{ sa if sa is not none else '—' }}s ago)</div>
+    </div>
+    <div class="card"><h3>Last {{ (p.window_s / 60) | round | int }} min</h3>
+      <div class="big-num"><span class="ok">{{ p.recent.success }}</span> / <span class="bad">{{ p.recent.failed }}</span></div>
+      <div class="muted">reads ok / failed · {{ p.recent.battery_snapshots }} battery snapshots</div>
+    </div>
+    <div class="card"><h3>Totals</h3>
+      <div class="big-num">{{ p.totals.measurements }}</div>
+      <div class="muted">measurements · {{ p.totals.battery_snapshots }} battery · {{ p.totals.dtcs }} DTCs</div>
+    </div>
+  </div>
+
+  <div class="chartbox">
+    <h3>ECU answer rates (last {{ (p.window_s / 60) | round | int }} min)</h3>
+    <table>
+      <thead><tr><th>ECU</th><th>Discovery</th><th>OK</th><th>Failed</th><th>Last read</th></tr></thead>
+      <tbody>
+      {% for e in p.ecus %}
+        <tr>
+          <td>{{ e.ecu }}</td>
+          <td class="muted">{{ e.discovery or '—' }}</td>
+          <td class="ok">{{ e.success }}</td>
+          <td class="bad">{{ e.failed }}</td>
+          <td class="muted">{{ e.last[11:19] if e.last else '—' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">no reads in this window</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="chartbox">
+    <h3>Recent events</h3>
+    {% for ev in p.events %}
+      <div class="event"><span class="muted">{{ ev.ts[11:19] }}</span> <strong>{{ ev.kind }}</strong> — {{ ev.description }}</div>
+    {% else %}
+      <div class="muted">no events yet</div>
+    {% endfor %}
+  </div>
+{% endif %}
+{% endblock %}

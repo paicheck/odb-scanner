@@ -25,6 +25,7 @@ from diagnostic.connection import DiagnosticConnection
 from diagnostic.ecus import ECUS
 from diagnostic.elm327 import Elm327Transport
 from diagnostic.interface import CommunicationError
+from diagnostic.uds import NegativeResponseError, ProtocolError
 
 log = logging.getLogger(__name__)
 
@@ -137,6 +138,19 @@ class Collector:
         # full adapter.timeout on every cycle otherwise, and the stored-DTC
         # set rarely changes within a run.
         self._dtc_snapshots: dict[str, dict] = {}
+        # (ecu_key, did) pairs this vehicle has rejected with NRC 0x31, loaded
+        # once the vehicle is known. poll_did() skips these and adds new ones,
+        # so a DID the car does not implement is not re-polled every cycle.
+        self._unsupported: set[tuple[str, int]] = set()
+        # Silent-DID retirement: a DID that has NEVER succeeded on this vehicle
+        # and returns NO DATA (not NRC) for `silent_retire_threshold` consecutive
+        # reads is also retired. `_ever_succeeded` is the guard -- silence on a
+        # DID that has answered before means "car asleep", not "DID dead", so a
+        # DID that has EVER answered is never retired for being silent.
+        self._ever_succeeded: set[tuple[str, int]] = set()
+        self._silent_failures: dict[tuple[str, int], int] = {}
+        self.silent_retire_threshold = int(
+            self.cfg.get("collector.silent_retire_threshold", 3))
         # Set False by discover_ecus() when the battery DIDs are refused on
         # this vehicle's OBD surface (BMS not exposed through the gateway,
         # e.g. NRC-31): the per-cell sweep would otherwise re-collect 102
@@ -197,7 +211,11 @@ class Collector:
                             f"Connected via {self.conn.t.description()}; "
                             f"VIN read = {vin}")
         self._adopt_open_session()
-        log.info("Identified vehicle VIN=%s year=%s", vin, year)
+        self._unsupported = self.repo.unsupported_did_keys(self.vehicle_id)
+        self._ever_succeeded = self.repo.ever_succeeded_keys(self.vehicle_id)
+        log.info("Identified vehicle VIN=%s year=%s unsupported_dids=%d "
+                 "ever_succeeded=%d", vin, year, len(self._unsupported),
+                 len(self._ever_succeeded))
         return vin
 
     def close(self) -> None:
@@ -325,16 +343,58 @@ class Collector:
         )
 
     def poll_did(self, spec, ts: str) -> bytes | None:
+        key = (spec.ecu_key, spec.did)
+        if key in self._unsupported:
+            return None
         ecu = ECUS[spec.ecu_key]
         try:
             raw = self.conn.read_did(ecu, spec.did)
             self._record(spec, raw, ts)
             self._attempt(True)
+            self._ever_succeeded.add(key)
+            self._silent_failures.pop(key, None)
             return raw
-        except CommunicationError as exc:
+        except NegativeResponseError as exc:
+            self._record(spec, None, ts, error=str(exc), success=False)
+            self._attempt(False)
+            # NRC 0x31 = this car does not implement that DID. Remember it so
+            # the collector stops re-polling a known-dead DID every cycle.
+            if exc.nrc == 0x31:
+                self._retire_did(key, ts)
+            return None
+        except ProtocolError as exc:
+            # The ECU answered but not with a decodable positive or negative
+            # response. That is an addressing/decoder problem, not silence, so
+            # it does not count toward silent-DID retirement.
             self._record(spec, None, ts, error=str(exc), success=False)
             self._attempt(False)
             return None
+        except CommunicationError as exc:
+            # NO DATA: the ECU said nothing. Count it toward silent-DID
+            # retirement -- a never-succeeded DID that stays silent is dead.
+            self._record(spec, None, ts, error=str(exc), success=False)
+            self._attempt(False)
+            self._note_silent(key, ts)
+            return None
+
+    def _retire_did(self, key: tuple[str, int], ts: str) -> None:
+        """Mark a DID retired so it is skipped from the next cycle on."""
+        self._unsupported.add(key)
+        self.repo.mark_did_unsupported(
+            self.vehicle_id, key[0], key[1], ts)
+
+    def _note_silent(self, key: tuple[str, int], ts: str) -> None:
+        """Count one NO DATA read; retire the DID once it has never succeeded
+        and stayed silent for the configured number of consecutive reads."""
+        if key in self._ever_succeeded:
+            # It answered before, so silence here means "car asleep", not "DID
+            # dead". Never retire a DID that has ever produced data.
+            return
+        count = self._silent_failures.get(key, 0) + 1
+        self._silent_failures[key] = count
+        if count >= self.silent_retire_threshold:
+            self._retire_did(key, ts)
+            self._silent_failures.pop(key, None)
 
     # -- phase 3/4: one collection pass ----------------------------------------
     def collect_once(self) -> dict:

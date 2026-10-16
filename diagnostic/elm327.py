@@ -91,6 +91,16 @@ class Elm327Transport(OBDInterface):
     def is_open(self) -> bool:
         return self._opened
 
+    @property
+    def auto_formatting(self) -> bool:
+        """True when the adapter is in ATCAF1 (auto-formatting ON).
+
+        _transmit uses this to decide whether a module request goes out as a
+        bare request (the adapter adds the ISO-TP PCI byte, header and flow
+        control) or as the hand-framed single frame ATCAF0 needs.
+        """
+        return self._caf == 1
+
     def open(self) -> None:
         if self._opened:
             return
@@ -491,6 +501,8 @@ class Elm327Transport(OBDInterface):
         resp = self._set_protocol(PINNED_PROTOCOL)
         resp += self.send_command("ATCP 18")
         resp += self.send_command("ATSH DB33F1")
+        # Reset flow control an 11-bit module left behind (see set_module).
+        self.send_command("ATFCSM 0")
         if any("?" in r for r in resp):
             return False
         self._meb_module = None
@@ -579,6 +591,15 @@ class Elm327Transport(OBDInterface):
         """
         if not self.meb_addressing:
             return tx29 is None
+        # 11-bit MEB modules (energy 0x710, climate 0x746, GPS 0x767) need Car
+        # Scanner's sequence -- 3-digit ATSH/ATCRA plus the flow-control
+        # preamble and auto-formatting -- which the 6/8-digit path below does
+        # not produce. The 2026-10-15 passive capture confirmed Car Scanner
+        # reaches the gateway (0x710) with ATSH710 / ATSP6 / ATFCSH710 /
+        # ATFCSD300000 / ATFCSM1 / ATCRA77A plus a bare request; the same
+        # recipe applies to the other 11-bit modules.
+        if tx29 is not None and tx29 <= 0x7FF and rx29 is not None:
+            return self.set_module_car_scanner_11bit(tx29, rx29)
         want_proto = "6" if tx29 is not None and tx29 <= 0x7FF else PINNED_PROTOCOL
         # The CAF check belongs in this guard: being aimed at the right module
         # on the right protocol is not enough if auto-formatting is not in the
@@ -608,6 +629,13 @@ class Elm327Transport(OBDInterface):
         if any("?" in r for r in resp):
             log.warning("Adapter refused module header %08X", tx29)
             return self._recover()
+        # Reset the user-defined flow control an 11-bit module left behind
+        # (ATFCSM 1): with it still set, the clone refuses the 29-bit
+        # hand-framed request with '?' -- the eldrive/veh_info symptom. This is
+        # non-fatal: a clone that rejects the reset may still answer.
+        fc = self.send_command("ATFCSM 0")
+        if any("?" in r for r in fc):
+            log.warning("Adapter refused ATFCSM 0 (flow-control reset)")
         if self._caf != 0:
             self.send_command("ATCAF0")
             self._caf = 0
@@ -620,6 +648,68 @@ class Elm327Transport(OBDInterface):
         else:
             self._atcra = None
         self._meb_module = tx29
+        return True
+
+    def set_module_car_scanner_11bit(self, tx29: int, rx29: int) -> bool:
+        """Configure an 11-bit MEB module per Car Scanner's BCM field.
+
+        Car Scanner reaches the 11-bit modules (gateway/energy 0x710, climate
+        0x746, GPS 0x767) with auto-formatting ON and a bare request, plus the
+        ISO-TP flow-control preamble. The gateway sequence was observed in the
+        2026-10-15 passive HCI capture (the profiles7.db BCM field omits the
+        ATSH request header, but the capture shows Car Scanner sends it):
+          ATSP6                    # ISO 15765-4 CAN 11-bit 500 kbit/s
+          ATSH 710                 # request header = module id
+          ATFCSH 710               # flow-control header = request id
+          ATFCSD 300000            # flow control: BS=0, STmin=0
+          ATFCSM 1                 # user-defined flow control
+          ATCRA 77A                # receive filter = response id
+          ATCAF1                   # auto-formatting ON: send bare '22 XXXX'
+
+        After this, the adapter is ready for a bare request: '22 XXXX'. The
+        adapter adds the ISO-TP PCI byte, header and flow control itself. The
+        8-byte hand-framed CAF0 line this transport uses for 29-bit modules is
+        refused ('?') under ATSP6 on this clone (docs/MEB_NO_RESPONSE_HANDOFF.md
+        Track B), so the 11-bit modules need this instead.
+
+        Returns False if any command is refused by the adapter.
+        """
+        # Cache: if already aimed at this module on the right protocol, filter
+        # and auto-formatting mode, don't re-send the AT commands before every
+        # read. The other set_module() paths reset these fields when switching
+        # away, so a stale cache cannot survive a module change.
+        if (self._proto == "6" and self._caf == 1
+                and self._atcra == rx29 and self._meb_module == tx29):
+            return True
+        # Must be on 11-bit protocol
+        resp = self._set_protocol("6")
+        if any("?" in r for r in resp):
+            log.warning("Adapter refused ATSP6 for 11-bit module %03X", tx29)
+            return False
+
+        # Car Scanner's 11-bit sequence as captured, plus ATCAF1: auto-format
+        # the bare request instead of hand-framing it (the CAF0 8-byte line is
+        # refused under ATSP6). The flow-control preamble lets the adapter
+        # reassemble multi-frame replies.
+        for cmd in (f"ATSH {tx29:03X}", f"ATFCSH {tx29:03X}",
+                    "ATFCSD 300000", "ATFCSM 1", f"ATCRA {rx29:03X}",
+                    "ATCAF1"):
+            resp = self.send_command(cmd)
+            if any("?" in r for r in resp):
+                log.warning("Adapter refused %s for 11-bit module %03X", cmd,
+                            tx29)
+                return False
+
+        # Track state so set_module(None) can restore correctly
+        self._proto = "6"
+        self._caf = 1  # ATCAF1: auto-formatting, bare request, adapter frames it
+        self._atcra = rx29
+        self._meb_module = tx29
+
+        log.info(
+            "MEB 11-bit module %03X -> %03X addressing configured "
+            "per Car Scanner profile", tx29, rx29
+        )
         return True
 
     def description(self) -> str:

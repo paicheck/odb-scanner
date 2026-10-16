@@ -1,20 +1,15 @@
 """Electric drive decoders.
 
-STATUS: no verified UDS DIDs for motor speed/torque/inverter temperature on
-the ID.3 exist in public open-source documentation at this time.
+STATUS (2026-10-16): drive-system DIDs (motor torque, motor speed, inverter
+losses, rotor/stator/PCB temperatures, DC-link voltage/current) are now
+registered in decoders/meb.py under the "eldrive" ECU (MEB module 0x7C,
+29-bit 0x17FC007C -> 0x17FE007C), recovered verbatim from the Car Scanner MEB
+profile (profile_EV_MEB_*.json). They are EXPERIMENTAL -- not yet confirmed by
+this project's own capture -- but the scalings come from Car Scanner's own
+profile, not a guess.
 
-Per project requirement #18 ("don't fake support") this module deliberately
-registers NOTHING. If a DID is experimentally identified (e.g. by comparing
-raw CAN traces against known driving states), register it here as:
-
-    reg.register(DIDSpec(
-        "motor_rpm", "eld", 0xXXXX, "Motor speed", "rpm",
-        decode=..., doc_status=DocStatus.EXPERIMENTAL,
-        notes="how it was identified",
-    ))
-
-and the collector, database, analysis and dashboard will pick it up without
-further changes. See decoders/bms.DRIVE_SYSTEM_STATUS.
+This module is deliberately empty: the "eldrive" ECU belongs to the MEB map,
+so its decoders live in meb.py. Do not duplicate them here.
 """
 from __future__ import annotations
 

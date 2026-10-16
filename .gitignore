@@ -22,3 +22,11 @@ config.local.yaml
 docs/experiment_record_results.md
 docs/experiment_record_sim.md
 
+# Generated investigation output and scratch (regenerable, not source)
+*.out
+*.out.txt
+tools/exports/
+tools/phase_c_arithmetic.json
+tools/_phase_c_arithmetic.json
+_phase_c_arithmetic.json
+

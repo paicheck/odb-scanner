@@ -160,6 +160,20 @@ ACTIONS = [
         "fail": "Something failed. The lines above name what.",
         "always_enabled": True,
     },
+    {
+        "label": "Capture gateway energy (0x2AB2/0x2AB8)",
+        "argv": ["tools/capture_gateway_energy.py"],
+        "help": "One-shot read of HV energy content (0x2AB8) and max energy "
+                "content (0x2AB2) at the GATEWAY address 0x710->0x77A. Read-only "
+                "UDS 0x22, single round trip per DID, no polling. Ignition ON, "
+                "parked, not charging. Addressing confirmed by the 2026-10-15 "
+                "passive HCI capture.",
+        "ok": "Raw responses stored. Run 'Replay & validate' or open the web "
+              "dashboard to see decoded values.",
+        "fail": "No response or error. See output. The gateway answers at 0x77A "
+                "(confirmed 2026-10-15); check the adapter and ignition first.",
+        "always_enabled": True,
+    },
 ]
 
 

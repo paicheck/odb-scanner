@@ -11,20 +11,22 @@ The deeper source of truth (raw evidence, source logs, provenance) is
 
 ## 1. What we need from you
 
-**Status: the BMS path is solved.** On 2026-10-12 the matrix produced this
-project's first BMS answer — see §1.1. The remaining work is the 11-bit
-modules (energy, climate), which are a separate and narrower problem.
+**Status: both tracks are solved.** The BMS path (Track A) answered on
+2026-10-12 — see §1.1. The 11-bit modules (Track B) answered on 2026-10-16 —
+see §1.2. Both fixes are implemented in `diagnostic/elm327.py`.
 
 The symptom is **not** one problem. The wire log splits it cleanly into two
-independent tracks (§4), and the plan should treat them separately:
+independent tracks (§4):
 
 - **Track A — BMS/DC-DC/vehicle-info (29-bit).** **Solved.** The clone's
   default CAN receive filter silently drops `17FExxxx` responses while
   accepting `18DAF1xx` functional ones. `ATCRA <response-id>` per module
   fixes it. Implemented in `set_module()`.
-- **Track B — energy/climate (11-bit).** Still refused with `?`. The
-  header-width theory (EXP-17) was tested and **refuted** on the car.
-  Needs further experiment.
+- **Track B — energy/climate/GPS (11-bit).** **Solved.** The clone refuses an
+  8-byte hand-framed `ATCAF0` line under `ATSP6` with `?`. Car Scanner instead
+  reads these modules with `ATCAF1` (auto-formatting) and a *bare* request
+  (`22 2AB8`) plus the ISO-TP flow-control preamble (`ATFCSH`/`ATFCSD`/
+  `ATFCSM 1`). See §1.2.
 
 Deliver: an ordered experiment plan for Track B, and a decision tree mapping
 each outcome → the minimal code change → how to re-verify.
@@ -85,6 +87,43 @@ does that this transport did not.
 The simulator answers every DID the car refuses, which is what made this
 findable: the harness is sound, and the `?`/`NO DATA` split was always about
 the adapter, not the wire form.
+
+---
+
+## 1.2 Track B resolution (2026-10-16)
+
+The 11-bit modules now answer. Root cause and fix:
+
+**Root cause.** Under `ATSP6` (11-bit) the clone refuses an 8-byte hand-framed
+`ATCAF0` single frame (`03 22 2A B8 55…`) with `?` — it accepts every AT
+configuration command, then refuses the *data frame*. This is not a header-width
+problem (EXP-17's true 3-digit `ATSH 710` also returned `?`). The decisive
+evidence is the 2026-10-15 passive HCI capture of Car Scanner, which reads the
+gateway with `ATCAF1` and a **bare** request:
+
+```
+ATSH710 → ATSP6 → ATFCSH710 → ATFCSD300000 → ATFCSM1 → ATCRA77A → 22 2AB8
+```
+
+The adapter adds the ISO-TP PCI byte, header and flow control itself; the
+transport must *not* hand-frame.
+
+**Fix.** `set_module_car_scanner_11bit(tx29, rx29)` sends that sequence (plus
+`ATCAF1`) for every 11-bit MEB module (`energy` 0x710→0x77A, `climate`
+0x746→0x7B0, `gps` 0x767→0x7D1). `_transmit` sends the request **bare** when the
+transport reports auto-formatting (`Elm327Transport.auto_formatting`), instead of
+hand-framing.
+
+**Verified on the car (2026-10-16):** `energy` and `climate` discovery flipped
+from `refused` to `responder`, and `0x2AB2` answered `62 2A B2 04 28 04 00`
+(53,200 Wh). `gps` answered NRC `0x78` (response-pending), i.e. reachable.
+
+**Knock-on quirk (also fixed).** The 11-bit sequence leaves `ATFCSM 1`
+(user-defined flow control) set. On this clone that leftover state makes the
+next **29-bit** hand-framed request be refused with `?` — which is why `veh_info`
+and `eldrive` (29-bit modules polled *after* the 11-bit block) failed. `set_module()`
+and `_restore_functional()` now send `ATFCSM 0` when switching back to 29-bit or
+functional addressing. (Not yet re-verified on the car as of this note.)
 
 ---
 
@@ -250,6 +289,11 @@ which keeps suppressing cell collection even if reads start working mid-run.
 
 ## 6. Track B — the `?` refusals (11-bit modules)
 
+> **RESOLVED 2026-10-16.** The cause is the `ATCAF0` hand-framed 8-byte line,
+> which the clone refuses under `ATSP6`. Car Scanner uses `ATCAF1` + a bare
+> request + the flow-control preamble. Fix and evidence in §1.2. The analysis
+> below is retained as the record that led there.
+
 **The 2026-10-13 car run refuted the receive-filter theory for Track B.** With
 the Veepeak awake and ignition on, EXP-18 (energy + `ATCRA 0000077A`) and EXP-19
 (climate + `ATCRA 000007B0`) both still returned `?`. So pinning the filter —
@@ -326,16 +370,16 @@ console, explicitly *not* read-only — the one sanctioned exception),
 | 11 | functional `0x22` routing | **`7F 22 31`** (5 Oct) — functional does not route |
 | 15 | BMS receive filter | **ANSWERED** (13 Oct) — `ATCRA 17FE007B` → `62 02 8C B2` (Track A solved) |
 | 16 | BMS full reference config | **ANSWERED** (13 Oct) — `62 02 8C B2` |
-| 17 | energy 3-digit header | `ATSH 0710` (4-digit) refused at the ATSH step; **now sends `710`** |
+| 17 | energy 3-digit header | `ATSH 0710` (4-digit) refused at the ATSH step; the true 3-digit `710` also `?` — header width **not** the cause |
 | 18 | energy with `ATCRA 0000077A` | **`?`** (13 Oct) — filter is *not* the Track B fix |
 | 19 | climate with `ATCRA 000007B0` | **`?`** (13 Oct) |
-| 20 | energy, 7-byte frame | **not run** — length discriminator |
-| 21 | DC/DC with `ATCRA 17FE00B9` | **not run** — likely free win |
+| 20 | energy, 7-byte frame | not the discriminator — see §1.2 |
+| 21 | DC/DC with `ATCRA 17FE00B9` | answered (16 Oct, discovery `responder`) |
 
 EXP-6 (`ATBI`), EXP-7/7b/8 (session / tester-present / combined), EXP-12
 (BMS on 11-bit `0x7E5`), EXP-13 (CAN-FD probe), EXP-14 (flow control) were all
-silent or refused. **EXP-17 and EXP-20 are the Track B discriminators to run
-first; EXP-21 is the likely DC/DC win.**
+silent or refused. **Track B is resolved (16 Oct): `ATCAF1` + bare request +
+flow-control preamble — see §1.2.**
 
 Expanded per-arm evidence from the 13 Oct run lives in the local (gitignored)
 `docs/experiment_record_results.md`.
@@ -344,13 +388,9 @@ Expanded per-arm evidence from the 13 Oct run lives in the local (gitignored)
 
 ## 9. Open questions the plan must answer
 
-1. **Track B:** why does the clone `?` a well-formed 11-bit data frame while
-   accepting every AT configuration command? Two arms now discriminate:
-   EXP-17 (3-digit `ATSH 710` vs the 6-digit form `set_module` sends) and
-   EXP-20 (7-byte frame vs the 8-byte frame). If both are still `?`, the
-   remainder is the CAF mode under ATSP6 or state left over from the
-   `ATSP6`→`ATSP7` transition — EXP-11 (ATSP7, CAF1, short request) transmitted
-   right after the refused ATSP6 block, so CAF0+8-byte is the suspect.
+1. **Track B — RESOLVED (16 Oct).** The clone refuses a well-formed 11-bit data
+   frame only when it is an `ATCAF0` hand-framed 8-byte line; Car Scanner's
+   `ATCAF1` + bare request + flow-control preamble transmits. See §1.2.
 2. **Track A is solved:** `ATCRA 17FE007B` answers the BMS (EXP-15/16, 13 Oct).
    The remaining Track A question is only whether the collector drives it in a
    real cycle — answer it with `tools/collect_acceptance.py` (one bounded run,
@@ -361,10 +401,13 @@ Expanded per-arm evidence from the 13 Oct run lives in the local (gitignored)
 4. Is a per-module session required despite evDash/ABRP not sending one? (EXP-7
    falsifies the `10 03` theory if a `10 01` arm answers.)
 5. **Does the collector recover 29-bit framing after reading an 11-bit module?**
-   The clone refused the first 29-bit CAF0 8-byte send *after* the ATSP6 block
-   (EXP-10). The collector interleaves 29-bit (BMS) and 11-bit (energy/climate)
-   reads every cycle, so if the transition is sticky the BMS would break after
-   the first energy read. Worth an arm before trusting a long collector run.
+   — **Root cause found (16 Oct).** The 11-bit sequence leaves `ATFCSM 1`
+   (user-defined flow control) set, and that leftover state makes the clone
+   refuse the next 29-bit `ATCAF0` hand-framed request with `?` — observed as
+   `veh_info`/`eldrive` refusals (the BMS was unaffected only because it is
+   polled before the 11-bit block). Fix: `set_module()` and
+   `_restore_functional()` send `ATFCSM 0` when switching back to 29-bit or
+   functional. (Not yet re-verified on the car as of this note.)
 6. Operational: after the 12 Oct re-pair Windows exposes **two** outgoing SPP ports
    (`COM3`, `COM4`, both "Standard Serial over Bluetooth link"). Prove the live port
    (`discover_adapters.py`, then per-port `ATI`) before any car work. (On 13 Oct

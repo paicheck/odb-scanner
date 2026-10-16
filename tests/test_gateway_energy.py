@@ -43,9 +43,9 @@ from diagnostic.uds import (
 )
 
 GATE = get_ecu("gate")
-GATE_TX = 0x792       # request id named in Car Scanner code
-GATE_RX = 0x710       # response header declared by the [19.Gate] records
-CS_GATE_ATCRA = 0x77A  # Car Scanner ATCRA argument, semantics unresolved
+GATE_TX = 0x710       # request id observed in the 2026-10-15 passive capture
+GATE_RX = 0x77A       # response id observed in the 2026-10-15 passive capture
+CS_GATE_ATCRA = 0x77A  # Car Scanner ATCRA argument == the response id (confirmed)
 
 # Synthetic DID data records (the bytes after the 62 marker + DID echo that
 # DiagnosticConnection.read_did() returns). Values are chosen to make the
@@ -149,16 +149,19 @@ def test_gateway_ecu_addressing():
     assert GATE.rx == GATE_RX, "filter must use the declared response header"
 
 
-def test_car_scanner_atcra_argument_is_not_the_response_header():
-    """Recorded so the +0x6A anomaly is not silently re-derived later.
+def test_gateway_response_id_is_the_atcra_argument():
+    """0x77A really is the gateway response id -- the +0x6A relation is real.
 
-    In the recovered MEB profile the 11-bit records use ATCRA = response
-    header + 0x6A (Gate 0x710/0x77A, HVAC 0x746/0x7B0, charger
-    0x744/0x7AE, ABS 0x713/0x77D, GPS 0x767/0x7D1), so ATCRA77A is not a
-    response CAN id and is deliberately NOT copied into ECUS['gate'].rx.
+    HISTORY: this used to assert the opposite. The recovered MEB profile's
+    11-bit records use ATCRA = response header + 0x6A (Gate 0x710/0x77A, HVAC
+    0x746/0x7B0, charger 0x744/0x7AE, ABS 0x713/0x77D, GPS 0x767/0x7D1), and
+    that was read as "some Car Scanner encoding", so ATCRA 0x77A was
+    deliberately NOT copied into ECUS['gate'].rx. The 2026-10-15 passive HCI
+    capture settled it: Car Scanner sends ATCRA77A and the gateway answers
+    every read on 0x77A, so 0x77A is the response id and rx is now 0x77A.
     """
-    assert CS_GATE_ATCRA == GATE_RX + 0x6A
-    assert GATE.rx != CS_GATE_ATCRA
+    assert GATE_RX == GATE_TX + 0x6A  # the +0x6A relation is real
+    assert GATE.rx == CS_GATE_ATCRA == 0x77A
     assert GATE.rx != GATE_TX + 8, "no +8 pairing is claimed for the gateway"
 
 
@@ -172,8 +175,9 @@ def test_gateway_read_addresses_the_gateway_ecu():
     transport is module-addressing driven: it only touches the adapter's
     addressing when the transport negotiated MEB addressing AND the ECUSpec
     carries a 29-bit module address (tx29/rx29). ECUS['gate'] carries none --
-    its 11-bit 0x792/0x710 pair is still the unproven, inferred one -- so the
-    request goes out functionally and no ATSH/ATCRA is sent at all.
+    its 11-bit 0x710/0x77A pair is confirmed but, without tx29/rx29, this
+    transport still sends the request functionally -- so no ATSH/ATCRA is
+    emitted here.
 
     That is a stricter read-only guarantee than before (one command on the
     wire, not three), but it leaves the response UNFILTERED, so the answering
@@ -537,7 +541,7 @@ def test_limitation_response_can_header_is_never_verified():
     """The response CAN header is stripped, never compared to the expected rx.
 
     A well-formed `62 2A B8 ...` reply arriving on 0x7E8 or 0x7ED is accepted
-    exactly like one on the expected 0x710: `uds.line_to_frame()` strips the
+    exactly like one on the expected 0x77A: `uds.line_to_frame()` strips the
     first three hex characters without checking them. ATCRA filtering in the
     ELM327 is the only barrier. The validation runbook therefore has to
     capture and inspect the raw ELM lines itself.
@@ -563,10 +567,10 @@ def test_limitation_rx_audit_row_drops_the_can_header():
     c = DiagnosticConnection(t, tx_logger=lambda **kw: captured.append(kw))
     c.read_did(GATE, 0x2AB8)
 
-    assert any("710" in ln for ln in raw), "raw line must carry the header"
+    assert any("77A" in ln for ln in raw), "raw line must carry the header"
     rx = next(k for k in captured if k["direction"] == "RX")
     assert rx["payload"] == "622AB8AABB010203", "header is not persisted"
-    assert "710" not in rx["payload"]
+    assert "77A" not in rx["payload"]
 
 
 def test_reassemble_rejects_truncation_instead_of_returning_a_short_buffer():

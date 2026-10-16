@@ -102,18 +102,20 @@ def build_default_registry(profile: str = "eup") -> DIDRegistry:
             vehicle.did_profile in config.yaml.
 
     NOTE -- the two gateway energy DIDs (0x2AB8 / 0x2AB2) exist on BOTH
-    sides of this map, under two independent implementations that disagree:
+    sides of this map, under two independent implementations that now AGREE
+    on the decode (u16be x 25 Wh at offset 2 / u16be x 50 Wh at offset 0):
 
       eup  -> decoders.gateway : key ecu_key "gate", u16be at offset 2 x25
                Wh / offset 0 x50 Wh, from the recovered Car Scanner profile
                (MUL/DL/SBI fields recovered verbatim).
-      meb  -> decoders.meb     : key ecu_key "energy", u32be / 1310.77,
-               whose own docstring marks the divisor ASSUMED and unverified.
+      meb  -> decoders.meb     : key ecu_key "energy", the same u16be x 25 /
+               x 50 layout (the earlier u32be / 1310.77 was refuted -- see the
+               ENERGY DECODER RESOLUTION note in decoders/meb.py).
 
-    They must be registered exactly once per profile, so each profile keeps
-    its own. Which addressing is right -- "gate" 0x792->0x710 versus
-    "energy" 0x710->0x77A -- is UNRESOLVED and is not decided here; see
-    docs/investigation/meb_gateway_energy.md and docs/MEB_DIAGNOSTIC_REFERENCE.md.
+    Addressing is now RESOLVED: 0x710 -> 0x77A (11-bit, ATSP6), confirmed by
+    a passive HCI capture of Car Scanner on 2026-10-15. The "gate" 0x792 ->
+    0x710 alternative is retired. See
+    docs/investigation/meb_gateway_energy_passive_capture_20261015.md.
     """
     reg = DIDRegistry()
     if profile == "meb":

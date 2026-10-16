@@ -15,8 +15,12 @@ Provenance of the scale factors:
   [spot]    spot2000/Volkswagen-MEB-EV-CAN-parameters CSV: the only source
             that states ATCP/ATSH/ATCRA per DID, and the authority for the
             11-bit modules (energy 0x710 -> 0x77A, climate 0x746 -> 0x7B0)
-  [CS]      cross-checked byte-exact against a Car Scanner ELM OBD2 log of
-            the actual vehicle (2026-10-05, ID.3 MY2021, 58 kWh):
+  [CS]      cross-checked against a Car Scanner export of the actual vehicle
+            (2026-10-05, ID.3 MY2021, 58 kWh). NOTE: for most DIDs this is a
+            byte-exact cross-check against an ELM OBD2 log; for the two HV
+            energy DIDs only DECODED VALUES survive (see ENERGY DECODER
+            RESOLUTION below), so those two rest on arithmetic consistency,
+            not on bytes.
               - SoC raw 0xCB (203) -> 81.2 % BMS / 83.63 % display
               - pack raw 0x06BD (1725) -> 431.25 V, matching 108 cells @ ~3.99 V
                 (0x06BD, not 0x06CD: the first transcription of this capture
@@ -28,10 +32,9 @@ Provenance of the scale factors:
               - max cell raw 16377 -> 3.9984 V (u16/4096)
               - current raw 150198 -> 1.98 A ((u32-150000)/100)
               - battery temp raw 120 -> 20.0 C (u8/2 - 40)
-              - max energy content raw -> 53,200 Wh (u32/1310.77)
             Disagreements would have shown up as visibly wrong values; none did.
 
-            The same log settles the CURRENT SIGN, which the sources
+            The same export settles the CURRENT SIGN, which the sources
             contradict -- and the contradiction is now 2 against 1. evDash
             does not negate, so it reads positive on discharge, and this log
             follows it. spot2000 states in prose that "Negative value is out
@@ -60,6 +63,7 @@ Provenance of the scale factors:
 Raw bytes are always preserved by the collector, so a wrong guess here costs
 nothing but a re-decode later.
 """
+
 from __future__ import annotations
 
 from .registry import (
@@ -70,12 +74,14 @@ from .registry import (
     u32be,
 )
 
-ECU_BAT = "bat_mgmt"      # MEB module 0x7B
-ECU_ENERGY = "energy"    # MEB module 0x710 (11-bit)
-ECU_DCDC = "dcdc"        # MEB module 0xB9
-ECU_VEH = "veh_info"     # MEB module 0x76
+ECU_BAT = "bat_mgmt"  # MEB module 0x7B
+ECU_ENERGY = "energy"  # MEB module 0x710 (11-bit)
+ECU_DCDC = "dcdc"  # MEB module 0xB9
+ECU_VEH = "veh_info"  # MEB module 0x76
 ECU_CLIMATE = "climate"  # MEB module 0x746 (11-bit)
-ECU_CHG = "chg"          # MEB module 0x744 (11-bit): HV charger / OBC
+ECU_CHG = "chg"  # MEB module 0x744 (11-bit): HV charger / OBC
+ECU_ELDRIVE = "eldrive"  # MEB module 0x7C (29-bit): electric drive
+ECU_GPS = "gps"  # MEB module 0x767 (11-bit): GPS / telematics
 
 _EXP = DocStatus.EXPERIMENTAL
 
@@ -100,7 +106,89 @@ CELL_T_MAX = 1020
 # evDash: energy counters are u32 counts at 8583.07123641215 Wh per count.
 ENERGY_COUNT_WH = 8583.07123641215
 # evDash CarMEB: "max energy content" u32 at 1310.77 Wh per count.
+#
+# REFUTED as a decoder for the values it was cited as validating. It is kept
+# only so `_max_energy_wh` can still demonstrate why it fails, and so the
+# refutation in docs/investigation/phase_c_energy_validation.md stays
+# reproducible. See ENERGY DECODER RESOLUTION below.
 MAX_ENERGY_COUNT_WH = 1310.77
+
+# Live HV energy layout, from the Car Scanner MEB profile (idx 342) MUL/DL/SBI.
+MAX_ENERGY_LSB_WH = 50.0  # 0x2AB2, offset 0
+ENERGY_CONTENT_LSB_WH = 25.0  # 0x2AB8, offset 2
+ENERGY_CONTENT_OFFSET = 2
+# ---------------------------------------------------------------------------
+# ENERGY DECODER RESOLUTION (0x2AB2 / 0x2AB8)
+#
+# This file used to decode both DIDs as u32be / 1310.77, while
+# decoders/gateway.py decoded them as u16be x 50 / x 25 at offsets 0 / 2.
+# Both shipped; the u32 version was the live one because config.yaml selects
+# did_profile: meb. The only real-world values for either DID are three
+# numbers from a Car Scanner CSV export of THIS vehicle (data/real_car.db):
+#
+#     hv_energy_content  41,325 Wh   2 rows  2026-10-05T19:02:08
+#     hv_energy_content  41,200 Wh   2 rows  2026-10-05T19:17:25
+#     hv_energy_max      53,200 Wh   5 rows  2026-10-05T19:02:07 .. 19:17:28
+#
+# No raw vehicle response exists for either DID. Every other row for these
+# keys is success=0 with error 'No/undecodable response to DID 0x2ABx' -- 35
+# attempts at each DID on 2026-10-06 and 2026-10-12, all addressed 0x710 ->
+# 0x77A, all unanswered.
+#
+# REACHABILITY, done exactly. A layout reaches a value v only if the integer
+# raw it would need actually exists. The two layouts invert differently, and
+# using one inversion for both is how an earlier version of this note came to
+# claim more than is true:
+#
+#   u16be x s :  value = raw * s     ->  raw = v / s
+#   u32be / d :  value = raw / d     ->  raw = v * d
+#
+# Checked with Fraction (1310.77 is exactly 131077/100 in lowest terms):
+#
+#   v=41,325  x25  raw = 1653 (0x0675)      REACHABLE, fits u16
+#   v=41,200  x25  raw = 1648 (0x0670)      REACHABLE, fits u16
+#   v=53,200  x50  raw = 1064 (0x0428)      REACHABLE, fits u16
+#
+#   v=41,325  /1310.77  raw = 216670281/4   NOT AN INTEGER   <-- excluded
+#   v=41,200  /1310.77  raw = 54003724      reachable
+#   v=53,200  /1310.77  raw = 69732964      reachable
+#
+# So the u32/1310.77 layout is refuted, but precisely: it is the 41,325 Wh
+# reading alone that excludes it. 41,200 Wh and 53,200 Wh are both multiples
+# of 100, and 131077/100 can only ever produce multiples of 100, so neither of
+# them could have distinguished this layout. Any stronger claim than that is
+# not supported by the evidence.
+#
+# Corroborating constraint, and it is independent: for a multiplicative layout
+# two readings of the same DID force the scale to divide their gcd --
+# gcd(41325, 41200) = 25, so the admissible scale factors are {1, 5, 25} Wh.
+# 25 is in that set; 1310.77 is not a member of it.
+#
+# The 4-byte payload 04280A64 that the tests and the simulator use decodes to
+# 53,200 under BOTH layouts, so it cannot discriminate -- it is a synthetic
+# fixture built as int(53200 * 1310.77) and must not be read as a capture.
+#
+# STATUS: CONFIRMED on captured bytes (2026-10-15 passive HCI capture).
+#
+# A Bluetooth HCI snoop capture of Car Scanner reading both DIDs on an ID.3
+# settled the remaining unknowns without a live request of our own:
+#
+#   - Addressing is 11-bit 0x710 -> 0x77A: ATSH710 / ATFCSH710 / ATCRA77A on
+#     ATSP6, with flow control ATFCSD300000 + ATFCSM1. This is NOT the
+#     0x792 -> 0x710 pair that decoders/gateway.py's docstring still
+#     contemplates; the +0x6A "encoding" really is the response id 0x77A.
+#   - 0x2AB8 is MULTI-FRAME: 62 2A B8 00 00 05 7F 00 00 00 00 (11 bytes, one
+#     First Frame + one Consecutive Frame). u16be[2:4] = 0x057F = 1407, x25 =
+#     35,175 Wh -- matching Car Scanner's displayed 35,175 Wh exactly.
+#   - 0x2AB2 is SINGLE-FRAME: 62 2A B2 04 28 04 00 (7 bytes). u16be[0:2] =
+#     0x0428 = 1064, x50 = 53,200 Wh -- matching the displayed 53,200 Wh.
+#
+# So the SBI=2 offset, the SBI=0 offset, the multipliers AND the addressing
+# pair are all confirmed on real bytes. The gross-vs-usable MEANING (0x2AB2 =
+# rated maximum, 0x2AB8 = usable right now) still rests on the profile names
+# rather than an independent VW document, but 53,200 > 35,175 is consistent.
+# See docs/investigation/meb_gateway_energy_passive_capture_20261015.md.
+# ---------------------------------------------------------------------------
 
 # 0x7448 operation modes seen in evDash, mapped onto the app-wide convention
 # (decoders.charging.CHARGE_MODE_CODES) so charging tracking keeps working.
@@ -214,8 +302,22 @@ def _coolant_temps(raw: bytes) -> dict:
 
 
 def _amb_12v(raw: bytes) -> float:
-    """HV-pack view of the 12 V battery voltage (multi-frame DID 0x2AF7)."""
-    return u16be(raw) / 1024.0 + 4.26
+    """12 V battery voltage, first field of the multi-frame DID 0x2AF7.
+
+    Car Scanner MEB profile: u16 x 0.001 + 4.0 (SBI=0 DL=2 MUL=0.001 OFS=4.0).
+    evDash used u16/1024 + 4.26; the profile's /1000 + 4.0 is what Car Scanner
+    displays, so it is the scaling we match. (They differ by < 0.02 V.)
+    """
+    return u16be(raw) * 0.001 + 4.0
+
+
+def _aux_12v_current(raw: bytes) -> float:
+    """12 V battery current, DID 0x2AF7 offset 2, length 4, signed, x0.001 A."""
+    if len(raw) < 6:
+        raise IndexError(
+            f"12V current needs 4 bytes at offset 2, got {max(0, len(raw) - 2)}"
+        )
+    return int.from_bytes(raw[2:6], "big", signed=True) * 0.001
 
 
 def _outdoor_temp(raw: bytes) -> float:
@@ -248,41 +350,54 @@ def _cs_field(raw: bytes, sbi: int, dl: int) -> int:
     truncated answer must surface as a failed read, not as a plausible number.
     int.from_bytes would happily accept 1-3 bytes and invent a value.
     """
-    chunk = raw[sbi:sbi + dl]
+    chunk = raw[sbi : sbi + dl]
     if len(chunk) != dl:
         raise IndexError(
-            f"CS field needs {dl} bytes at offset {sbi}, got {max(0, len(raw) - sbi)}")
+            f"CS field needs {dl} bytes at offset {sbi}, got {max(0, len(raw) - sbi)}"
+        )
     return int.from_bytes(chunk, "big")
 
 
-def _cs_scaled(raw: bytes, *, sbi: int, dl: int, mul: float, div: float,
-               ofs: float) -> float:
+def _cs_scaled(
+    raw: bytes, *, sbi: int, dl: int, mul: float, div: float, ofs: float
+) -> float:
     return _cs_field(raw, sbi, dl) * mul / div + ofs
 
 
-def _cs_field_decoder(*, sbi: int, dl: int, mul: float, div: float, ofs: float):
+def _cs_field_decoder(
+    *, sbi: int, dl: int, mul: float, div: float, ofs: float, sig: bool = False
+):
     def decode(raw: bytes) -> float:
-        return _cs_scaled(raw, sbi=sbi, dl=dl, mul=mul, div=div, ofs=ofs)
+        chunk = raw[sbi : sbi + dl]
+        if len(chunk) != dl:
+            raise IndexError(
+                f"CS field needs {dl} bytes at offset {sbi}, got {max(0, len(raw) - sbi)}"
+            )
+        val = int.from_bytes(chunk, "big", signed=sig)
+        return val * mul / div + ofs
+
     return decode
 
 
-def _cs_pair_decoder(*, dl: int, first_mul: float, first_div: float,
-                     first_ofs: float):
+def _cs_pair_decoder(*, dl: int, first_mul: float, first_div: float, first_ofs: float):
     """A DID carrying two values: a scaled one at byte 0 and a raw index at 2.
 
     Reads bytes 0..2*dl in one step. Reading the halves independently would let
     the first succeed while the second is short, which turns a truncated
     response into a partial result recorded as complete.
     """
+
     def decode(raw: bytes) -> dict:
         need = 2 * dl
         if len(raw) < need:
             raise IndexError(f"pair field needs {need} bytes, got {len(raw)}")
         return {
-            "value": _cs_scaled(raw, sbi=0, dl=dl, mul=first_mul,
-                                div=first_div, ofs=first_ofs),
+            "value": _cs_scaled(
+                raw, sbi=0, dl=dl, mul=first_mul, div=first_div, ofs=first_ofs
+            ),
             "index": _cs_field(raw, dl, dl),
         }
+
     return decode
 
 
@@ -291,32 +406,64 @@ def _cs_note(sbi: int, dl: int, mul: float, div: float, ofs: float) -> str:
     div_s = f"{div:g}"
     mul_s = mul_s if mul_s not in ("1", "1.0") else "1"
     div_s = div_s if div_s not in ("1", "1.0") else "1"
-    return (f"u16be[{sbi}:{sbi + dl}] * {mul_s}"
-            + (f" / {div_s}" if div_s != "1" else "")
-            + (f" + {ofs:g}" if ofs else "") + f" [{CS_SRC}]")
+    return (
+        f"u16be[{sbi}:{sbi + dl}] * {mul_s}"
+        + (f" / {div_s}" if div_s != "1" else "")
+        + (f" + {ofs:g}" if ofs else "")
+        + f" [{CS_SRC}]"
+    )
 
 
 # -- module decoders -------------------------------------------------------
 def _max_energy_wh(raw: bytes) -> float:
-    """Rated (maximum) HV energy content in Wh -- the SoH reference value.
+    """DEPRECATED -- superseded, kept so the refutation stays checkable.
 
-    53,200 Wh against a measured 108-cell pack gives the real SoH; Car
-    Scanner reports the same field for the same vehicle.
+    This was `u32be / 1310.77`. It CAN produce 53,200 Wh (from raw 69732964),
+    so this decoder is not refuted for hv_energy_max on its own; it is
+    refuted for hv_energy_content, which needs the same layout to yield
+    41,325 Wh and cannot. Do not use it. `_energy_max_wh` is the live decoder.
     """
     return u32be(raw) / MAX_ENERGY_COUNT_WH
+
+
+def _energy_content_wh_refuted(raw: bytes) -> float:
+    """DEPRECATED -- this is the one the arithmetic actually excludes.
+
+    41,325 Wh would require raw = 41325 * 1310.77 = 216670281/4, which is not
+    an integer, so no u32 payload can decode to it under this layout. See the
+    ENERGY DECODER RESOLUTION comment above and
+    docs/investigation/phase_c_energy_validation.md.
+    """
+    return u32be(raw) / MAX_ENERGY_COUNT_WH
+
+
+def _energy_max_wh(raw: bytes) -> float:
+    """Rated (maximum) HV energy content in Wh -- the SoH reference value.
+
+    u16be at offset 0, x 50 Wh, unsigned (Car Scanner MEB profile idx 342:
+    SBI=0 DL=2 MUL=50.0 DIV=1.0 OFS=0.0 SIG=false RBS=false UN=61).
+    """
+    if len(raw) < 2:
+        raise IndexError(f"hv_energy_max needs 2 bytes, got {len(raw)}")
+    return u16be(raw) * MAX_ENERGY_LSB_WH
 
 
 def _energy_content_wh(raw: bytes) -> float:
     """HV energy content right now, in Wh.
 
-    DIVISOR IS A HYPOTHESIS. No open source implements this DID (evDash
-    queues it commented out and never decodes it) and Car Scanner's export
-    gives only the decoded value. Same 1310.77 Wh/count as the max-energy
-    DID is the reasonable guess because the log's 41,200 Wh maps to a
-    plausible u32 on that scale; treat a displayed number as unverified
-    until a real capture pins it. Raw is preserved either way.
+    u16be at offset 2, x 25 Wh, unsigned (Car Scanner MEB profile idx 342:
+    SBI=2 DL=2 MUL=25.0 DIV=1.0 OFS=0.0 SIG=false RBS=false UN=61).
+
+    The SBI=2 offset has never been seen on a captured frame. A record too
+    short to reach offset 2+2 raises rather than returning a number read from
+    the wrong bytes, so a short reply stores NULL with the raw bytes kept.
     """
-    return u32be(raw) / MAX_ENERGY_COUNT_WH
+    if len(raw) < ENERGY_CONTENT_OFFSET + 2:
+        raise IndexError(
+            f"hv_energy_content needs 4 bytes at offset {ENERGY_CONTENT_OFFSET}, "
+            f"got {len(raw)}"
+        )
+    return u16be(raw, ENERGY_CONTENT_OFFSET) * ENERGY_CONTENT_LSB_WH
 
 
 def _odometer_km(raw: bytes) -> float:
@@ -342,6 +489,7 @@ def register_meb(reg: DIDRegistry) -> None:
     _register_cells(reg)
     _register_modules(reg)
     _register_profile_fields(reg)
+    _register_profile_extras(reg)
 
 
 # Fields taken verbatim from the Car Scanner MEB profile. Only modules this
@@ -354,49 +502,195 @@ def register_meb(reg: DIDRegistry) -> None:
 #
 # (key, did, name, unit, ecu, sbi, dl, mul, div, ofs)
 _CS_FIELDS: tuple[tuple, ...] = (
-    ("odometer_bms", 0x02BD, "Odometer (BMS copy)", "km", ECU_BAT,
-     1, 3, 1.0, 1.0, 0.0),
-    ("ptc_voltage", 0x1621, "PTC heater voltage", "V", ECU_BAT,
-     0, 1, 0.1, 1.0, 0.0),
-    ("bms_pcb_temp", 0x1622, "BMS PCB temperature", "degC", ECU_BAT,
-     0, 1, 1.0, 1.0, -50.0),
-    ("ptc_medium_temp_1", 0x1623, "PTC medium temperature 1", "degC", ECU_BAT,
-     0, 1, 1.0, 1.0, -50.0),
-    ("ptc_medium_temp_2", 0x1624, "PTC medium temperature 2", "degC", ECU_BAT,
-     0, 1, 1.0, 1.0, -50.0),
-    ("bat_v_after_contacts", 0x189B, "Battery voltage after contacts", "V",
-     ECU_BAT, 0, 2, 0.5, 1.0, -1000.0),
-    ("bat_v_before_contacts", 0x1E36, "Battery voltage before contacts", "V",
-     ECU_BAT, 0, 2, 0.0312499784501336, 1.0, 0.0),
-    ("bat_v_after_contacts_2", 0x1E38, "Battery voltage (2nd, after contacts)",
-     "V", ECU_BAT, 0, 2, 0.0312499784501336, 1.0, 0.0),
-    ("bat_charging_voltage", 0x1E39, "Battery charging voltage", "V",
-     ECU_BAT, 0, 2, 0.0312499784501336, 1.0, 0.0),
+    ("odometer_bms", 0x02BD, "Odometer (BMS copy)", "km", ECU_BAT, 1, 3, 1.0, 1.0, 0.0),
+    ("ptc_voltage", 0x1621, "PTC heater voltage", "V", ECU_BAT, 0, 1, 0.1, 1.0, 0.0),
+    (
+        "bms_pcb_temp",
+        0x1622,
+        "BMS PCB temperature",
+        "degC",
+        ECU_BAT,
+        0,
+        1,
+        1.0,
+        1.0,
+        -50.0,
+    ),
+    (
+        "ptc_medium_temp_1",
+        0x1623,
+        "PTC medium temperature 1",
+        "degC",
+        ECU_BAT,
+        0,
+        1,
+        1.0,
+        1.0,
+        -50.0,
+    ),
+    (
+        "ptc_medium_temp_2",
+        0x1624,
+        "PTC medium temperature 2",
+        "degC",
+        ECU_BAT,
+        0,
+        1,
+        1.0,
+        1.0,
+        -50.0,
+    ),
+    (
+        "bat_v_after_contacts",
+        0x189B,
+        "Battery voltage after contacts",
+        "V",
+        ECU_BAT,
+        0,
+        2,
+        0.5,
+        1.0,
+        -1000.0,
+    ),
+    (
+        "bat_v_before_contacts",
+        0x1E36,
+        "Battery voltage before contacts",
+        "V",
+        ECU_BAT,
+        0,
+        2,
+        0.0312499784501336,
+        1.0,
+        0.0,
+    ),
+    (
+        "bat_v_after_contacts_2",
+        0x1E38,
+        "Battery voltage (2nd, after contacts)",
+        "V",
+        ECU_BAT,
+        0,
+        2,
+        0.0312499784501336,
+        1.0,
+        0.0,
+    ),
+    (
+        "bat_charging_voltage",
+        0x1E39,
+        "Battery charging voltage",
+        "V",
+        ECU_BAT,
+        0,
+        2,
+        0.0312499784501336,
+        1.0,
+        0.0,
+    ),
     # NOT named cell_v_*: that prefix is the per-cell rollup group in
     # analysis/provenance.py, and this is a single scalar, not one of the 108
     # slots. A "cell_v_sum" key would be folded into the rollup and render as
     # "1/109 live".
-    ("cell_voltage_sum", 0x1E3C, "Sum of all cell voltages", "V",
-     ECU_BAT, 0, 4, 244140.625, 1000000000.0, 0.0),
-    ("pack_current_2", 0x1E3E, "HV pack current (2nd)", "A",
-     ECU_BAT, 0, 4, 0.01, 1.0, -1500.0),
-    ("min_discharge_voltage", 0x5170, "Minimum discharge voltage", "V",
-     ECU_BAT, 0, 2, 1.0, 1.0, 0.0),
-    ("max_charge_voltage", 0x5171, "Maximum charge voltage", "V",
-     ECU_BAT, 0, 2, 1.0, 1.0, 0.0),
-    ("odometer_2", 0x5867, "Odometer (BMS copy 2)", "km",
-     ECU_BAT, 2, 2, 10.0, 1.0, 0.0),
+    (
+        "cell_voltage_sum",
+        0x1E3C,
+        "Sum of all cell voltages",
+        "V",
+        ECU_BAT,
+        0,
+        4,
+        244140.625,
+        1000000000.0,
+        0.0,
+    ),
+    (
+        "pack_current_2",
+        0x1E3E,
+        "HV pack current (2nd)",
+        "A",
+        ECU_BAT,
+        0,
+        4,
+        0.01,
+        1.0,
+        -1500.0,
+    ),
+    (
+        "min_discharge_voltage",
+        0x5170,
+        "Minimum discharge voltage",
+        "V",
+        ECU_BAT,
+        0,
+        2,
+        1.0,
+        1.0,
+        0.0,
+    ),
+    (
+        "max_charge_voltage",
+        0x5171,
+        "Maximum charge voltage",
+        "V",
+        ECU_BAT,
+        0,
+        2,
+        1.0,
+        1.0,
+        0.0,
+    ),
+    ("odometer_2", 0x5867, "Odometer (BMS copy 2)", "km", ECU_BAT, 2, 2, 10.0, 1.0, 0.0),
     ("motor_rpm", 0xF40C, "Motor speed", "rpm", ECU_BAT, 0, 2, 1.0, 4.0, 0.0),
-    ("obc_dc_current", 0x103D, "HV DC current (OBC)", "A", ECU_CHG,
-     0, 2, 0.1, 1.0, 0.0),
-    ("obc_cycle_energy", 0x103E, "Cycle energy transformed", "kWh", ECU_CHG,
-     0, 2, 0.01, 1.0, 0.0),
-    ("socket_a_voltage", 0x1525, "Charge socket A voltage", "V", ECU_CHG,
-     0, 2, 1.0, 1.0, 0.0),
-    ("hv_output_voltage", 0x1DA7, "Charger HV output voltage", "V", ECU_CHG,
-     0, 2, 0.1, 1.0, 0.0),
-    ("socket_a_temp", 0x1DDA, "Charge socket A temperature", "degC", ECU_CHG,
-     1, 2, 0.1, 1.0, -55.0),
+    ("obc_dc_current", 0x103D, "HV DC current (OBC)", "A", ECU_CHG, 0, 2, 0.1, 1.0, 0.0),
+    (
+        "obc_cycle_energy",
+        0x103E,
+        "Cycle energy transformed",
+        "kWh",
+        ECU_CHG,
+        0,
+        2,
+        0.01,
+        1.0,
+        0.0,
+    ),
+    (
+        "socket_a_voltage",
+        0x1525,
+        "Charge socket A voltage",
+        "V",
+        ECU_CHG,
+        0,
+        2,
+        1.0,
+        1.0,
+        0.0,
+    ),
+    (
+        "hv_output_voltage",
+        0x1DA7,
+        "Charger HV output voltage",
+        "V",
+        ECU_CHG,
+        0,
+        2,
+        0.1,
+        1.0,
+        0.0,
+    ),
+    (
+        "socket_a_temp",
+        0x1DDA,
+        "Charge socket A temperature",
+        "degC",
+        ECU_CHG,
+        1,
+        2,
+        0.1,
+        1.0,
+        -55.0,
+    ),
 )
 
 # DIDs carrying two values in one response.
@@ -408,197 +702,1763 @@ _CS_PAIRS: tuple[tuple, ...] = (
 
 def _register_profile_fields(reg: DIDRegistry) -> None:
     for key, did, name, unit, ecu, sbi, dl, mul, div, ofs in _CS_FIELDS:
-        reg.register(DIDSpec(
-            key, ecu, did, name, unit,
-            decode=_cs_field_decoder(sbi=sbi, dl=dl, mul=mul, div=div, ofs=ofs),
-            doc_status=_EXP, slow=True,
-            notes=_cs_note(sbi, dl, mul, div, ofs),
-        ))
+        reg.register(
+            DIDSpec(
+                key,
+                ecu,
+                did,
+                name,
+                unit,
+                decode=_cs_field_decoder(sbi=sbi, dl=dl, mul=mul, div=div, ofs=ofs),
+                doc_status=_EXP,
+                slow=True,
+                notes=_cs_note(sbi, dl, mul, div, ofs),
+            )
+        )
     for key, did, name, unit, ecu in _CS_PAIRS:
-        reg.register(DIDSpec(
-            key, ecu, did, name, unit,
-            decode=_cs_pair_decoder(dl=2, first_mul=0.01, first_div=1.0,
-                                    first_ofs=0.0),
-            doc_status=_EXP, slow=True,
-            notes=f"u16be[0:2] * 0.01 and u16be[2:4] as a cell index [{CS_SRC}]",
-        ))
+        reg.register(
+            DIDSpec(
+                key,
+                ecu,
+                did,
+                name,
+                unit,
+                decode=_cs_pair_decoder(
+                    dl=2, first_mul=0.01, first_div=1.0, first_ofs=0.0
+                ),
+                doc_status=_EXP,
+                slow=True,
+                notes=f"u16be[0:2] * 0.01 and u16be[2:4] as a cell index [{CS_SRC}]",
+            )
+        )
 
 
 def _register_bms(reg: DIDRegistry) -> None:
-    reg.register(DIDSpec(
-        "soc_abs", ECU_BAT, 0x028C, "State of charge (BMS)", "%",
-        decode=_soc_bms, doc_status=_EXP,
-        notes="u8 / 2.5 [evDash; CS log: raw 203 -> 81.2 %]",
-    ))
-    reg.register(DIDSpec(
-        "soc_normal", ECU_BAT, 0x028C, "State of charge (display)", "%",
-        decode=_soc_display, doc_status=_EXP,
-        notes="raw*0.4425-6.1947 [evDash dash fit; CS log: -> 83.63 %]",
-    ))
-    reg.register(DIDSpec(
-        "pack_voltage", ECU_BAT, 0x1E3B, "HV pack voltage", "V",
-        decode=_pack_voltage, doc_status=_EXP,
-        notes="u16 / 4 [evDash; CS log: raw 1725 (0x06BD) -> 431.25 V]",
-    ))
-    reg.register(DIDSpec(
-        "pack_current", ECU_BAT, 0x1E3D, "HV pack current", "A",
-        decode=_pack_current, doc_status=_EXP,
-        notes="(u32-150000)/100, + = discharge [evDash; CS log: 150198 -> "
-              "1.98 A, corroborated by the discharge counter rising while "
-              "the car was parked]",
-    ))
-    reg.register(DIDSpec(
-        "cell_voltage_max", ECU_BAT, 0x1E33, "Cell voltage max", "V",
-        decode=_cell_voltage_scaled, doc_status=_EXP,
-        notes="u16 / 4096 [evDash; CS log: 16377 -> 3.9984 V]",
-    ))
-    reg.register(DIDSpec(
-        "cell_voltage_min", ECU_BAT, 0x1E34, "Cell voltage min", "V",
-        decode=_cell_voltage_scaled, doc_status=_EXP,
-        notes="u16 / 4096 [evDash]",
-    ))
-    reg.register(DIDSpec(
-        "battery_temp", ECU_BAT, 0x2A0B, "HV battery temperature", "degC",
-        decode=_battery_temp, doc_status=_EXP,
-        notes="u8 / 2 - 40 [evDash; CS log: 120 -> 20.0 C]",
-    ))
-    reg.register(DIDSpec(
-        "bat_temp_max", ECU_BAT, 0x1E0E, "HV battery temperature max", "degC",
-        decode=_temp_scaled, doc_status=_EXP,
-        notes="u16 / 64 [evDash; CS log: 20.875 C]",
-    ))
-    reg.register(DIDSpec(
-        "bat_temp_min", ECU_BAT, 0x1E0F, "HV battery temperature min", "degC",
-        decode=_temp_scaled, doc_status=_EXP,
-        notes="u16 / 64 [evDash; CS log: 19.625 C]",
-    ))
-    reg.register(DIDSpec(
-        "energy_counters", ECU_BAT, 0x1E32, "Energy counters", "kWh",
-        decode=_energy_counters, doc_status=_EXP, slow=True,
-        notes="u32 charge @0, s32 discharge @4, /8583.07123641215 Wh [evDash]",
-    ))
-    reg.register(DIDSpec(
-        "dyn_charge_limit", ECU_BAT, 0x1E1B, "Dynamic charge current limit", "A",
-        decode=lambda raw: _u16_over(raw, 5.0), doc_status=_EXP,
-        notes="u16 / 5 [evDash; CS log: 213 A]",
-    ))
-    reg.register(DIDSpec(
-        "dyn_discharge_limit", ECU_BAT, 0x1E1C, "Dynamic discharge current limit", "A",
-        decode=lambda raw: _u16_over(raw, 5.0), doc_status=_EXP, slow=True,
-        notes="u16 / 5 [evDash]",
-    ))
-    reg.register(DIDSpec(
-        "charge_mode", ECU_BAT, 0x7448, "HV charge mode code", "code",
-        decode=_charge_mode, doc_status=_EXP,
-        notes="byte0; MEB op mode 4=AC, 6=DC mapped to 1/2 (see "
-              "decoders.charging.CHARGE_MODE_CODES) [evDash]",
-    ))
-    reg.register(DIDSpec(
-        "op_mode", ECU_BAT, 0x7448, "BMS operation mode", "code",
-        decode=_op_mode, doc_status=_EXP,
-        notes="byte0; 0=standby, 1=driving, 4=AC, 6=DC [evDash]",
-    ))
-    reg.register(DIDSpec(
-        "coolant_pump", ECU_BAT, 0x743B, "Battery coolant pump", "%",
-        decode=_byte, doc_status=_EXP, slow=True, notes="byte0 [evDash]",
-    ))
-    reg.register(DIDSpec(
-        "coolant_temps", ECU_BAT, 0x189D, "Battery cooling liquid", "degC",
-        decode=_coolant_temps, doc_status=_EXP,
-        notes="outlet = u16[0:2]/64, inlet = u16[2:4]/64 [spot; evDash]",
-    ))
-    reg.register(DIDSpec(
-        "ptc_current", ECU_BAT, 0x1620, "PTC heater battery current", "A",
-        decode=lambda raw: _byte_over(raw, 4.0), doc_status=_EXP,
-        notes="u8 / 4 [spot]",
-    ))
-    reg.register(DIDSpec(
-        "speed_kmh", ECU_BAT, 0xF40D, "Vehicle speed (BMS)", "km/h",
-        decode=_byte, doc_status=_EXP,
-        notes="byte0, km/h [evDash; CS log reports 0 while parked]",
-    ))
-    reg.register(DIDSpec(
-        "battery_serial", ECU_BAT, 0x0500, "HV battery serial", "",
-        doc_status=_EXP, slow=True, notes="raw ASCII; length per ECU",
-    ))
-    reg.register(DIDSpec(
-        "hv_serial_vin", ECU_BAT, 0xF802, "BMS VIN (part)", "",
-        doc_status=_EXP, slow=True, notes="raw; MEB VinDataSpec layout",
-    ))
+    reg.register(
+        DIDSpec(
+            "soc_abs",
+            ECU_BAT,
+            0x028C,
+            "State of charge (BMS)",
+            "%",
+            decode=_soc_bms,
+            doc_status=_EXP,
+            notes="u8 / 2.5 [evDash; CS log: raw 203 -> 81.2 %]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "soc_normal",
+            ECU_BAT,
+            0x028C,
+            "State of charge (display)",
+            "%",
+            decode=_soc_display,
+            doc_status=_EXP,
+            notes="raw*0.4425-6.1947 [evDash dash fit; CS log: -> 83.63 %]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "pack_voltage",
+            ECU_BAT,
+            0x1E3B,
+            "HV pack voltage",
+            "V",
+            decode=_pack_voltage,
+            doc_status=_EXP,
+            notes="u16 / 4 [evDash; CS log: raw 1725 (0x06BD) -> 431.25 V]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "pack_current",
+            ECU_BAT,
+            0x1E3D,
+            "HV pack current",
+            "A",
+            decode=_pack_current,
+            doc_status=_EXP,
+            notes="(u32-150000)/100, + = discharge [evDash; CS log: 150198 -> "
+            "1.98 A, corroborated by the discharge counter rising while "
+            "the car was parked]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "cell_voltage_max",
+            ECU_BAT,
+            0x1E33,
+            "Cell voltage max",
+            "V",
+            decode=_cell_voltage_scaled,
+            doc_status=_EXP,
+            notes="u16 / 4096 [evDash; CS log: 16377 -> 3.9984 V]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "cell_voltage_min",
+            ECU_BAT,
+            0x1E34,
+            "Cell voltage min",
+            "V",
+            decode=_cell_voltage_scaled,
+            doc_status=_EXP,
+            notes="u16 / 4096 [evDash]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "battery_temp",
+            ECU_BAT,
+            0x2A0B,
+            "HV battery temperature",
+            "degC",
+            decode=_battery_temp,
+            doc_status=_EXP,
+            notes="u8 / 2 - 40 [evDash; CS log: 120 -> 20.0 C]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "bat_temp_max",
+            ECU_BAT,
+            0x1E0E,
+            "HV battery temperature max",
+            "degC",
+            decode=_temp_scaled,
+            doc_status=_EXP,
+            notes="u16 / 64 [evDash; CS log: 20.875 C]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "bat_temp_min",
+            ECU_BAT,
+            0x1E0F,
+            "HV battery temperature min",
+            "degC",
+            decode=_temp_scaled,
+            doc_status=_EXP,
+            notes="u16 / 64 [evDash; CS log: 19.625 C]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "energy_counters",
+            ECU_BAT,
+            0x1E32,
+            "Energy counters",
+            "kWh",
+            decode=_energy_counters,
+            doc_status=_EXP,
+            slow=True,
+            notes="u32 charge @0, s32 discharge @4, /8583.07123641215 Wh [evDash]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "dyn_charge_limit",
+            ECU_BAT,
+            0x1E1B,
+            "Dynamic charge current limit",
+            "A",
+            decode=lambda raw: _u16_over(raw, 5.0),
+            doc_status=_EXP,
+            notes="u16 / 5 [evDash; CS log: 213 A]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "dyn_discharge_limit",
+            ECU_BAT,
+            0x1E1C,
+            "Dynamic discharge current limit",
+            "A",
+            decode=lambda raw: _u16_over(raw, 5.0),
+            doc_status=_EXP,
+            slow=True,
+            notes="u16 / 5 [evDash]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "charge_mode",
+            ECU_BAT,
+            0x7448,
+            "HV charge mode code",
+            "code",
+            decode=_charge_mode,
+            doc_status=_EXP,
+            notes="byte0; MEB op mode 4=AC, 6=DC mapped to 1/2 (see "
+            "decoders.charging.CHARGE_MODE_CODES) [evDash]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "op_mode",
+            ECU_BAT,
+            0x7448,
+            "BMS operation mode",
+            "code",
+            decode=_op_mode,
+            doc_status=_EXP,
+            notes="byte0; 0=standby, 1=driving, 4=AC, 6=DC [evDash]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "coolant_pump",
+            ECU_BAT,
+            0x743B,
+            "Battery coolant pump",
+            "%",
+            decode=_byte,
+            doc_status=_EXP,
+            slow=True,
+            notes="byte0 [evDash]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "coolant_temps",
+            ECU_BAT,
+            0x189D,
+            "Battery cooling liquid",
+            "degC",
+            decode=_coolant_temps,
+            doc_status=_EXP,
+            notes="outlet = u16[0:2]/64, inlet = u16[2:4]/64 [spot; evDash]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "ptc_current",
+            ECU_BAT,
+            0x1620,
+            "PTC heater battery current",
+            "A",
+            decode=lambda raw: _byte_over(raw, 4.0),
+            doc_status=_EXP,
+            notes="u8 / 4 [spot]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "speed_kmh",
+            ECU_BAT,
+            0xF40D,
+            "Vehicle speed (BMS)",
+            "km/h",
+            decode=_byte,
+            doc_status=_EXP,
+            notes="byte0, km/h [evDash; CS log reports 0 while parked]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "battery_serial",
+            ECU_BAT,
+            0x0500,
+            "HV battery serial",
+            "",
+            doc_status=_EXP,
+            slow=True,
+            notes="raw ASCII; length per ECU",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "hv_serial_vin",
+            ECU_BAT,
+            0xF802,
+            "BMS VIN (part)",
+            "",
+            doc_status=_EXP,
+            slow=True,
+            notes="raw; MEB VinDataSpec layout",
+        )
+    )
 
 
 def _register_cells(reg: DIDRegistry) -> None:
     for i in range(CELL_V_SLOTS):
-        reg.register(DIDSpec(
-            f"cell_v_{i:03d}", ECU_BAT, CELL_V_BASE + i,
-            f"Cell voltage #{i + 1:03d}", "V",
-            decode=_cell_voltage, doc_status=_EXP, slow=True,
-            notes="u16/1000 + 1; 0x0FFE = unpopulated slot [evDash]",
-        ))
+        reg.register(
+            DIDSpec(
+                f"cell_v_{i:03d}",
+                ECU_BAT,
+                CELL_V_BASE + i,
+                f"Cell voltage #{i + 1:03d}",
+                "V",
+                decode=_cell_voltage,
+                doc_status=_EXP,
+                slow=True,
+                notes="u16/1000 + 1; 0x0FFE = unpopulated slot [evDash]",
+            )
+        )
     for i, did in enumerate(CELL_T_DIDS):
-        reg.register(DIDSpec(
-            f"cell_t_{i:02d}", ECU_BAT, did,
-            f"Battery temperature sensor #{i + 1:02d}", "degC",
-            decode=_cell_temp, doc_status=_EXP, slow=True,
-            notes="u16/8 - 40 [evDash]",
-        ))
+        reg.register(
+            DIDSpec(
+                f"cell_t_{i:02d}",
+                ECU_BAT,
+                did,
+                f"Battery temperature sensor #{i + 1:02d}",
+                "degC",
+                decode=_cell_temp,
+                doc_status=_EXP,
+                slow=True,
+                notes="u16/8 - 40 [evDash]",
+            )
+        )
 
 
 def _register_modules(reg: DIDRegistry) -> None:
-    reg.register(DIDSpec(
-        "hv_energy_max", ECU_ENERGY, 0x2AB2, "Max HV energy content", "Wh",
-        decode=_max_energy_wh, doc_status=_EXP, slow=True,
-        notes="u32 / 1310.77 [evDash CarVWID3; CS log: 53200 Wh]",
-    ))
-    reg.register(DIDSpec(
-        "hv_energy_content", ECU_ENERGY, 0x2AB8, "HV energy content", "Wh",
-        decode=_energy_content_wh, doc_status=_EXP, slow=True,
-        notes="u32 / 1310.77 -- DIVISOR ASSUMED, UNVERIFIED: no open-source "
-              "implementation decodes this DID [evDash queues it commented "
-              "out; CS log: 41200-41325 Wh parked]",
-    ))
-    reg.register(DIDSpec(
-        "aux_12v_voltage", ECU_ENERGY, 0x2AF7, "12V battery voltage (BMS)", "V",
-        decode=_amb_12v, doc_status=_EXP, slow=True,
-        notes="u16 / 1024 + 4.26, first bytes of a multi-frame [evDash]",
-    ))
-    reg.register(DIDSpec(
-        "dcdc_current", ECU_DCDC, 0x465B, "DC/DC charging current", "A",
-        decode=lambda raw: _u16_over(raw, 16.0), doc_status=_EXP, slow=True,
-        notes="u16 / 16 [evDash CarMEB]",
-    ))
-    reg.register(DIDSpec(
-        "dcdc_voltage", ECU_DCDC, 0x465D, "DC/DC output voltage", "V",
-        decode=lambda raw: _u16_over(raw, 512.0), doc_status=_EXP, slow=True,
-        notes="u16 / 512 [evDash CarMEB]",
-    ))
-    reg.register(DIDSpec(
-        "odometer_km", ECU_VEH, 0x295A, "Odometer", "km",
-        decode=_odometer_km, doc_status=_EXP, slow=True,
-        notes="3-byte big-endian [evDash CarMEB]",
-    ))
-    reg.register(DIDSpec(
-        "gear", ECU_VEH, 0x210E, "Gear position", "",
-        decode=_gear, doc_status=_EXP, slow=True,
-        notes="data byte 1 [evDash CarMEB]",
-    ))
-    reg.register(DIDSpec(
-        "vin", ECU_VEH, 0xF802, "VIN (gateway)", "",
-        decode=_vin, doc_status=_EXP, slow=True,
-        notes="raw ASCII [evDash CarVWID3]",
-    ))
-    reg.register(DIDSpec(
-        "hv_aux_power", ECU_VEH, 0x0364, "HV auxiliary consumer power", "kW",
-        decode=lambda raw: _u16_over(raw, 10.0), doc_status=_EXP,
-        notes="u16 / 10 [spot]",
-    ))
-    reg.register(DIDSpec(
-        "outside_temp", ECU_CLIMATE, 0x2609, "Outside temperature", "degC",
-        decode=_outdoor_temp, doc_status=_EXP, slow=True,
-        notes="u8 / 2 - 50 [evDash CarVWID3]",
-    ))
-    reg.register(DIDSpec(
-        "inside_temp", ECU_CLIMATE, 0x2613, "Inside temperature", "degC",
-        decode=_cabin_temp, doc_status=_EXP, slow=True,
-        notes="u16 / 5 - 40 [evDash CarVWID3]",
-    ))
+    # 0x2AB2 / 0x2AB8 -- see the ENERGY DECODER RESOLUTION note in the module
+    # docstring for why these decode with the Car Scanner profile layout rather
+    # than the evDash u32/1310.77 one. The ecu_key stays "energy" (0x710 ->
+    # 0x77A) because that is the addressing this profile has actually tried;
+    # changing it here would be an address change with no evidence behind it.
+    reg.register(
+        DIDSpec(
+            "hv_energy_max",
+            ECU_ENERGY,
+            0x2AB2,
+            "Max HV energy content",
+            "Wh",
+            decode=_energy_max_wh,
+            doc_status=_EXP,
+            slow=True,
+            notes="u16be[0:2] x 50 Wh unsigned [Car Scanner MEB profile idx 342: "
+            "SBI=0 DL=2 MUL=50 SIG=false RBS=false UN=61(Wh)]. CONFIRMED on "
+            "captured bytes 2026-10-15: single-frame 62 2A B2 04 28 04 00 -> "
+            "0x0428 = 1064 x 50 = 53,200 Wh, matching Car Scanner's displayed "
+            "value (passive HCI capture).",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "hv_energy_content",
+            ECU_ENERGY,
+            0x2AB8,
+            "HV energy content",
+            "Wh",
+            decode=_energy_content_wh,
+            doc_status=_EXP,
+            slow=True,
+            notes="u16be[2:4] x 25 Wh unsigned [Car Scanner MEB profile idx 342: "
+            "SBI=2 DL=2 MUL=25 SIG=false RBS=false UN=61(Wh)]. CONFIRMED on "
+            "captured bytes 2026-10-15: multi-frame 62 2A B8 00 00 05 7F 00 "
+            "00 00 00 -> u16be[2:4] 0x057F = 1407 x 25 = 35,175 Wh, matching "
+            "Car Scanner's displayed value (passive HCI capture).",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "aux_12v_voltage",
+            ECU_ENERGY,
+            0x2AF7,
+            "12V battery voltage (BMS)",
+            "V",
+            decode=_amb_12v,
+            doc_status=_EXP,
+            slow=True,
+            notes="u16 x 0.001 + 4.0, first field of multi-frame 0x2AF7 "
+            "[Car Scanner MEB profile SBI=0 DL=2 MUL=0.001 OFS=4.0]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "aux_12v_current",
+            ECU_ENERGY,
+            0x2AF7,
+            "12V battery current",
+            "A",
+            decode=_aux_12v_current,
+            doc_status=_EXP,
+            slow=True,
+            notes="s32be x 0.001 at offset 2 of multi-frame 0x2AF7 "
+            "[Car Scanner MEB profile SBI=2 DL=4 MUL=0.001 SIG=true]",
+        )
+    )
+    for key, name, unit, sbi, dl, mul, ofs, note in (
+        ("aux_12v_soc", "12V battery state of charge", "%", 7, 1, 1.0, 0.0, "u8[7]"),
+        (
+            "aux_12v_temp",
+            "12V battery temperature",
+            "degC",
+            8,
+            1,
+            1.0,
+            -40.0,
+            "u8[8] - 40",
+        ),
+        (
+            "aux_12v_sensor_temp",
+            "12V battery sensor temperature",
+            "degC",
+            9,
+            1,
+            1.0,
+            -40.0,
+            "u8[9] - 40",
+        ),
+        (
+            "aux_12v_total_charge",
+            "12V battery total charge",
+            "Ah",
+            12,
+            4,
+            0.1,
+            0.0,
+            "u32be[12:16] x 0.1",
+        ),
+        (
+            "aux_12v_total_discharge",
+            "12V battery total discharge",
+            "Ah",
+            16,
+            4,
+            0.1,
+            0.0,
+            "u32be[16:20] x 0.1",
+        ),
+        (
+            "aux_12v_aging_capacity",
+            "12V battery aging (capacity)",
+            "%",
+            20,
+            1,
+            1.0,
+            0.0,
+            "u8[20]",
+        ),
+        (
+            "aux_12v_aging_power",
+            "12V battery aging (power)",
+            "%",
+            21,
+            1,
+            1.0,
+            0.0,
+            "u8[21]",
+        ),
+        (
+            "aux_12v_adapted_capacity",
+            "12V battery adapted capacity",
+            "Ah",
+            22,
+            1,
+            1.0,
+            0.0,
+            "u8[22]",
+        ),
+    ):
+        reg.register(
+            DIDSpec(
+                key,
+                ECU_ENERGY,
+                0x2AF7,
+                name,
+                unit,
+                decode=_cs_field_decoder(sbi=sbi, dl=dl, mul=mul, div=1.0, ofs=ofs),
+                doc_status=_EXP,
+                slow=True,
+                notes=f"{note}, multi-frame 0x2AF7 [{CS_SRC}]",
+            )
+        )
+    reg.register(
+        DIDSpec(
+            "dcdc_current",
+            ECU_DCDC,
+            0x465B,
+            "DC/DC charging current",
+            "A",
+            decode=lambda raw: _u16_over(raw, 16.0),
+            doc_status=_EXP,
+            slow=True,
+            notes="u16 / 16 [evDash CarMEB]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "dcdc_voltage",
+            ECU_DCDC,
+            0x465D,
+            "DC/DC output voltage",
+            "V",
+            decode=lambda raw: _u16_over(raw, 512.0),
+            doc_status=_EXP,
+            slow=True,
+            notes="u16 / 512 [evDash CarMEB]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "odometer_km",
+            ECU_VEH,
+            0x295A,
+            "Odometer",
+            "km",
+            decode=_odometer_km,
+            doc_status=_EXP,
+            slow=True,
+            notes="3-byte big-endian [evDash CarMEB]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "gear",
+            ECU_VEH,
+            0x210E,
+            "Gear position",
+            "",
+            decode=_gear,
+            doc_status=_EXP,
+            slow=True,
+            notes="data byte 1 [evDash CarMEB]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "vin",
+            ECU_VEH,
+            0xF802,
+            "VIN (gateway)",
+            "",
+            decode=_vin,
+            doc_status=_EXP,
+            slow=True,
+            notes="raw ASCII [evDash CarVWID3]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "hv_aux_power",
+            ECU_VEH,
+            0x0364,
+            "HV auxiliary consumer power",
+            "kW",
+            decode=lambda raw: _u16_over(raw, 10.0),
+            doc_status=_EXP,
+            notes="u16 / 10 [spot]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "outside_temp",
+            ECU_CLIMATE,
+            0x2609,
+            "Outside temperature",
+            "degC",
+            decode=_outdoor_temp,
+            doc_status=_EXP,
+            slow=True,
+            notes="u8 / 2 - 50 [evDash CarVWID3]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "inside_temp",
+            ECU_CLIMATE,
+            0x2613,
+            "Inside temperature",
+            "degC",
+            decode=_cabin_temp,
+            doc_status=_EXP,
+            slow=True,
+            notes="u16 / 5 - 40 [evDash CarVWID3]",
+        )
+    )
+
+    # -- [19.Gate] additional gateway measurements (Car Scanner MEB profile) --
+    # Same 0x710 -> 0x77A 11-bit path as the energy DIDs (ATSP6 / ATFCSH710 /
+    # ATCRA77A), which the 2026-10-15 passive capture confirmed. Scalings are
+    # the profile's SBI/DL/MUL/DIV/OFS fields, verbatim, recovered from the
+    # extracted MEB profile (profile_EV_MEB_*.json). EXPERIMENTAL: not yet read
+    # via this project's own collector, but the addressing and the field layout
+    # come straight from Car Scanner's profile, not from a guess.
+    for key, did, name, unit, sbi, dl, mul, ofs, slow, note in (
+        (
+            "range_displayed",
+            0x2AB6,
+            "Estimated range (displayed)",
+            "km",
+            0,
+            2,
+            1.0,
+            0.0,
+            False,
+            "u16be[0:2] x 1",
+        ),
+        (
+            "range_can",
+            0x2AB5,
+            "Estimated range (CAN bus)",
+            "km",
+            4,
+            2,
+            1.0,
+            0.0,
+            False,
+            "u16be[4:6] x 1",
+        ),
+        (
+            "range_internal",
+            0x2AB4,
+            "Estimated range (internal)",
+            "km",
+            2,
+            2,
+            1.0,
+            0.0,
+            False,
+            "u16be[2:4] x 1",
+        ),
+        (
+            "dcdc_gw_voltage",
+            0x2A53,
+            "DC-DC converter low voltage",
+            "V",
+            0,
+            1,
+            0.1,
+            0.0,
+            False,
+            "u8[0] x 0.1",
+        ),
+        (
+            "dcdc_gw_current",
+            0x2A53,
+            "DC-DC converter current",
+            "A",
+            1,
+            2,
+            1.0,
+            -511.0,
+            False,
+            "u16be[1:3] - 511",
+        ),
+        (
+            "hv_em_power_limit",
+            0x15D1,
+            "HV-EM power limitation",
+            "W",
+            1,
+            2,
+            50.0,
+            0.0,
+            False,
+            "u16be[1:3] x 50",
+        ),
+    ):
+        reg.register(
+            DIDSpec(
+                key,
+                ECU_ENERGY,
+                did,
+                name,
+                unit,
+                decode=_cs_field_decoder(sbi=sbi, dl=dl, mul=mul, div=1.0, ofs=ofs),
+                doc_status=_EXP,
+                slow=slow,
+                notes=f"{note} [{CS_SRC}]",
+            )
+        )
+    # Average energy consumption per road category (DID 0x2AB7, 7 x u16be x0.1
+    # kWh/100km packed at offsets 0,2,4,6,8,10,12). Slow-changing, polled rarely.
+    for cat in range(7):
+        reg.register(
+            DIDSpec(
+                f"road_avg_consumption_{cat}",
+                ECU_ENERGY,
+                0x2AB7,
+                f"Avg consumption (roads cat {cat})",
+                "kWh/100km",
+                decode=_cs_field_decoder(sbi=cat * 2, dl=2, mul=0.1, div=1.0, ofs=0.0),
+                doc_status=_EXP,
+                slow=True,
+                notes=f"u16be[{cat * 2}:{cat * 2 + 2}] x 0.1 [{CS_SRC}]",
+            )
+        )
+
+
+def _register_profile_extras(reg: DIDRegistry) -> None:
+    """Register remaining Car Scanner MEB profile DIDs (2026-10-16).
+
+    Recovered from the extracted MEB profile JSON (profile_EV_MEB_*.json).
+    All read-only (UDS 0x22); scalings verbatim from SBI/DL/MUL/DIV/OFS/SIG.
+    Covers vehicle-info (0x76), electric drive (0x7C), HVAC (0x746), GPS
+    (0x767) and the remaining gateway (0x710) fields. EXPERIMENTAL: not yet
+    read via this project's own collector.
+    """
+    # (key, ecu, did, name, unit, sbi, dl, mul, div, ofs, sig, slow)
+    table = (
+        (
+            "front_drive_actual_torque",
+            ECU_VEH,
+            0x0335,
+            "Front drive actual torque",
+            "Nm",
+            0,
+            2,
+            1,
+            1,
+            0,
+            True,
+            False,
+        ),
+        (
+            "rear_drive_actual_torque",
+            ECU_VEH,
+            0x033B,
+            "Rear drive actual torque",
+            "Nm",
+            0,
+            2,
+            1,
+            1,
+            0,
+            True,
+            False,
+        ),
+        (
+            "front_rear_torque_difference",
+            ECU_VEH,
+            0x0343,
+            "Front:Rear torque difference",
+            "Nm",
+            0,
+            2,
+            0.5,
+            1,
+            0,
+            True,
+            False,
+        ),
+        (
+            "rated_torque_on_the_front_axle",
+            ECU_VEH,
+            0x0344,
+            "Rated torque on the front axle",
+            "Nm",
+            0,
+            2,
+            0.5,
+            1,
+            0,
+            True,
+            False,
+        ),
+        (
+            "steering_wheel_angle",
+            ECU_VEH,
+            0x0346,
+            "Steering wheel angle",
+            "deg",
+            0,
+            2,
+            0.1,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "hv_battery_current",
+            ECU_VEH,
+            0x035E,
+            "HV Battery current",
+            "A",
+            0,
+            2,
+            0.1,
+            1,
+            0,
+            True,
+            True,
+        ),
+        (
+            "additional_high_voltage_consumers_total_current",
+            ECU_VEH,
+            0x0360,
+            "Additional high-voltage consumers, total current",
+            "A",
+            0,
+            2,
+            0.01,
+            1,
+            0,
+            True,
+            False,
+        ),
+        (
+            "brake_booster_pressure",
+            ECU_VEH,
+            0x2005,
+            "Brake booster pressure",
+            "bar",
+            0,
+            2,
+            0.001,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "radiator_fan_duty",
+            ECU_VEH,
+            0x2055,
+            "Radiator fan duty",
+            "%",
+            0,
+            2,
+            0.01,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "coolant_circulation_pump_duty",
+            ECU_VEH,
+            0x276D,
+            "Coolant circulation pump duty",
+            "%",
+            0,
+            2,
+            0.01,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "driver_requested_torque",
+            ECU_VEH,
+            0x29D4,
+            "Driver requested torque",
+            "Nm",
+            0,
+            2,
+            0.1,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "battery_soc_normalized",
+            ECU_VEH,
+            0x3DEF,
+            "Battery SoC (normalized)",
+            "%",
+            0,
+            2,
+            0.01,
+            1,
+            0,
+            True,
+            True,
+        ),
+        (
+            "motor_rpm_2",
+            ECU_VEH,
+            0x3DF8,
+            "Motor RPM",
+            "rpm",
+            0,
+            2,
+            0.5,
+            1,
+            0,
+            True,
+            False,
+        ),
+        (
+            "dc_dc_converter_coolant_temperature_calculated",
+            ECU_VEH,
+            0x43B8,
+            "DC-DC converter coolant temperature Calculated",
+            "degC",
+            0,
+            2,
+            0.1,
+            1,
+            0,
+            True,
+            False,
+        ),
+        (
+            "acceleration",
+            ECU_VEH,
+            0x4539,
+            "Acceleration",
+            "m/s2",
+            0,
+            2,
+            0.001,
+            1,
+            0,
+            True,
+            False,
+        ),
+        (
+            "power_electronics_voltage_in_traction_mode",
+            ECU_VEH,
+            0x4675,
+            "Power electronics: voltage in traction mode",
+            "V",
+            0,
+            2,
+            0.1,
+            1,
+            0,
+            True,
+            False,
+        ),
+        (
+            "total_distance_travelled_lifetime",
+            ECU_VEH,
+            0xF817,
+            "Total distance travelled (Lifetime)",
+            "km",
+            4,
+            4,
+            0.1,
+            1,
+            0,
+            True,
+            False,
+        ),
+        (
+            "torque_calculated_from_measured_currents",
+            ECU_ELDRIVE,
+            0x0308,
+            "Torque, calculated from measured currents",
+            "Nm",
+            0,
+            2,
+            1,
+            10,
+            0,
+            False,
+            False,
+        ),
+        (
+            "ecu_pcb_temperature_1",
+            ECU_ELDRIVE,
+            0x0805,
+            "ECU PCB Temperature #1",
+            "degC",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "ecu_pcb_temperature_2",
+            ECU_ELDRIVE,
+            0x0806,
+            "ECU PCB Temperature #2",
+            "degC",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "eldrive_odometer",
+            ECU_ELDRIVE,
+            0x086D,
+            "Odometer",
+            "km",
+            0,
+            4,
+            1,
+            1,
+            0,
+            False,
+            True,
+        ),
+        (
+            "dmcm_stator_voltage_d_direction_actual_value",
+            ECU_ELDRIVE,
+            0x1007,
+            "DMCM stator voltage D direction actual value",
+            "V",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "dmcm_stator_voltage_q_direction_actual_value",
+            ECU_ELDRIVE,
+            0x1008,
+            "DMCM stator voltage Q direction actual value",
+            "V",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "dmcm_stator_voltage_d_direction_commanded_value",
+            ECU_ELDRIVE,
+            0x1009,
+            "DMCM stator voltage D direction commanded value",
+            "V",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "dmcm_stator_voltage_q_direction_commanded_value",
+            ECU_ELDRIVE,
+            0x100A,
+            "DMCM stator voltage Q direction commanded value",
+            "V",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "inverter_power_loss_phase_u",
+            ECU_ELDRIVE,
+            0x1040,
+            "Inverter power loss phase U",
+            "W",
+            0,
+            4,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "inverter_power_loss_phase_v",
+            ECU_ELDRIVE,
+            0x1041,
+            "Inverter power loss phase V",
+            "W",
+            0,
+            4,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "inverter_power_loss_phase_w",
+            ECU_ELDRIVE,
+            0x1042,
+            "Inverter power loss phase W",
+            "W",
+            0,
+            4,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "rotor_temperature_model",
+            ECU_ELDRIVE,
+            0x2CCC,
+            "Rotor temperature model",
+            "degC",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "dc_link_voltage",
+            ECU_ELDRIVE,
+            0x3E93,
+            "DC Link voltage",
+            "V",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "dc_link_current",
+            ECU_ELDRIVE,
+            0x3E98,
+            "DC Link current",
+            "A",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "motor_maximum_current",
+            ECU_ELDRIVE,
+            0x3EE7,
+            "Motor maximum current",
+            "A",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "motor_minimum_current",
+            ECU_ELDRIVE,
+            0x3EE8,
+            "Motor minimum current",
+            "A",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "actual_mechanical_torque_calculated",
+            ECU_ELDRIVE,
+            0x3EE9,
+            "Actual mechanical torque calculated",
+            "Nm",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "actual_possible_maximum_torque",
+            ECU_ELDRIVE,
+            0x3EEA,
+            "Actual possible maximum torque",
+            "Nm",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "actual_possible_minimum_torque",
+            ECU_ELDRIVE,
+            0x3EEB,
+            "Actual possible minimum torque",
+            "Nm",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "desired_link_voltage",
+            ECU_ELDRIVE,
+            0x3EED,
+            "Desired link voltage",
+            "V",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "electric_drive_motor_speed_rad_sec",
+            ECU_ELDRIVE,
+            0x40C8,
+            "Electric drive motor speed (rad/sec)",
+            "",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "dc_link_voltage_reserve",
+            ECU_ELDRIVE,
+            0x43B9,
+            "DC Link voltage reserve",
+            "V",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "stator_electrical_frequency_rad_sec",
+            ECU_ELDRIVE,
+            0x4657,
+            "Stator electrical frequency (rad/sec)",
+            "",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "stator_temperature",
+            ECU_ELDRIVE,
+            0x4672,
+            "Stator temperature",
+            "degC",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "electric_drive_inflow_coolant_temperature",
+            ECU_ELDRIVE,
+            0x4FAE,
+            "Electric drive inflow coolant temperature",
+            "degC",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "actual_mechanical_torque_commanded_value",
+            ECU_ELDRIVE,
+            0x58E1,
+            "Actual mechanical torque commanded value",
+            "Nm",
+            0,
+            2,
+            1,
+            10,
+            1,
+            False,
+            False,
+        ),
+        (
+            "a_c_compressor_power_consumption_actual_value",
+            ECU_CLIMATE,
+            0x0800,
+            "A/C compressor power consumption: actual value",
+            "W",
+            5,
+            2,
+            1,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "a_c_compressor_speed",
+            ECU_CLIMATE,
+            0x2603,
+            "A/C compressor speed",
+            "rpm",
+            0,
+            1,
+            100,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "a_c_compressor_load",
+            ECU_CLIMATE,
+            0x2604,
+            "A/C compressor load",
+            "Nm",
+            0,
+            1,
+            0.1,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "refrigerant_pressure",
+            ECU_CLIMATE,
+            0x2605,
+            "Refrigerant pressure",
+            "bar",
+            0,
+            1,
+            0.2,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "radiator_fan_commanded_duty",
+            ECU_CLIMATE,
+            0x2607,
+            "Radiator fan commanded duty",
+            "%",
+            0,
+            1,
+            0.4,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "outside_temperature_calculated_from_cabin",
+            ECU_CLIMATE,
+            0x260A,
+            "Outside temperature (calculated from cabin)",
+            "degC",
+            0,
+            1,
+            0.5,
+            1,
+            -50,
+            False,
+            True,
+        ),
+        (
+            "front_left_deflector_temperature",
+            ECU_CLIMATE,
+            0x260C,
+            "Front left deflector temperature",
+            "degC",
+            0,
+            1,
+            0.333,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "front_right_deflector_temperature",
+            ECU_CLIMATE,
+            0x260D,
+            "Front right deflector temperature",
+            "degC",
+            0,
+            1,
+            0.333,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "temperature_after_evaporator",
+            ECU_CLIMATE,
+            0x2612,
+            "Temperature after evaporator",
+            "degC",
+            0,
+            1,
+            0.333,
+            1,
+            0,
+            True,
+            False,
+        ),
+        (
+            "fresh_air_recirculation_flap_actual_value_steps",
+            ECU_CLIMATE,
+            0x261E,
+            "Fresh air/Recirculation flap actual value steps",
+            "",
+            0,
+            2,
+            1,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "fresh_air_recirculation_flap_actual_value",
+            ECU_CLIMATE,
+            0x261E,
+            "Fresh air/Recirculation flap actual value %",
+            "%",
+            2,
+            1,
+            0.5,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "fresh_air_recirculation_flap_specified_value_steps",
+            ECU_CLIMATE,
+            0x261F,
+            "Fresh air/Recirculation flap specified value steps",
+            "",
+            0,
+            2,
+            1,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "fresh_air_recirculation_flap_stop_for_fresh_air",
+            ECU_CLIMATE,
+            0x2620,
+            "Fresh air/Recirculation flap stop for fresh air",
+            "",
+            0,
+            2,
+            1,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "fresh_air_recirculation_flap_stop_for_recirculated_air",
+            ECU_CLIMATE,
+            0x2621,
+            "Fresh air/Recirculation flap stop for recirculated air",
+            "",
+            0,
+            2,
+            1,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "front_left_temperature_flap_actual_value",
+            ECU_CLIMATE,
+            0x2622,
+            "Front left temperature flap actual value",
+            "%",
+            2,
+            1,
+            0.5,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "front_right_temperature_flap_actual_value",
+            ECU_CLIMATE,
+            0x2626,
+            "Front right temperature flap actual value",
+            "%",
+            2,
+            1,
+            0.5,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "rear_deflector_temperature",
+            ECU_CLIMATE,
+            0x263D,
+            "Rear deflector temperature",
+            "degC",
+            0,
+            1,
+            0.333,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "air_polution_level_0_clean_air",
+            ECU_CLIMATE,
+            0x26ED,
+            "Air polution level (0 = clean air)",
+            "",
+            0,
+            1,
+            0.1,
+            1,
+            0,
+            True,
+            False,
+        ),
+        (
+            "windshield_temperature",
+            ECU_CLIMATE,
+            0x27C4,
+            "Windshield temperature",
+            "",
+            0,
+            2,
+            15.625,
+            1,
+            -39.5,
+            False,
+            False,
+        ),
+        (
+            "cabin_humidity",
+            ECU_CLIMATE,
+            0x27C4,
+            "Cabin humidity",
+            "%",
+            4,
+            1,
+            0.5,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "co2_content_interior",
+            ECU_CLIMATE,
+            0x42DB,
+            "CO2 content interior",
+            "ppm",
+            1,
+            1,
+            100,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "a_c_refrigerant_pressure_and_temperature_sensor_1_pressure",
+            ECU_CLIMATE,
+            0x4EEF,
+            "A/C refrigerant pressure and temperature sensor 1: Pressure",
+            "bar",
+            0,
+            2,
+            88,
+            10000,
+            0,
+            False,
+            False,
+        ),
+        (
+            "a_c_refrigerant_pressure_and_temperature_sensor_1_temperature",
+            ECU_CLIMATE,
+            0x4EEF,
+            "A/C refrigerant pressure and temperature sensor 1: Temperature",
+            "degC",
+            2,
+            2,
+            10,
+            100,
+            -40,
+            False,
+            False,
+        ),
+        (
+            "a_c_refrigerant_pressure_and_temperature_sensor_1_interior_temperature",
+            ECU_CLIMATE,
+            0x4EEF,
+            "A/C refrigerant pressure and temperature sensor 1: Interior Temperature",
+            "degC",
+            4,
+            2,
+            10,
+            100,
+            -40,
+            False,
+            False,
+        ),
+        (
+            "res_pid_0149",
+            ECU_CLIMATE,
+            0xF449,
+            "RES(PID_0149)",
+            "%",
+            0,
+            1,
+            1,
+            2.55,
+            0,
+            False,
+            False,
+        ),
+        (
+            "number_of_visible_satellites",
+            ECU_GPS,
+            0x2431,
+            "Number of visible satellites",
+            "",
+            0,
+            1,
+            1,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "number_of_tracked_satellites",
+            ECU_GPS,
+            0x2431,
+            "Number of tracked satellites",
+            "",
+            1,
+            1,
+            1,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "hv_em_nv_power_limitation",
+            ECU_ENERGY,
+            0x15D1,
+            "HV-EM NV Power limitation",
+            "W",
+            3,
+            1,
+            50,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "nv_energy_requirement",
+            ECU_ENERGY,
+            0x15D1,
+            "NV Energy requirement",
+            "Wh",
+            4,
+            1,
+            50,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "hv_em_hv_battery_energy_information",
+            ECU_ENERGY,
+            0x15D1,
+            "HV-EM HV Battery energy information",
+            "Wh",
+            5,
+            2,
+            50,
+            1,
+            0,
+            False,
+            False,
+        ),
+        (
+            "dc_dc_converter_reserved_current",
+            ECU_ENERGY,
+            0x2A53,
+            "DC-DC converter reserved current",
+            "A",
+            3,
+            2,
+            1,
+            1,
+            -511,
+            False,
+            False,
+        ),
+        (
+            "average_battery_consumption_internal_value",
+            ECU_ENERGY,
+            0x2AB4,
+            "Average battery consumption (internal value)",
+            "A",
+            9,
+            1,
+            1,
+            1,
+            0,
+            False,
+            False,
+        ),
+    )
+    for key, ecu, did, name, unit, sbi, dl, mul, div, ofs, sig, slow in table:
+        reg.register(
+            DIDSpec(
+                key,
+                ecu,
+                did,
+                name,
+                unit,
+                decode=_cs_field_decoder(
+                    sbi=sbi, dl=dl, mul=mul, div=div, ofs=ofs, sig=sig
+                ),
+                doc_status=_EXP,
+                slow=slow,
+                notes=f"{'s' if sig else 'u'}{8 * dl}be[{sbi}:{sbi + dl}] "
+                f"x {mul:g}/{div:g} + {ofs:g} [{CS_SRC}]",
+            )
+        )
