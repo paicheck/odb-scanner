@@ -39,36 +39,38 @@ object Decoder {
         return v * r.scale / r.divisor + r.addend
     }
 
-    private fun decodeSpecial(name: String, record: ByteArray): Any? = when (name) {
-        "cell_voltage" -> {
-            val v = u16(record, 0) ?: return null
-            if (v == CELL_UNUSED) null else v / 1000.0 + 1.0
+    private fun decodeSpecial(name: String, record: ByteArray): Any? {
+        return when (name) {
+            "cell_voltage" -> {
+                val v = u16(record, 0) ?: return null
+                if (v == CELL_UNUSED) null else v / 1000.0 + 1.0
+            }
+            "cell_temp" -> {
+                val v = u16(record, 0) ?: return null
+                if (v > CELL_T_MAX) null else v / 8.0 - 40.0
+            }
+            "charge_mode" -> mapOf(4 to 1, 6 to 2)[record[0].toInt() and 0xFF] ?: 0
+            "energy_counters" -> {
+                if (record.size < 8) return null
+                val charged = u32(record, 0)!! / ENERGY_COUNT_WH
+                val used = absInt32(record, 4) / ENERGY_COUNT_WH
+                mapOf("charged_kwh" to charged, "used_kwh" to used)
+            }
+            "coolant_temps" -> {
+                if (record.size < 4) return null
+                mapOf(
+                    "outlet_c" to (u16(record, 0)!! / 64.0),
+                    "inlet_c" to (u16(record, 2)!! / 64.0),
+                )
+            }
+            "pair" -> {
+                // scaled value at byte 0, raw index at byte `dl` (see _cs_pair_decoder)
+                null  // reserved: the two-field decode is not yet needed on the car
+            }
+            "gear" -> record.getOrNull(1)?.toInt()?.let { gearCode(it) }
+            "vin" -> record.toString(Charsets.US_ASCII).trim('\u0000', ' ')
+            else -> null
         }
-        "cell_temp" -> {
-            val v = u16(record, 0) ?: return null
-            if (v > CELL_T_MAX) null else v / 8.0 - 40.0
-        }
-        "charge_mode" -> mapOf(4 to 1, 6 to 2)[record[0].toInt() and 0xFF] ?: 0
-        "energy_counters" -> {
-            if (record.size < 8) return null
-            val charged = u32(record, 0)!! / ENERGY_COUNT_WH
-            val used = absInt32(record, 4) / ENERGY_COUNT_WH
-            mapOf("charged_kwh" to charged, "used_kwh" to used)
-        }
-        "coolant_temps" -> {
-            if (record.size < 4) return null
-            mapOf(
-                "outlet_c" to (u16(record, 0)!! / 64.0),
-                "inlet_c" to (u16(record, 2)!! / 64.0),
-            )
-        }
-        "pair" -> {
-            // scaled value at byte 0, raw index at byte `dl` (see _cs_pair_decoder)
-            null  // reserved: the two-field decode is not yet needed on the car
-        }
-        "gear" -> record.getOrNull(1)?.toInt()?.let { gearCode(it) }
-        "vin" -> record.toString(Charsets.US_ASCII).trim('\u0000', ' ')
-        else -> null
     }
 
     private fun u16(b: ByteArray, off: Int): Int? =
@@ -86,7 +88,8 @@ object Decoder {
     /** Signed 32-bit big-endian at off, as a positive magnitude. */
     private fun absInt32(b: ByteArray, off: Int): Long {
         val u = u32(b, off) ?: return 0
-        return if (u and 0x8000_0000L != 0L) (u - 0x1_0000_0000L).absoluteValue else u
+        val signed = if (u and 0x8000_0000L != 0L) u - 0x1_0000_0000L else u
+        return if (signed < 0) -signed else signed
     }
 
     private fun gearCode(code: Int): String = when (code) {
