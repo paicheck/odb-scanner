@@ -45,15 +45,12 @@ Copy-Item spec\odb_scanner.json android\app\src\main\assets\spec.json
 
 ## Status / TODOs
 
-Implemented and unit-testable: the spec loader, read-only guard, decode, and the
-ELM327 addressing quirks — the parts that matter and that have bit the project
-before.
+Implemented and unit-testable: the spec loader, read-only guard, decode, the
+ELM327 addressing quirks, the runtime Bluetooth permission request, and a bonded
+device picker — the parts that matter and that have bit the project before.
 
-Remaining to wire up (platform-specific, needs a device):
+Remaining to wire up (needs a device or a follow-up):
 
-* **Runtime Bluetooth permission request** — the manifest declares the
-  permissions; `MainActivity` still needs the `BLUETOOTH_CONNECT`/`SCAN` runtime
-  prompt and a proper device picker (it currently uses the first bonded device).
 * **Persistence** — readings are returned in memory; mirror the Python SQLite
   schema (`measurements`, `tx_log`, `unsupported_dids`) in Room for history.
 * **The `pair` special decoder** — the two-field DIDs (SoC cell index pairs) are
