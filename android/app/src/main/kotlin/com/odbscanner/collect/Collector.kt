@@ -1,6 +1,7 @@
 package com.odbscanner.collect
 
-import com.odbscanner.spec.Decoder
+import com.odbscanner.db.Repository
+import com.odbscanner.spec.Decode
 import com.odbscanner.spec.EcuSpec
 import com.odbscanner.spec.MeasurementSpec
 import com.odbscanner.spec.ProfileSpec
@@ -10,6 +11,7 @@ import com.odbscanner.uds.NegativeResponseError
 import com.odbscanner.uds.NoResponseError
 import com.odbscanner.uds.ReadOnlyGuardImpl
 import com.odbscanner.uds.Uds
+import java.time.Instant
 
 /** One decoded reading, with the raw bytes preserved. */
 data class Reading(
@@ -26,19 +28,36 @@ data class Reading(
  * and decodes it against the spec. DIDs that answer NRC 0x31 (definitively
  * unsupported) or that stay silent without ever succeeding are retired so they
  * are not re-polled every cycle.
+ *
+ * When a [repository] is given, readings and retired DIDs are persisted so the
+ * data survives an app restart, and the retired set + ever-succeeded set are
+ * loaded from it on [loadState].
  */
 class Collector(
     private val spec: Spec,
     private val profile: ProfileSpec,
     private val protocol: Elm327Protocol,
     private val guard: ReadOnlyGuardImpl,
+    private val repository: Repository? = null,
+    private val vehicleId: Long = 1L,
 ) {
     private val retired = mutableSetOf<Pair<String, Int>>()
     private val everSucceeded = mutableSetOf<Pair<String, Int>>()
     private val silentCount = mutableMapOf<Pair<String, Int>, Int>()
     private var silentRetireThreshold = 3
+    private var tsNow: String = ""
 
     fun setSilentRetireThreshold(n: Int) { silentRetireThreshold = n }
+
+    /** Load retired + ever-succeeded DIDs from the repository (call before collecting). */
+    suspend fun loadState() {
+        repository?.let {
+            retired.clear()
+            retired.addAll(it.unsupportedKeys(vehicleId))
+            everSucceeded.clear()
+            everSucceeded.addAll(it.everSucceededKeys(vehicleId))
+        }
+    }
 
     /** Probe each ECU with its first DID; returns key -> status. */
     fun discover(): Map<String, String> {
@@ -58,8 +77,9 @@ class Collector(
         return results
     }
 
-    /** Read and decode every measurement in one pass. */
-    fun collectOnce(): List<Reading> {
+    /** Read and decode every measurement in one pass; persists when a repo is set. */
+    suspend fun collectOnce(): List<Reading> {
+        tsNow = Instant.now().toString()
         val readings = mutableListOf<Reading>()
         for (m in profile.measurements) {
             val did = m.did ?: continue
@@ -68,69 +88,92 @@ class Collector(
             val reading = poll(m, ecu, did)
             readings.add(reading)
         }
-        // per-cell sweep
         profile.cellVoltages?.let { cv ->
             readings.addAll(sweepCells(cv))
         }
+        // Readings were persisted per-DID inside poll() (and retired DIDs inside
+        // retire()), so the data survives an app restart.
         return readings
     }
 
-    private fun poll(m: MeasurementSpec, ecu: EcuSpec, did: Int): Reading {
+    private suspend fun poll(m: MeasurementSpec, ecu: EcuSpec, did: Int): Reading {
         return try {
             val record = Uds.readDid(protocol, guard, ecu, did)
+            val value = Decoder.decode(m.decode, record)
+            _recordSuccess(m, record, tsNow)
             everSucceeded.add(m.ecuKey to did)
             silentCount.remove(m.ecuKey to did)
-            val value = Decoder.decode(m.decode, record)
             Reading(m.key, value, toHex(record), "ok")
         } catch (e: NegativeResponseError) {
-            if (e.nrc == 0x31) retire(m.ecuKey, did)
+            _recordFailure(m, e.toString(), tsNow)
+            if (e.nrc == 0x31) retire(m.ecuKey, did, tsNow)
             Reading(m.key, null, "", "nrc-0x" + e.nrc.toString(16).padStart(2, '0'))
         } catch (_: NoResponseError) {
-            noteSilent(m.ecuKey, did)
+            _recordFailure(m, "No/undecodable response to DID 0x${did.toString(16).padStart(4, '0')}", tsNow)
+            noteSilent(m.ecuKey, did, tsNow)
             Reading(m.key, null, "", "no-response")
         }
     }
 
-    private fun sweepCells(cv: com.odbscanner.spec.CellVoltages): List<Reading> {
+    private suspend fun _recordSuccess(m: MeasurementSpec, record: ByteArray, ts: String) {
+        repository?.recordMeasurement(
+            vehicleId = vehicleId, ts = ts, key = m.key, ecu = m.ecuKey,
+            service = "UDS-0x22", pid = "0x${m.did.toString(16).uppercase().padStart(4, '0')}",
+            unit = m.unit, provenance = "reported",
+            decodingMethod = if (m.decode != null) "builtin" else "raw-only",
+            docStatus = null, rawResponse = toHex(record), value = (Decoder.decode(m.decode, record) as? Number)?.toDouble(),
+            textValue = null, success = true, error = null,
+        )
+    }
+
+    private suspend fun _recordFailure(m: MeasurementSpec, error: String, ts: String) {
+        repository?.recordMeasurement(
+            vehicleId = vehicleId, ts = ts, key = m.key, ecu = m.ecuKey,
+            service = "UDS-0x22", pid = "0x${m.did.toString(16).uppercase().padStart(4, '0')}",
+            unit = m.unit, provenance = "reported",
+            decodingMethod = if (m.decode != null) "builtin" else "raw-only",
+            docStatus = null, rawResponse = "", value = null, textValue = null,
+            success = false, error = error,
+        )
+    }
+
+    private suspend fun sweepCells(cv: CellVoltages): List<Reading> {
         val ecu = spec.ecu(cv.ecuKey)
         val out = mutableListOf<Reading>()
         for (i in 0 until cv.slots) {
             val did = cv.didBase + i
             if (retired.contains(cv.ecuKey to did)) continue
+            val key = "cell_v_${i.toString().padStart(3, '0')}"
             val reading = try {
                 val record = Uds.readDid(protocol, guard, ecu, did)
                 val value = Decoder.decode(cv.decode, record)
-                if (value == null && isUnused(record, cv.unusedMarker)) {
-                    Reading("cell_v_${i.toString().padStart(3, '0')}", null, toHex(record), "unused")
-                } else {
-                    Reading("cell_v_${i.toString().padStart(3, '0')}", value, toHex(record), "ok")
-                }
+                val unused = record.size >= 2 && ((record[0].toInt() and 0xFF) shl 8) or (record[1].toInt() and 0xFF) == cv.unusedMarker
+                if (unused) Reading(key, null, toHex(record), "unused")
+                else Reading(key, value, toHex(record), "ok")
             } catch (e: NegativeResponseError) {
-                if (e.nrc == 0x31) retire(cv.ecuKey, did)
-                Reading("cell_v_${i}", null, "", "nrc")
+                if (e.nrc == 0x31) retire(cv.ecuKey, did, tsNow)
+                Reading(key, null, "", "nrc")
             } catch (_: NoResponseError) {
-                Reading("cell_v_${i}", null, "", "no-response")
+                Reading(key, null, "", "no-response")
             }
             out.add(reading)
         }
         return out
     }
 
-    private fun isUnused(record: ByteArray, marker: Int): Boolean =
-        record.size >= 2 &&
-            ((record[0].toInt() and 0xFF) shl 8) or (record[1].toInt() and 0xFF) == marker
-
-    private fun retire(ecuKey: String, did: Int) {
+    private suspend fun retire(ecuKey: String, did: Int, ts: String) {
         retired.add(ecuKey to did)
+        repository?.markUnsupported(vehicleId, ecuKey, did, ts)
     }
 
-    private fun noteSilent(ecuKey: String, did: Int) {
-        if (everSucceeded.contains(ecuKey to did)) return  // answered before -> car asleep
-        val count = (silentCount[ecuKey to did] ?: 0) + 1
-        silentCount[ecuKey to did] = count
+    private suspend fun noteSilent(ecuKey: String, did: Int, ts: String) {
+        val key = ecuKey to did
+        if (everSucceeded.contains(key)) return  // answered before -> car asleep
+        val count = (silentCount[key] ?: 0) + 1
+        silentCount[key] = count
         if (count >= silentRetireThreshold) {
-            retire(ecuKey, did)
-            silentCount.remove(ecuKey to did)
+            retire(ecuKey, did, ts)
+            silentCount.remove(key)
         }
     }
 

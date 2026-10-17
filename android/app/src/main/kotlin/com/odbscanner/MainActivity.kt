@@ -2,7 +2,6 @@ package com.odbscanner
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -26,6 +25,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +37,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.odbscanner.collect.Collector
 import com.odbscanner.collect.Reading
+import com.odbscanner.db.AppDatabase
+import com.odbscanner.db.MeasurementEntity
+import com.odbscanner.db.Repository
 import com.odbscanner.spec.Spec
 import com.odbscanner.spec.SpecLoader
 import com.odbscanner.transport.BluetoothSpp
@@ -50,15 +53,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val (spec, error) = try {
-            loadSpec() to null
-        } catch (e: Exception) {
-            null to "${e.javaClass.simpleName}: ${e.message}"
-        }
+        val spec = loadSpec()
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    if (spec != null) CollectorScreen(spec) else ErrorScreen(error ?: "unknown")
+                    CollectorScreen(spec)
                 }
             }
         }
@@ -67,18 +66,6 @@ class MainActivity : ComponentActivity() {
     private fun loadSpec(): Spec = SpecLoader.load(
         assets.open("spec.json").bufferedReader(Charsets.UTF_8).use { it.readText() }
     )
-}
-
-@Composable
-private fun ErrorScreen(message: String) {
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-        Text(
-            "Failed to load the diagnostic spec",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.error,
-        )
-        Text(message, style = MaterialTheme.typography.bodyMedium)
-    }
 }
 
 private val BLUETOOTH_PERMISSIONS = arrayOf(
@@ -95,16 +82,35 @@ private fun hasBluetoothPermission(context: android.content.Context): Boolean =
 private fun pairedDevices(): List<BluetoothDevice> =
     BluetoothAdapter.getDefaultAdapter()?.bondedDevices?.toList() ?: emptyList()
 
-@SuppressLint("MissingPermission")
+fun MeasurementEntity.toReading() = Reading(
+    key = key,
+    value = value,
+    raw = rawResponse,
+    status = if (success) "ok" else (error ?: "no-response"),
+)
+
 @Composable
 private fun CollectorScreen(spec: Spec) {
-    var status by remember { mutableStateOf("Idle") }
+    val context = LocalContext.current
+    val repository = remember { Repository(AppDatabase.get(context)) }
+    val scope = rememberCoroutineScope()
+
+    var status by remember { mutableStateOf("Loading…") }
     var readings by remember { mutableStateOf(listOf<Reading>()) }
     var devices by remember { mutableStateOf(listOf<BluetoothDevice>()) }
     var showDeviceDialog by remember { mutableStateOf(false) }
 
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    // Load the latest persisted measurements on startup so history survives
+    // an app restart (the collector is not running in the background on Android).
+    LaunchedEffect(Unit) {
+        try {
+            val latest = repository.latestMeasurements(1L)
+            readings = latest.map { it.toReading() }
+            status = "Loaded ${readings.size} stored readings"
+        } catch (e: Exception) {
+            status = "DB error: ${e.message}"
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -141,6 +147,14 @@ private fun CollectorScreen(spec: Spec) {
             modifier = Modifier.padding(vertical = 8.dp),
         ) {
             Button(onClick = { startConnectFlow() }) { Text("Connect & collect") }
+            Button(onClick = {
+                // Reload from the persisted store without re-collecting.
+                scope.launch {
+                    val latest = repository.latestMeasurements(1L)
+                    readings = latest.map { it.toReading() }
+                    status = "Loaded ${readings.size} stored readings"
+                }
+            }) { Text("Reload") }
             Button(onClick = { readings = emptyList(); status = "Idle" }) { Text("Clear") }
         }
 
@@ -175,9 +189,15 @@ private fun CollectorScreen(spec: Spec) {
                                         showDeviceDialog = false
                                         status = "Connecting…"
                                         scope.launch {
-                                            runCollection(spec, d) { msg, result ->
+                                            runCollection(spec, d, repository) { msg, result ->
                                                 status = msg
                                                 result?.let { readings = it }
+                                                // After collecting, reload from the store so
+                                                // the UI shows the persisted (deduplicated) state.
+                                                scope.launch {
+                                                    val latest = repository.latestMeasurements(1L)
+                                                    readings = latest.map { it.toReading() }
+                                                }
                                             }
                                         }
                                     }
@@ -198,6 +218,7 @@ private fun CollectorScreen(spec: Spec) {
 private suspend fun runCollection(
     spec: Spec,
     device: BluetoothDevice,
+    repository: Repository,
     onUpdate: (String, List<Reading>?) -> Unit,
 ) = withContext(Dispatchers.IO) {
     try {
@@ -208,7 +229,9 @@ private suspend fun runCollection(
             val guard = ReadOnlyGuardImpl(spec.guard)
             val profile = spec.profiles["meb"] ?: error("no meb profile")
 
-            val collector = Collector(spec, profile, protocol, guard)
+            val collector = Collector(spec, profile, protocol, guard, repository, 1L)
+            collector.setSilentRetireThreshold(3)
+            collector.loadState()
             val ecus = collector.discover()
             onUpdate("ECU discovery: $ecus", null)
             val readings = collector.collectOnce()
