@@ -30,7 +30,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-lock.txt
-          python -m pip install ruff
+          python -m pip install ruff pytest-randomly
 
       - name: Lint
         run: ruff check .
@@ -44,6 +44,11 @@ jobs:
       - name: Unit tests (fast)
         run: python -m pytest -m "not slow"
 
+      # pytest-randomly (installed above) shuffles test order on every run, so
+      # a hidden order dependency -- one test relying on state another left
+      # behind -- surfaces as a failure instead of a coincidence. The shared
+      # experiment-matrix state (tools/experiment_record.ARMS) is restored
+      # around every test in tests/conftest.py for exactly this reason.
       - name: Unit tests (full suite)
         run: python -m pytest
 

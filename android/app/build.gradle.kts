@@ -52,6 +52,11 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
+
+    // JVM unit tests (run with :app:testDebugUnitTest). Elm327ProtocolTest pins
+    // the MEB wire form to the same captured truth the Python suite checks, so
+    // the phone cannot drift from the desktop transport.
+    testImplementation("junit:junit:4.13.2")
 }
 
 // This project lives inside a OneDrive-synced folder, and OneDrive's sync agent

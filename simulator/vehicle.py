@@ -131,6 +131,8 @@ MEB_MODULES = {
     0x00000710: "77A",        # gateway energy information (11-bit)
     0x17FC0076: "17FE0076",   # vehicle info (odo/gear/VIN)
     0x00000746: "7B0",        # climate control (11-bit)
+    0x17FC007C: "17FE007C",   # electric drive (motor/inverter)
+    0x00000767: "7D1",        # GPS / telematics (11-bit)
 }
 
 
@@ -220,6 +222,17 @@ def _meb_did_value(req29: int, did: int) -> bytes | None:
                 return bytes([round((14.0 + 50) * 2) & 0xFF])
             if did == 0x2613:
                 return _enc_u16((18.5 + 40) * 5)
+            return None
+        if req29 == 0x17FC007C:
+            if did == 0x3E93:
+                # DC link voltage, 400 V at rest. The point is that the module
+                # answers at all -- a dead 29-bit path must show up as a NULL
+                # for the whole electric-drive module, not as a plausible value.
+                return _enc_u16(4000)
+            return None
+        if req29 == 0x00000767:
+            if did == 0x2431:
+                return bytes([12, 9])        # satellites visible, tracked
             return None
     return None
 
@@ -320,6 +333,11 @@ class SimHandler(socketserver.BaseRequestHandler):
         self.caf = 1            # CAN auto-formatting (ATCAF)
         self.meb_module = None  # 29-bit MEB module id, or None = functional
         self.current_ecu = (0x7E0, 0x7E8)
+        # Clone-strict mode (SimServer strict=True): reproduce the documented
+        # refusals of the field VEEPEAK clone, so a transport regression fails
+        # here instead of only on the car. Off by default, because the harness
+        # contract tests deliberately send the forms the real clone refuses.
+        self.strict = bool(getattr(self.server, "strict", False))
         while True:
             try:
                 chunk = self.request.recv(1024)
@@ -340,26 +358,33 @@ class SimHandler(socketserver.BaseRequestHandler):
                 if not cmd:
                     continue
                 if cmd.startswith("ATSH"):
-                    self._set_header(cmd)
+                    out = self._set_header(cmd)
                 else:
                     out = self._handle_cmd(cmd)
-                    for text in out:
-                        self.request.sendall((text + "\r").encode("ascii"))
+                for text in out:
+                    self.request.sendall((text + "\r").encode("ascii"))
                 self.request.sendall(b">")
 
-    def _set_header(self, cmd: str) -> None:
+    def _set_header(self, cmd: str) -> list[str]:
         """ATSH: 3-digit legacy (11-bit) or 6-digit MEB (with the CP byte).
 
         The 6-digit form is what ELM327-class adapters accept for MEB module
         addressing (ATCP supplies the priority byte); the completed 29-bit id
-        is (cp << 24) | value.
+        is (cp << 24) | value. Returns the adapter's reply lines (normally
+        none, or ['?'] when clone-strict mode refuses the header).
         """
         arg = cmd[4:].replace(" ", "")
+        if self.strict and len(arg) == 8:
+            # The field clone refuses the 8-digit ATSH a raw 29-bit id would
+            # need (see Elm327Transport.set_header), which is why MEB modules
+            # are addressed with ATCP + 6 digits. Modelling the refusal means a
+            # regression to an 8-digit header fails the test suite.
+            return ["?"]
         if len(arg) == 6:
             try:
                 hdr = (self.cp << 24) | int(arg, 16)
             except ValueError:
-                return
+                return []
             self.meb_module = hdr if hdr in MEB_MODULES else None
             # An unknown MODULE header must fall silent. Leaving current_ecu
             # on the 11-bit motor made the simulator answer an unaddressed
@@ -377,11 +402,11 @@ class SimHandler(socketserver.BaseRequestHandler):
                 self.current_ecu = (0x7E0, 0x7E8)
             else:
                 self.current_ecu = None
-            return
+            return []
         try:
             tx = int(arg, 16) & 0x7FF
         except ValueError:
-            return
+            return []
         if tx == 0x7DF:                            # functional addressing
             self.current_ecu = (0x7DF, 0x7E8)
         elif tx in ECU_TABLE:
@@ -402,6 +427,7 @@ class SimHandler(socketserver.BaseRequestHandler):
             else:                                  # no ECU lives there
                 self.meb_module = None
                 self.current_ecu = None
+        return []
 
     def _handle_cmd(self, cmd: str) -> list[str]:  # noqa: C901
         import diagnostic.uds as uds
@@ -422,6 +448,12 @@ class SimHandler(socketserver.BaseRequestHandler):
                     return ["?"]
                 return ["OK"]
             if c.startswith("ATCAF") and len(c) == 6:
+                if self.strict and c[5:6] == "0":
+                    # Car Scanner's captured MEB sequence is ATCAF1 throughout;
+                    # the field clone answers the hand-framed ATCAF0 line with
+                    # '?'. Refuse the command in clone-strict mode so a
+                    # regression back to hand-framing is caught here.
+                    return ["?"]
                 self.caf = int(c[5:6])
                 return ["OK"]
             return ["OK"]
@@ -431,6 +463,12 @@ class SimHandler(socketserver.BaseRequestHandler):
         try:
             req = bytes.fromhex(hexstr)
         except ValueError:
+            return ["?"]
+        if self.strict and self.caf == 1 and len(req) > 7:
+            # Auto-formatting (ATCAF1) accepts at most 7 request bytes -- the
+            # adapter adds the ISO-TP PCI byte itself. An 8-byte hand-built
+            # line is answered '?' by the clone, which is exactly how the old
+            # hand-framed 29-bit path died on the car.
             return ["?"]
         if self.meb_module is not None:
             return self._meb_response(req)
@@ -488,16 +526,26 @@ class _SimTCPServer(socketserver.ThreadingTCPServer):
 
     allow_reuse_address = True
     daemon_threads = True
+    # Clone-strict mode for every connection this server handles. Set by
+    # SimServer before serve_forever; read by SimHandler from self.server.
+    strict = False
 
 
 class SimServer:
-    def __init__(self, host: str, port: int):
+    def __init__(self, host: str, port: int, strict: bool = False):
         self.host, self.port = host, port
+        # strict=True makes the simulator reproduce the field clone's
+        # documented refusals (8-digit ATSH, ATCAF0, an >7-byte request under
+        # ATCAF1) instead of accepting everything. The default remains
+        # permissive so the experiment-harness contract tests can still send
+        # the forms the real clone refuses.
+        self.strict = strict
         self._srv = None
         self._thread = None
 
     def start(self) -> None:
         self._srv = _SimTCPServer((self.host, self.port), SimHandler)
+        self._srv.strict = self.strict
         self._thread = threading.Thread(target=self._srv.serve_forever, daemon=True)
         self._thread.start()
 

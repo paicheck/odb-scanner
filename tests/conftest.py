@@ -36,3 +36,29 @@ def cfg():
     """Default config. Callers override the DB path when they need isolation."""
     from config import load_config
     return load_config()
+
+
+@pytest.fixture(autouse=True)
+def _restore_experiment_arms():
+    """Keep the shared experiment-matrix state out of other tests.
+
+    ``tools.experiment_record.ARMS`` is module-global, and
+    tools/diagnose_meb_path.py writes each arm's result back into it. Without
+    this, running the matrix (tests/test_meb_path.py) leaves every arm marked
+    "ran", and a later test that asserts the arms are unrun fails purely
+    because of test order -- which is how a genuine failure can be mistaken for
+    a fixture problem, or hidden entirely. Snapshot and restore around every
+    test so the suite is order-independent (CI also runs it in random order).
+    """
+    try:
+        from tools.experiment_record import ARMS
+    except Exception:  # never let the guard break an unrelated test
+        yield
+        return
+    snapshot = [(arm, arm.actual, arm.interpret) for arm in ARMS]
+    try:
+        yield
+    finally:
+        for arm, actual, interpret in snapshot:
+            arm.actual = actual
+            arm.interpret = interpret

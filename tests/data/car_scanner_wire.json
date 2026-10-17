@@ -1,0 +1,37 @@
+{
+  "_source": "2026-10-15 passive Bluetooth HCI capture of Car Scanner talking to a VW ID.3 (see docs/investigation/meb_gateway_energy_passive_capture_20261015.md and docs/MEB_NO_RESPONSE_HANDOFF.md section 1.3)",
+  "_why": "This is the wire form MEB reads are KNOWN TO WORK with. tests/test_transport_wire_contract.py fails if diagnostic/elm327.py stops reproducing it -- the regression that broke every 29-bit module was a move away from this form, which the tests at the time had baked in instead of checking against the capture.",
+  "_invariant": "Car Scanner never sends ATCAF0 for a working read: the adapter stays in auto-formatting mode (ATCAF1), the request goes out bare, and the adapter adds the ISO-TP PCI byte, header and flow control itself. The 8-byte hand-framed ATCAF0 line, and the 8-digit ATSH a raw 29-bit id would need, are both refused by the clone with '?'.",
+  "29-bit": {
+    "tx29": "0x17FC007B",
+    "rx29": "0x17FE007B",
+    "captured_request": "221E3B",
+    "captured_response": "17FE007B05621E3B0690",
+    "commands_present": [
+      "ATSP7",
+      "ATCP 17",
+      "ATSH FC007B",
+      "ATCRA 17FE007B",
+      "ATFCSH 17FC007B",
+      "ATFCSD 300000",
+      "ATFCSM 1",
+      "ATCAF1"
+    ],
+    "commands_forbidden": ["ATCAF0", "ATFCSM 0"]
+  },
+  "11-bit": {
+    "tx29": "0x00000710",
+    "rx29": "0x0000077A",
+    "captured_request": "222AB2",
+    "commands_present": [
+      "ATSP6",
+      "ATSH 710",
+      "ATFCSH 710",
+      "ATFCSD 300000",
+      "ATFCSM 1",
+      "ATCRA 77A",
+      "ATCAF1"
+    ],
+    "commands_forbidden": ["ATCAF0", "ATFCSM 0"]
+  }
+}

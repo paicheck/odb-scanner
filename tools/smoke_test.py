@@ -155,6 +155,24 @@ def run_adapter_checks(cfg: Config, cycles: int) -> None:
         tx_rows = repo.conn.execute("SELECT count(*) FROM tx_log").fetchone()[0]
         check("tx_log safety manifest written", tx_rows > 0,
               f"{tx_rows} tx_log rows")
+
+        # Every physical MEB module must have answered. The 29-bit modules once
+        # went silent on the car while the simulator -- which accepted the
+        # hand-framed ATCAF0 line the real clone refuses -- kept the rest of
+        # this script green. The simulator now runs clone-strict, so a module
+        # that produced only NULLs fails here instead of on the vehicle.
+        from diagnostic.ecus import ECUS as _ECUS
+        from simulator.vehicle import MEB_MODULES
+        module_ecus = sorted(k for k, s in _ECUS.items()
+                             if s.tx29 is not None and s.tx29 in MEB_MODULES)
+        rows = repo.conn.execute(
+            "SELECT ecu, count(*) AS n FROM measurements "
+            "WHERE value IS NOT NULL GROUP BY ecu").fetchall()
+        got = {r["ecu"]: r["n"] for r in rows}
+        missing = [k for k in module_ecus if not got.get(k)]
+        check("every physical MEB module answered", not missing,
+              f"missing: {missing}" if missing
+              else ", ".join(f"{k}={got[k]}" for k in module_ecus))
     finally:
         col.close()
         repo.close()
@@ -281,7 +299,10 @@ def main() -> int:
 
     print(f"Simulator + scratch DB: {db_path} (tcp://127.0.0.1:{args.port})")
     from simulator.vehicle import SimServer
-    with SimServer("127.0.0.1", args.port):
+    # strict=True: the simulator reproduces the field clone's documented
+    # refusals (8-digit ATSH, ATCAF0, an >7-byte request under ATCAF1), so a
+    # transport regression fails this smoke test rather than only the car.
+    with SimServer("127.0.0.1", args.port, strict=True):
         run_adapter_checks(cfg, args.cycles)
     run_analysis_checks(cfg)
     run_web_checks(cfg)
