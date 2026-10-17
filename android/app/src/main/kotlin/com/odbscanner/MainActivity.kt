@@ -50,11 +50,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val spec = loadSpec()
+        val spec: Spec?
+        val error: String?
+        try {
+            spec = loadSpec()
+            error = null
+        } catch (e: Exception) {
+            spec = null
+            error = "${e.javaClass.simpleName}: ${e.message}"
+        }
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    CollectorScreen(spec)
+                    if (spec != null) CollectorScreen(spec) else ErrorScreen(error ?: "unknown")
                 }
             }
         }
@@ -63,6 +71,18 @@ class MainActivity : ComponentActivity() {
     private fun loadSpec(): Spec = SpecLoader.load(
         assets.open("spec.json").bufferedReader(Charsets.UTF_8).use { it.readText() }
     )
+}
+
+@Composable
+private fun ErrorScreen(message: String) {
+    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+        Text(
+            "Failed to load the diagnostic spec",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.error,
+        )
+        Text(message, style = MaterialTheme.typography.bodyMedium)
+    }
 }
 
 private val BLUETOOTH_PERMISSIONS = arrayOf(
