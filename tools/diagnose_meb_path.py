@@ -9,6 +9,14 @@ Usage:
     python tools/diagnose_meb_path.py
 
 Each experiment tests one hypothesis. Results are printed and logged.
+
+RESOLVED 2026-10-17: the arms below are the historical record of the
+investigation. They test the hand-framed ATCAF0 wire form, which the 2026-10-15
+passive HCI capture of Car Scanner later showed to be wrong for the 29-bit
+modules -- Car Scanner reads them on ATCAF1 with a bare request plus the
+ATFCSH/ATFCSD/ATFCSM 1 preamble (see docs/investigation/
+meb_gateway_energy_passive_capture_20261015.md and diagnostic/elm327.py
+set_module). Re-point the arms at that form before using this against the car.
 """
 
 from __future__ import annotations

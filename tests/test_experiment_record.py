@@ -275,7 +275,11 @@ def test_baseline_config_is_inherited_by_meb_arms():
             continue  # config-only: proves the adapter accepts the header
         assert any("ATSH" in c for c in arm.config), (
             f"{arm.exp_id} has no ATSH: {arm.config}")
-        assert "ATCAF0" in arm.config, f"{arm.exp_id} has no ATCAF0"
+        # This also used to require ATCAF0, because the 29-bit arms were
+        # believed to need a hand-framed 8-byte line. The 2026-10-15 passive
+        # capture of Car Scanner disproved that -- it reads the 29-bit BMS on
+        # ATCAF1 with a bare request -- so the framing is no longer asserted.
+        # The arms stay as the record of what was actually run.
 
 
 def test_11bit_arms_declare_their_response_header():

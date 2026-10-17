@@ -306,10 +306,10 @@ def test_close_clears_the_addressing_state_it_describes():
     against a closed transport. _base_init already resets them; close() is the
     other place that has to.
 
-    _caf is cleared to None ("unknown"), not 0 ("auto-formatting is off"):
+    _caf is cleared to None ("unknown"), not 1 ("auto-formatting is on"):
     nothing is known about an adapter that has been closed, and claiming the
-    mode is already off is what makes the next set_module() skip the ATCAF0
-    that a hand-framed 8-byte module read depends on.
+    mode is already on is what makes the next set_module() skip the ATCAF1 and
+    the module preamble that a bare module read depends on.
     """
     from diagnostic.elm327 import Elm327Transport
 
@@ -514,8 +514,10 @@ def test_set_module_switches_header_and_caf_mode():
 
     assert t.set_module(0x17FC007B) is True
     assert "ATSH FC007B" in stub.sent
-    # Module reads are hand-framed (ATCAF0); the ELM must not re-frame them.
-    assert "ATCAF0" in stub.sent
+    # Module reads stay on ATCAF1: the request goes out bare and the adapter
+    # frames it, exactly like the 11-bit gateway.
+    assert "ATCAF1" in stub.sent
+    assert "ATCAF0" not in stub.sent
 
     stub.sent.clear()
     assert t.set_module(0x17FC007B) is True
@@ -524,7 +526,10 @@ def test_set_module_switches_header_and_caf_mode():
     stub.sent.clear()
     assert t.set_module(None) is True
     assert "ATSH DB33F1" in stub.sent
-    assert "ATCAF1" in stub.sent, "OBD-II requests need auto-formatting back on"
+    assert "ATFCSM 0" in stub.sent, "functional reads drop user flow control"
+    # ATCAF1 is already on from the module read, so it is not re-sent; the
+    # state is what the next OBD-II request depends on.
+    assert t.auto_formatting is True, "OBD-II requests need auto-formatting on"
 
 
 def test_set_module_switches_protocol_for_11bit_modules():
@@ -562,19 +567,15 @@ def test_set_module_switches_protocol_for_11bit_modules():
     assert "ATSH DB33F1" in stub.sent
 
 
-def test_protocol_switch_reasserts_auto_formatting_mode():
-    """ATSP re-inits the CAN layer, so ATCAF0 cannot be assumed to survive it.
+def test_protocol_switch_reasserts_module_preamble():
+    """ATSP re-inits the CAN layer, so the module preamble cannot be assumed
+    to survive it.
 
-    Module reads are hand-framed 8-byte lines ('03 22 xxxx 55 55 55 55'), legal
-    only with auto-formatting OFF -- under ATCAF1 the payload limit is 7 and the
-    ELM327 answers '?' instead of transmitting. The transport used to cache
-    _caf across a protocol change and skip re-sending ATCAF0, so every module
-    read issued after an 11-bit detour went out into that state.
-
-    '?' is the adapter refusing the command, not the car staying silent. The
-    real-car tx_log shows exactly that split: bat_mgmt, which is never preceded
-    by a protocol switch, answered NO DATA 472 times, while energy, climate and
-    veh_info -- all reached after an ATSP6 -- answered '?'.
+    Every physical module is read with auto-formatting ON plus the flow-control
+    preamble (ATFCSH/ATFCSD/ATFCSM 1). The transport used to cache _caf across a
+    protocol change and skip re-sending the setup, so a module read issued after
+    an 11-bit detour could go out against an adapter whose CAN layer had just
+    been re-initialised underneath it.
     """
     stub = _StubTransport()
     from diagnostic.elm327 import Elm327Transport
@@ -583,18 +584,18 @@ def test_protocol_switch_reasserts_auto_formatting_mode():
     t.meb_addressing = True
     t._meb_module = None
 
-    assert t.set_module(0x17FC007B) is True       # 29-bit module, protocol 7
-    assert "ATCAF0" in stub.sent
-    assert t.set_module(0x00000710) is True       # 11-bit module, forces ATSP6
+    assert t.set_module(0x17FC007B, 0x17FE007B) is True   # 29-bit, protocol 7
+    assert "ATCAF1" in stub.sent
+    assert t.set_module(0x00000710, 0x0000077A) is True   # 11-bit, forces ATSP6
 
     stub.sent.clear()
-    assert t.set_module(0x17FC007B) is True       # back across a switch
+    assert t.set_module(0x17FC007B, 0x17FE007B) is True   # back across a switch
     assert "ATSP7" in stub.sent, "test double did not exercise a switch"
-    assert "ATCAF0" in stub.sent, (
-        "auto-formatting was not re-asserted after ATSP: the next hand-framed "
-        "8-byte module read can be refused with '?' rather than transmitted")
-    assert stub.sent.index("ATCAF0") > stub.sent.index("ATSP7"), (
-        "ATCAF0 must be sent after the ATSP that may have reset it")
+    for cmd in ("ATFCSH 17FC007B", "ATFCSD 300000", "ATFCSM 1", "ATCAF1"):
+        assert cmd in stub.sent, (
+            f"module preamble not re-asserted after ATSP: {cmd} missing")
+    assert stub.sent.index("ATCAF1") > stub.sent.index("ATSP7"), (
+        "ATCAF1 must be sent after the ATSP that may have reset it")
 
 
 def test_gateway_uses_auto_formatting_not_hand_framing():
@@ -638,10 +639,15 @@ def test_transmit_sends_gateway_did_bare():
         "gateway request must not be hand-framed")
 
 
-def test_29bit_module_resets_flow_control_after_11bit():
-    """Switching back to a 29-bit module must clear the user-defined flow
-    control an 11-bit module set (ATFCSM 1), or the clone refuses the 29-bit
-    hand-framed request with '?' (the eldrive/veh_info symptom)."""
+def test_29bit_module_keeps_car_scanner_flow_control():
+    """Switching to a 29-bit module must keep the Car Scanner preamble.
+
+    The 2026-10-15 passive capture shows Car Scanner reading the BMS with
+    ATFCSM 1 and no ATCAF0, sending a bare request -- not by resetting flow
+    control to default. An earlier revision did the opposite (ATFCSM 0 +
+    ATCAF0 + hand-framed 8-byte line) and every 29-bit read was refused with
+    '?' -- the bat_mgmt/eldrive/veh_info symptom.
+    """
     stub = _StubTransport()
     from diagnostic.elm327 import Elm327Transport
     t = Elm327Transport(port="TEST")
@@ -652,10 +658,14 @@ def test_29bit_module_resets_flow_control_after_11bit():
     assert t.set_module(0x746, 0x7B0) is True
     assert "ATFCSM 1" in stub.sent
 
-    # Back to 29-bit: flow control must be reset.
+    # Back to 29-bit: the same preamble, aimed at the new module.
     stub.sent.clear()
     assert t.set_module(0x17FC007C, 0x17FE007C) is True
-    assert "ATFCSM 0" in stub.sent, "29-bit module must reset flow control"
+    for cmd in ("ATFCSH 17FC007C", "ATFCSD 300000", "ATFCSM 1", "ATCAF1",
+                "ATCRA 17FE007C"):
+        assert cmd in stub.sent, cmd
+    assert "ATFCSM 0" not in stub.sent
+    assert "ATCAF0" not in stub.sent
 
 
 def test_meb_negotiation_does_not_claim_success_after_a_refused_restore(caplog):
@@ -695,8 +705,9 @@ def test_set_module_refusal_resets_adapter_and_reports_failure():
     assert t._meb_module is None
 
 
-def test_meb_did_read_routes_to_module_and_hand_frames_it():
-    """A read for an ECU with a tx29 must go out as a CAF0 single frame."""
+def test_meb_did_read_routes_to_module_and_sends_it_bare():
+    """A read for an ECU with a tx29 must go out as a bare request to the
+    module: the adapter is left on ATCAF1 and frames it."""
     stub = _StubTransport(reply=["17FE007B0662028CCBAAAA"])
     from diagnostic.elm327 import Elm327Transport
     from diagnostic.connection import DiagnosticConnection
@@ -712,7 +723,7 @@ def test_meb_did_read_routes_to_module_and_hand_frames_it():
     # Single frame: 62 <DID> <data...>, PCI length 0x06 in front of it.
     assert raw == bytes.fromhex("CBAAAA")
     on_wire = [c for c in stub.sent if not c.startswith("AT")]
-    assert on_wire == ["0322028C55555555"], on_wire
+    assert on_wire == ["22028C"], on_wire
 
 
 def test_functional_read_switches_back_off_the_module():
@@ -2146,11 +2157,12 @@ def test_the_validator_cannot_approve_a_request_one_frame_cannot_hold():
 def test_the_tx_log_records_the_bytes_that_went_on_the_wire():
     """tx_log is the safety manifest, so it must describe what was sent.
 
-    _transmit() logged `hexcmd` while transmitting `wire`. Those are identical
-    for a functional read, but an MEB-addressed request is reframed into a
-    padded ISO-TP single frame (length byte + payload + 0x55 filler) before it
-    goes out, so the manifest understated the transmission for every MEB read
-    -- which is most of the interesting ones.
+    _transmit() logged `hexcmd` while transmitting `wire`. Those are the same
+    bytes for every read now -- MEB requests go out bare, with the adapter
+    doing the framing -- but they were once different for an MEB read, which
+    was reframed into a padded ISO-TP single frame before it went out. The
+    assertion below pins the manifest payload to what the link actually
+    received, so the two can never drift apart again.
     """
     from diagnostic.connection import DiagnosticConnection
     from diagnostic.ecus import ECUS
@@ -2184,9 +2196,9 @@ def test_the_tx_log_records_the_bytes_that_went_on_the_wire():
     sent = tx[0]["payload"]
     assert sent == link.sent[0], (
         f"manifest records {sent!r} but {link.sent[0]!r} was transmitted")
-    # It is the framed form, not the bare request: length byte then payload.
-    assert sent.startswith("03222AB7"), sent
-    assert sent != "222AB7", "the bare request was logged, not the wire bytes"
+    # The bare request is what goes on the wire: the adapter is left on ATCAF1
+    # and adds the ISO-TP PCI byte and header itself.
+    assert sent == "222AB7", sent
 
 
 def test_a_database_error_does_not_end_collection(tmp_path, monkeypatch):

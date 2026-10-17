@@ -57,23 +57,27 @@ def _transport_quirks(tx29: int | None) -> dict:
     """The per-module ELM327 setup this clone needs (see elm327.py).
 
     The rules are empirical, established against the v1.5 clone:
-      * 11-bit modules (energy 0x710, climate 0x746, gps 0x767) are read with
+      * every physical module -- 11-bit (energy 0x710, climate 0x746, gps
+        0x767) and 29-bit (BMS, DC/DC, ...) alike -- is read with
         auto-formatting ON and a bare request plus the ISO-TP flow-control
-        preamble (ATFCSH/ATFCSD/ATFCSM 1) -- the 8-byte hand-framed CAF0 line
-        is refused with '?' under ATSP6 (Track B).
-      * 29-bit modules are hand-framed (ATCAF0) with the receive filter pinned
-        (ATCRA) and flow control reset to default (ATFCSM 0).
-      * functional reads use auto-formatting and no physical header.
+        preamble (ATFCSH/ATFCSD/ATFCSM 1) and the receive filter pinned
+        (ATCRA). This is Car Scanner's wire form, confirmed by a passive HCI
+        capture on 2026-10-15 (docs/investigation/
+        meb_gateway_energy_passive_capture_20261015.md). The 8-byte
+        hand-framed CAF0 line is refused with '?' on this clone, under ATSP6
+        and ATSP7 alike.
+      * functional reads use auto-formatting, no physical header and no
+        flow-control preamble.
     """
     mode = _addr_mode(tx29)
     if mode == "11-bit":
         return {"auto_formatting": True, "flow_control": True,
-                "receive_filter": True, "hand_frame": False}
+                "receive_filter": True}
     if mode == "29-bit":
-        return {"auto_formatting": False, "flow_control": False,
-                "receive_filter": True, "hand_frame": True}
+        return {"auto_formatting": True, "flow_control": True,
+                "receive_filter": True}
     return {"auto_formatting": True, "flow_control": False,
-            "receive_filter": False, "hand_frame": False}
+            "receive_filter": False}
 
 
 def _hex(v: int | None) -> str | None:

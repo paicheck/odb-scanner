@@ -16,13 +16,12 @@ interface Elm327Port {
  *
  * The quirks are empirical and must not be "simplified":
  *
- *   * 11-bit modules (energy/climate/gps) are read with auto-formatting ON and
- *     a bare request plus the ISO-TP flow-control preamble
- *     (ATFCSH/ATFCSD/ATFCSM 1). The 8-byte hand-framed ATCAF0 line is refused
- *     with '?' under ATSP6 (Track B).
- *   * 29-bit modules are hand-framed (ATCAF0) with the receive filter pinned
- *     (ATCRA) and flow control reset (ATFCSM 0), otherwise the next 29-bit read
- *     after an 11-bit one is refused.
+ *   * every physical module (11-bit energy/climate/gps and 29-bit BMS/DC-DC
+ *     alike) is read with auto-formatting ON and a bare request, plus the
+ *     ISO-TP flow-control preamble (ATFCSH/ATFCSD/ATFCSM 1) and the receive
+ *     filter pinned (ATCRA). This is Car Scanner's wire form, confirmed by a
+ *     passive HCI capture on 2026-10-15. The 8-byte hand-framed ATCAF0 line
+ *     is refused with '?' by this clone, under ATSP6 and ATSP7 alike.
  *   * functional reads use auto-formatting and the functional header DB33F1.
  *
  * [port] is injected so this class is unit-testable without Bluetooth.
@@ -77,9 +76,16 @@ class Elm327Protocol(private val port: Elm327Port) {
             "ATCP ${byteHex((ecu.tx29 shr 24) and 0xFF)}",
             "ATSH ${sixHex(ecu.tx29 and 0xFFFFFF)}",
         )) port.transact(cmd)
-        port.transact("ATFCSM 0")           // reset the 11-bit flow control
-        port.transact("ATCAF0")
         ecu.rx29?.let { port.transact("ATCRA ${eightHex(it)}") }
+        // Car Scanner's 29-bit preamble (2026-10-15 capture): the flow-control
+        // header is the full 8-digit request id, and auto-formatting stays ON,
+        // so the request goes out bare. No ATCAF0 and no ATFCSM 0.
+        for (cmd in listOf(
+            "ATFCSH ${eightHex(ecu.tx29)}",
+            "ATFCSD 300000",
+            "ATFCSM 1",
+            "ATCAF1",
+        )) port.transact(cmd)
     }
 
     private fun restoreFunctional() {
@@ -92,18 +98,13 @@ class Elm327Protocol(private val port: Elm327Port) {
     /**
      * Send one read request. [body] is the bare UDS request hex (e.g. "222AB2").
      * Returns the raw response lines (headers on, ISO-TP PCI included).
+     *
+     * The request always goes out bare: the adapter is left in ATCAF1 and adds
+     * the ISO-TP PCI byte, header and flow control itself.
      */
     fun sendRead(body: String): List<String> {
         require(body.length % 2 == 0 && body.length / 2 <= 7)
-        val ecu = currentEcu
-        val wire = if (ecu != null && ecu.handFrame) handFrame(body) else body
-        return port.transact(wire)
-    }
-
-    private fun handFrame(body: String): String {
-        val len = body.length / 2
-        val padded = String.format("%02X%s", len, body) + "55".repeat(8)
-        return padded.take(16)
+        return port.transact(body)
     }
 
     private fun threeHex(v: Int) = v.toString(16).uppercase().padStart(3, '0')

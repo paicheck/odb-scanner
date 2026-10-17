@@ -337,6 +337,27 @@ ATCRA77A                 # receive filter = response id 0x77A
 **Gateway is `0x710` / `0x77A`** — confirmed both here and, independently, by the
 `BCM` field of the 0x2AB8 / 0x2AB2 records (§5.2).
 
+**The 29-bit modules use the same form (2026-10-15 capture).** The same capture's
+29-bit phase is, verbatim:
+
+```
+ATSHFC007B               # request id 0x17FC007B
+ATSP7                    # ISO 15765-4 CAN 29-bit
+ATCP17                   # priority byte 0x17
+ATCRA17FE007B            # receive filter = response id
+ATFCSH17FC007B           # flow-control header = the FULL 8-digit request id
+ATFCSD300000             # flow control: BS=0, STmin=0
+ATFCSM1                  # user-defined flow control
+-- then --
+221E3B                   # bare ReadDataByIdentifier -> 17FE007B05621E3B0690
+```
+
+Note two things the code got wrong for years: the flow-control header is the
+**8-digit** request id (`ATFCSH17FC007B` — accepted, even though an 8-digit
+`ATSH` is refused), and there is **no `ATCAF0`** — the request is auto-formatted
+by the adapter. `diagnostic/elm327.py` `set_module()` now implements exactly
+this for both addressing widths.
+
 ---
 
 ## 8. Integration into odb_scanner
@@ -371,20 +392,21 @@ ECUSpec("fresh_air_blower", "Fresh air blower front", 0x0000, 0x0000,
 
 ### 8.2 Transport Changes (`diagnostic/elm327.py`)
 
-Add a method to send Car Scanner's exact preamble for gateway:
+**Implemented.** `set_module(tx29, rx29)` sends Car Scanner's preamble for every
+physical module — 11-bit and 29-bit alike — then leaves the request bare:
 
 ```python
-def set_module_car_scanner_gateway(self):
-    """Configure for MEB Gateway (19.Gate) per the profiles7.db BCM field."""
-    self.send_command("ATSP6")
-    self.send_command("ATFCSH 710")
-    self.send_command("ATFCSD 300000")
-    self.send_command("ATFCSM 1")
-    self.send_command("ATCRA 77A")
-    # Now ready for 22 2AB8 / 22 2AB2
+# 11-bit (energy 0x710, climate 0x746, gps 0x767)
+ATSP6; ATSH 710; ATFCSH 710; ATFCSD 300000; ATFCSM 1; ATCRA 77A; ATCAF1
+# 29-bit (BMS 0x17FC007B, DC/DC 0x17FC00B9, ...)
+ATSP7; ATCP 17; ATSH FC007B; ATCRA 17FE007B;
+ATFCSH 17FC007B; ATFCSD 300000; ATFCSM 1; ATCAF1
+# then a bare '22 XXXX' -- the adapter frames it
 ```
 
-Or generalize `set_module(tx29, rx29)` to accept a "preamble" template.
+The earlier sketch here (a gateway-only `set_module_car_scanner_gateway`) was
+generalised, and the `ATCAF0` hand-framed line was removed entirely: the clone
+refuses it with `?` (see `docs/MEB_NO_RESPONSE_HANDOFF.md` §1.2, §1.3).
 
 ### 8.3 Decoder Additions (`decoders/meb.py`)
 

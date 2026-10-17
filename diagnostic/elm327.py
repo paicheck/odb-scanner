@@ -95,9 +95,10 @@ class Elm327Transport(OBDInterface):
     def auto_formatting(self) -> bool:
         """True when the adapter is in ATCAF1 (auto-formatting ON).
 
-        _transmit uses this to decide whether a module request goes out as a
-        bare request (the adapter adds the ISO-TP PCI byte, header and flow
-        control) or as the hand-framed single frame ATCAF0 needs.
+        Every MEB module -- the 11-bit gateway and the 29-bit BMS/DC-DC alike --
+        is read in ATCAF1, so requests go out bare and the adapter adds the
+        ISO-TP PCI byte, header and flow control. This reports that state; the
+        request path no longer branches on it.
         """
         return self._caf == 1
 
@@ -565,9 +566,13 @@ class Elm327Transport(OBDInterface):
     def set_module(self, tx29: int | None, rx29: int | None = None) -> bool:
         """Switch addressing between functional (None) and one MEB module.
 
-        Also flips CAN auto-formatting: module reads use ATCAF0 with a
-        hand-built ISO-TP single frame (ABRP's proven wire form), while
-        functional OBD-II stays on ATCAF1 where bare '0100' is expected.
+        Module reads keep CAN auto-formatting ON: the request goes out bare
+        ('22 XXXX') and the adapter adds the ISO-TP PCI byte, header and flow
+        control. This is Car Scanner's wire form for both the 11-bit gateway and
+        the 29-bit BMS/DC-DC modules (2026-10-15 passive HCI capture). The
+        hand-built ATCAF0 8-byte line this transport once used for 29-bit
+        modules is refused by this clone with '?', which is why no MEB read now
+        hand-frames. Functional OBD-II also stays on ATCAF1 with bare '0100'.
 
         `tx29` may be either MEB form: a 29-bit id (0x17FC007B) or an 11-bit
         one (0x710). Both are programmed as ATCP <priority> + ATSH <6 hex
@@ -579,12 +584,9 @@ class Elm327Transport(OBDInterface):
         accepts functional responses (18DAF1xx) but silently drops MEB
         module responses (17FExxxx), so a module read that sets no filter
         times out with NO DATA even though the request was transmitted
-        correctly. The car proved this decisively -- EXP-15 in the 2026-10-12
-        matrix was the first BMS answer this project has had:
-        'ATCRA 17FE007B' then '03 22 02 8C 55 x8' returned
-        '17FE007B0462028CB3' (SoC 0xB3 = 71.6 %). Car Scanner does the same
-        per-PID start commands (ATCRA7E8,ATFCSH7E0,...), which is the one
-        thing it does that this transport did not.
+        correctly. Car Scanner pins the same per-module filter; the 2026-10-15
+        capture shows it reading the BMS with 'ATCRA17FE007B' plus a bare
+        '221E3B', answered '17FE007B05621E3B0690'.
 
         Returns False when the switch was refused and the caller should
         fall back to functional addressing.
@@ -603,12 +605,12 @@ class Elm327Transport(OBDInterface):
         want_proto = "6" if tx29 is not None and tx29 <= 0x7FF else PINNED_PROTOCOL
         # The CAF check belongs in this guard: being aimed at the right module
         # on the right protocol is not enough if auto-formatting is not in the
-        # mode the hand-framed request needs. _set_protocol() clears _caf to
-        # None whenever it switches, so this correctly misses the cache then.
+        # mode the bare request needs. _set_protocol() clears _caf to None
+        # whenever it switches, so this correctly misses the cache then.
         # The filter belongs here for the same reason: a module switch that
         # leaves the previous module's response id pinned misses the new one.
         if (tx29 == self._meb_module and self._proto == want_proto
-                and self._caf == 0 and self._atcra == rx29):
+                and self._caf == 1 and self._atcra == rx29):
             return True
         if tx29 is None:
             if not self._restore_functional():
@@ -629,24 +631,30 @@ class Elm327Transport(OBDInterface):
         if any("?" in r for r in resp):
             log.warning("Adapter refused module header %08X", tx29)
             return self._recover()
-        # Reset the user-defined flow control an 11-bit module left behind
-        # (ATFCSM 1): with it still set, the clone refuses the 29-bit
-        # hand-framed request with '?' -- the eldrive/veh_info symptom. This is
-        # non-fatal: a clone that rejects the reset may still answer.
-        fc = self.send_command("ATFCSM 0")
-        if any("?" in r for r in fc):
-            log.warning("Adapter refused ATFCSM 0 (flow-control reset)")
-        if self._caf != 0:
-            self.send_command("ATCAF0")
-            self._caf = 0
+        # Car Scanner's 29-bit preamble, captured 2026-10-15. It configures the
+        # BMS/DC-DC modules exactly like the 11-bit gateway -- auto-formatting
+        # ON with a bare request -- not as a hand-built ATCAF0 frame:
+        #   ATSHFC007B / ATSP7 / ATCP17 / ATCRA17FE007B /
+        #   ATFCSH17FC007B / ATFCSD300000 / ATFCSM1  ->  bare '221E3B'
+        # answered '17FE007B05621E3B0690'. Two details contradict the old
+        # hand-framed path: ATFCSM stays 1 (this clone reads 29-bit modules with
+        # user-defined flow control ON) and no ATCAF0 is ever sent, so the
+        # adapter frames the request. The flow-control header is the full
+        # 8-digit request id; the clone accepts ATFCSH at that width even though
+        # it refuses an 8-digit ATSH.
         if rx29 is not None:
             resp = self.send_command(f"ATCRA {rx29:08X}")
             if any("?" in r for r in resp):
                 log.warning("Adapter refused ATCRA %08X", rx29)
                 return self._recover()
-            self._atcra = rx29
-        else:
-            self._atcra = None
+        self._atcra = rx29
+        for cmd in (f"ATFCSH {tx29:08X}", "ATFCSD 300000", "ATFCSM 1",
+                    "ATCAF1"):
+            resp = self.send_command(cmd)
+            if any("?" in r for r in resp):
+                log.warning("Adapter refused %s for module %08X", cmd, tx29)
+                return self._recover()
+        self._caf = 1
         self._meb_module = tx29
         return True
 
@@ -668,9 +676,9 @@ class Elm327Transport(OBDInterface):
 
         After this, the adapter is ready for a bare request: '22 XXXX'. The
         adapter adds the ISO-TP PCI byte, header and flow control itself. The
-        8-byte hand-framed CAF0 line this transport uses for 29-bit modules is
-        refused ('?') under ATSP6 on this clone (docs/MEB_NO_RESPONSE_HANDOFF.md
-        Track B), so the 11-bit modules need this instead.
+        8-byte hand-framed CAF0 line is refused ('?') on this clone, under
+        ATSP6 and ATSP7 alike, so every MEB module uses this form
+        (docs/MEB_NO_RESPONSE_HANDOFF.md Track B).
 
         Returns False if any command is refused by the adapter.
         """

@@ -10,9 +10,8 @@
       "rx": "0x7ED",
       "rx29": "0x17FE007B",
       "transport": {
-        "auto_formatting": false,
-        "flow_control": false,
-        "hand_frame": true,
+        "auto_formatting": true,
+        "flow_control": true,
         "receive_filter": true
       },
       "tx": "0x7E5",
@@ -29,7 +28,6 @@
       "transport": {
         "auto_formatting": true,
         "flow_control": false,
-        "hand_frame": false,
         "receive_filter": false
       },
       "tx": "0x710",
@@ -46,7 +44,6 @@
       "transport": {
         "auto_formatting": true,
         "flow_control": false,
-        "hand_frame": false,
         "receive_filter": false
       },
       "tx": "0x765",
@@ -63,7 +60,6 @@
       "transport": {
         "auto_formatting": true,
         "flow_control": false,
-        "hand_frame": false,
         "receive_filter": false
       },
       "tx": "0x744",
@@ -80,7 +76,6 @@
       "transport": {
         "auto_formatting": true,
         "flow_control": false,
-        "hand_frame": false,
         "receive_filter": false
       },
       "tx": "0x7E0",
@@ -97,7 +92,6 @@
       "transport": {
         "auto_formatting": true,
         "flow_control": false,
-        "hand_frame": false,
         "receive_filter": false
       },
       "tx": "0x7E6",
@@ -114,7 +108,6 @@
       "transport": {
         "auto_formatting": true,
         "flow_control": false,
-        "hand_frame": false,
         "receive_filter": false
       },
       "tx": "0x773",
@@ -131,7 +124,6 @@
       "transport": {
         "auto_formatting": true,
         "flow_control": false,
-        "hand_frame": false,
         "receive_filter": false
       },
       "tx": "0x713",
@@ -146,9 +138,8 @@
       "rx": "0x777",
       "rx29": "0x17FE00B9",
       "transport": {
-        "auto_formatting": false,
-        "flow_control": false,
-        "hand_frame": true,
+        "auto_formatting": true,
+        "flow_control": true,
         "receive_filter": true
       },
       "tx": "0x777",
@@ -165,7 +156,6 @@
       "transport": {
         "auto_formatting": true,
         "flow_control": true,
-        "hand_frame": false,
         "receive_filter": true
       },
       "tx": "0x710",
@@ -182,7 +172,6 @@
       "transport": {
         "auto_formatting": true,
         "flow_control": true,
-        "hand_frame": false,
         "receive_filter": true
       },
       "tx": "0x746",
@@ -197,9 +186,8 @@
       "rx": "0x76",
       "rx29": "0x17FE0076",
       "transport": {
-        "auto_formatting": false,
-        "flow_control": false,
-        "hand_frame": true,
+        "auto_formatting": true,
+        "flow_control": true,
         "receive_filter": true
       },
       "tx": "0x76",
@@ -214,9 +202,8 @@
       "rx": "0x7EE",
       "rx29": "0x17FE007C",
       "transport": {
-        "auto_formatting": false,
-        "flow_control": false,
-        "hand_frame": true,
+        "auto_formatting": true,
+        "flow_control": true,
         "receive_filter": true
       },
       "tx": "0x7E6",
@@ -233,14 +220,13 @@
       "transport": {
         "auto_formatting": true,
         "flow_control": true,
-        "hand_frame": false,
         "receive_filter": true
       },
       "tx": "0x767",
       "tx29": "0x767"
     }
   ],
-  "generated_at": "2026-10-17T12:03:57+00:00",
+  "generated_at": "2026-10-17T17:35:50+00:00",
   "profiles": {
     "eup": {
       "cell_voltages": null,

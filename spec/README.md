@@ -16,10 +16,10 @@ python tools/export_spec.py            # writes spec/odb_scanner.json
   read-only layer enforces this verbatim.**
 * `ecus` — every ECU (`diagnostic/ecus.py`) with its CAN ids, the 29-bit module
   address (`tx29`/`rx29`), and the transport quirks the v1.5 clone needs
-  (`auto_formatting`, `flow_control`, `receive_filter`, `hand_frame`), derived
+  (`auto_formatting`, `flow_control`, `receive_filter`), derived
   from the addressing mode:
-  * `11-bit` → `ATCAF1` + bare request + `ATFCSH/ATFCSD/ATFCSM 1`
-  * `29-bit` → `ATCAF0` hand-framed + `ATCRA` + `ATFCSM 0`
+  * `11-bit` → `ATCAF1` + bare request + `ATFCSH/ATFCSD/ATFCSM 1` + `ATCRA`
+  * `29-bit` → `ATCAF1` + bare request + `ATFCSH/ATFCSD/ATFCSM 1` + `ATCRA`
   * `functional` → `ATCAF1` + functional header
 * `profiles.<p>.measurements` — the DID map. Each entry carries `decode`, one of:
   * `{"kind": "scalar", offset, length, byte_order, signed, scale, divisor,

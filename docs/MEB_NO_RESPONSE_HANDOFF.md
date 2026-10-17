@@ -118,12 +118,47 @@ hand-framing.
 from `refused` to `responder`, and `0x2AB2` answered `62 2A B2 04 28 04 00`
 (53,200 Wh). `gps` answered NRC `0x78` (response-pending), i.e. reachable.
 
-**Knock-on quirk (also fixed).** The 11-bit sequence leaves `ATFCSM 1`
-(user-defined flow control) set. On this clone that leftover state makes the
-next **29-bit** hand-framed request be refused with `?` — which is why `veh_info`
-and `eldrive` (29-bit modules polled *after* the 11-bit block) failed. `set_module()`
-and `_restore_functional()` now send `ATFCSM 0` when switching back to 29-bit or
-functional addressing. (Not yet re-verified on the car as of this note.)
+**Knock-on quirk — superseded (17 Oct, see §1.3).** This first blamed the
+leftover `ATFCSM 1` for the 29-bit `?` refusals, and "fixed" it by sending
+`ATFCSM 0` on the way back to 29-bit. That was the wrong cause: the 29-bit
+refusals were the hand-framed `ATCAF0` *data line*, which Car Scanner never
+sends. The `ATFCSM 0` reset has been removed; every module now uses Car
+Scanner's `ATFCSM 1` + bare-request form.
+
+---
+
+## 1.3 The 29-bit modules — same form, not a separate one (2026-10-17)
+
+The 11-bit fix generalises: **every** MEB module is read with Car Scanner's
+`ATCAF1` + bare-request form. The 29-bit modules (BMS, DC/DC, charger, drive,
+vehicle-info) had been sent as a hand-built `ATCAF0` 8-byte frame
+(`03 22 02 8C 55 55 55 55`), which this clone refuses with `?` — that refusal
+*is* the "29-bit modules return nothing" symptom (bat_mgmt 0/822 on 17 Oct,
+`eldrive`/`veh_info`/`dcdc`/`chg` likewise).
+
+**Evidence.** The same 2026-10-15 passive HCI capture that resolved Track B also
+contains Car Scanner's 29-bit phase, configured identically to the 11-bit one:
+
+```
+ATSHFC007B → ATSP7 → ATCP17 → ATCRA17FE007B →
+ATFCSH17FC007B → ATFCSD300000 → ATFCSM1      →   bare '221E3B'
+```
+
+answered `17FE007B05621E3B0690` (pack voltage `06 90`). The app never sends
+`ATCAF0` for a working read, and it *keeps* `ATFCSM 1`. Two details contradicted
+the old path: the flow-control header is the **full 8-digit request id**
+(`ATFCSH17FC007B` — accepted, even though an 8-digit `ATSH` is refused), and
+auto-formatting stays **on**, so the request goes out bare and the adapter adds
+the ISO-TP PCI byte, header and flow control.
+
+**Fix.** `set_module()`'s 29-bit branch now sends
+`ATCP` / `ATSH` / `ATCRA` / `ATFCSH <tx29>` / `ATFCSD 300000` / `ATFCSM 1` /
+`ATCAF1` and leaves the request bare; `_transmit()` no longer hand-frames
+anything. The hand-framed form and the `ATFCSM 0` reset are both gone.
+
+**Not yet re-verified on the car** — the adapter was out of range when the fix
+landed. Verification is one collector cycle: `bat_mgmt`, `eldrive`, `veh_info`,
+`dcdc` and `chg` should return data instead of `?`.
 
 ---
 
@@ -290,9 +325,10 @@ which keeps suppressing cell collection even if reads start working mid-run.
 ## 6. Track B — the `?` refusals (11-bit modules)
 
 > **RESOLVED 2026-10-16.** The cause is the `ATCAF0` hand-framed 8-byte line,
-> which the clone refuses under `ATSP6`. Car Scanner uses `ATCAF1` + a bare
-> request + the flow-control preamble. Fix and evidence in §1.2. The analysis
-> below is retained as the record that led there.
+> which the clone refuses under `ATSP6` — and, as found on 17 Oct, under `ATSP7`
+> too. Car Scanner uses `ATCAF1` + a bare request + the flow-control preamble for
+> every module. Fix and evidence in §1.2 and §1.3. The analysis below is retained
+> as the record that led there.
 
 **The 2026-10-13 car run refuted the receive-filter theory for Track B.** With
 the Veepeak awake and ignition on, EXP-18 (energy + `ATCRA 0000077A`) and EXP-19
@@ -401,13 +437,12 @@ Expanded per-arm evidence from the 13 Oct run lives in the local (gitignored)
 4. Is a per-module session required despite evDash/ABRP not sending one? (EXP-7
    falsifies the `10 03` theory if a `10 01` arm answers.)
 5. **Does the collector recover 29-bit framing after reading an 11-bit module?**
-   — **Root cause found (16 Oct).** The 11-bit sequence leaves `ATFCSM 1`
-   (user-defined flow control) set, and that leftover state makes the clone
-   refuse the next 29-bit `ATCAF0` hand-framed request with `?` — observed as
-   `veh_info`/`eldrive` refusals (the BMS was unaffected only because it is
-   polled before the 11-bit block). Fix: `set_module()` and
-   `_restore_functional()` send `ATFCSM 0` when switching back to 29-bit or
-   functional. (Not yet re-verified on the car as of this note.)
+   — **Resolved (17 Oct).** There was no framing to "recover": the 29-bit modules
+   were being sent a hand-framed `ATCAF0` line, which this clone refuses with `?`
+   (the `veh_info`/`eldrive`/`bat_mgmt` symptom). Every module now uses Car
+   Scanner's uniform `ATCAF1` + bare-request form, so the 11-bit→29-bit
+   transition no longer changes the framing at all. See §1.3. (Not yet
+   re-verified on the car.)
 6. Operational: after the 12 Oct re-pair Windows exposes **two** outgoing SPP ports
    (`COM3`, `COM4`, both "Standard Serial over Bluetooth link"). Prove the live port
    (`discover_adapters.py`, then per-port `ATI`) before any car work. (On 13 Oct

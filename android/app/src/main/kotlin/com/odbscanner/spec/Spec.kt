@@ -43,7 +43,6 @@ data class EcuSpec(
     val autoFormatting: Boolean,
     val flowControl: Boolean,
     val receiveFilter: Boolean,
-    val handFrame: Boolean,
 )
 
 data class MeasurementSpec(
@@ -157,7 +156,6 @@ object SpecLoader {
                     autoFormatting = t.getBoolean("auto_formatting"),
                     flowControl = t.getBoolean("flow_control"),
                     receiveFilter = t.getBoolean("receive_filter"),
-                    handFrame = t.getBoolean("hand_frame"),
                 )
             }.associateBy { it.key }
         }

@@ -45,46 +45,28 @@ class DiagnosticConnection:
         # Addressing: functional by default (see Elm327Transport.set_header --
         # field clones refuse 29-bit headers outright). When the transport
         # negotiated VAG MEB addressing AND the ECU carries a module address,
-        # the request is sent physically to that module instead: ATCP/ATSH
-        # switch plus an ATCAF0 ISO-TP frame built by hand. Functional OBD-II
-        # reads switch back and stay on bare '0100'-style requests.
+        # the request is sent physically to that module instead: ATCP/ATSH plus
+        # the module's response filter. Every MEB module -- the 11-bit gateway
+        # and the 29-bit BMS/DC-DC alike -- is read with auto-formatting ON, so
+        # the request goes out bare and the adapter adds the ISO-TP PCI byte,
+        # header and flow control itself. That is Car Scanner's wire form
+        # (2026-10-15 passive capture); the hand-built ATCAF0 8-byte line this
+        # used for 29-bit modules is refused by the clone with '?'. Functional
+        # OBD-II reads switch back and stay on bare '0100'-style requests.
         set_module = getattr(self.t, "set_module", None)
         target = getattr(ecu, "tx29", None) if ecu is not None else None
         meb = bool(getattr(self.t, "meb_addressing", False)) and target is not None
         wire = hexcmd
         if callable(set_module) and getattr(self.t, "meb_addressing", False):
-            if meb and set_module(target, getattr(ecu, "rx29", None)):
-                if not getattr(self.t, "auto_formatting", False):
-                    body = hexcmd
-                    # Single-frame ISO-TP: one length byte then up to 7 data
-                    # bytes. The slicing below would silently drop anything past
-                    # that, so refuse instead. validate_request caps the request
-                    # at the same 7 bytes, so this is unreachable via _transmit
-                    # -- it is here because a truncated frame produces an ECU
-                    # error rather than anything recognisable, and the cost of
-                    # checking is one comparison.
-                    if len(body) // 2 > 7:
-                        raise CommunicationError(
-                            f"Refusing to send a {len(body) // 2}-byte MEB "
-                            f"request: the single-frame ISO-TP path carries at "
-                            f"most 7 data bytes. Multi-frame is not implemented."
-                        )
-                    wire = (f"{len(body) // 2:02X}{body}" + "55" * 8)[:16]
-                # else: the adapter is in ATCAF1 (auto-formatting), so `wire`
-                # stays as the bare hexcmd -- the adapter adds the ISO-TP PCI
-                # byte, header and flow control. That is the 11-bit gateway's
-                # Car Scanner wire form (the CAF0 8-byte line is refused '?').
-            else:
+            if not (meb and set_module(target, getattr(ecu, "rx29", None))):
                 set_module(None)
-        # Record what goes on the wire, not merely what was asked for. They are
-        # the same for a functional read, but an MEB-addressed request is
-        # reframed into a padded ISO-TP single frame first. tx_log is
+        # Record what goes on the wire, not merely what was asked for. tx_log is
         # described in README.md as the safety manifest -- the record of every
-        # request this tool ever put on the vehicle's diagnostic port -- so for
-        # every MEB read it was understating what was actually sent.
-        #
-        # hexcmd is not lost: it is a literal substring of the frame, and the
-        # frame is the validated request plus a length byte and 0x55 padding.
+        # request this tool ever put on the vehicle's diagnostic port -- so it
+        # is written from the same `wire` that is transmitted. Every MEB read
+        # now goes out bare (the adapter does the framing), so `wire` and
+        # `hexcmd` are the same bytes; keeping the single variable means they
+        # can never drift apart.
         self.tx_logger(direction="TX", ecu=ecu.key if ecu else None,
                        payload=wire, purpose=purpose)
         lines = self.t.send_command(wire)
