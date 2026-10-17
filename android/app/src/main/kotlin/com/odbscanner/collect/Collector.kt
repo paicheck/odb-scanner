@@ -1,7 +1,9 @@
 package com.odbscanner.collect
 
 import com.odbscanner.db.Repository
+import com.odbscanner.spec.CellVoltages
 import com.odbscanner.spec.Decode
+import com.odbscanner.spec.Decoder
 import com.odbscanner.spec.EcuSpec
 import com.odbscanner.spec.MeasurementSpec
 import com.odbscanner.spec.ProfileSpec
@@ -118,7 +120,7 @@ class Collector(
     private suspend fun _recordSuccess(m: MeasurementSpec, record: ByteArray, ts: String) {
         repository?.recordMeasurement(
             vehicleId = vehicleId, ts = ts, key = m.key, ecu = m.ecuKey,
-            service = "UDS-0x22", pid = "0x${m.did.toString(16).uppercase().padStart(4, '0')}",
+            service = "UDS-0x22", pid = m.did?.let { "0x${it.toString(16).uppercase().padStart(4, '0')}" } ?: "0x0000",
             unit = m.unit, provenance = "reported",
             decodingMethod = if (m.decode != null) "builtin" else "raw-only",
             docStatus = null, rawResponse = toHex(record), value = (Decoder.decode(m.decode, record) as? Number)?.toDouble(),
@@ -129,7 +131,7 @@ class Collector(
     private suspend fun _recordFailure(m: MeasurementSpec, error: String, ts: String) {
         repository?.recordMeasurement(
             vehicleId = vehicleId, ts = ts, key = m.key, ecu = m.ecuKey,
-            service = "UDS-0x22", pid = "0x${m.did.toString(16).uppercase().padStart(4, '0')}",
+            service = "UDS-0x22", pid = m.did?.let { "0x${it.toString(16).uppercase().padStart(4, '0')}" } ?: "0x0000",
             unit = m.unit, provenance = "reported",
             decodingMethod = if (m.decode != null) "builtin" else "raw-only",
             docStatus = null, rawResponse = "", value = null, textValue = null,
