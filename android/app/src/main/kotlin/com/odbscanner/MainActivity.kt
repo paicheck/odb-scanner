@@ -50,14 +50,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val spec: Spec?
-        val error: String?
-        try {
-            spec = loadSpec()
-            error = null
+        val (spec, error) = try {
+            loadSpec() to null
         } catch (e: Exception) {
-            spec = null
-            error = "${e.javaClass.simpleName}: ${e.message}"
+            null to "${e.javaClass.simpleName}: ${e.message}"
         }
         setContent {
             MaterialTheme {
@@ -99,6 +95,7 @@ private fun hasBluetoothPermission(context: android.content.Context): Boolean =
 private fun pairedDevices(): List<BluetoothDevice> =
     BluetoothAdapter.getDefaultAdapter()?.bondedDevices?.toList() ?: emptyList()
 
+@SuppressLint("MissingPermission")
 @Composable
 private fun CollectorScreen(spec: Spec) {
     var status by remember { mutableStateOf("Idle") }

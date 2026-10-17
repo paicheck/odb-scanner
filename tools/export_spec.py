@@ -276,11 +276,8 @@ def _cell_voltages(profile: str) -> dict | None:
         "did_base": _hex(CELL_V_BASE),
         "slots": CELL_V_SLOTS,
         "unused_marker": _hex(CELL_UNUSED),
-        "decode": {
-            "offset": 0, "length": 2, "byte_order": "big-endian",
-            "signed": False, "scale": 1.0, "divisor": 1000.0, "addend": 1.0,
-            "formula": "u16be / 1000 + 1 (0x0FFE = sensor absent)",
-        },
+        "decode": _scalar(0, 2, False, 1.0, 1000.0, 1.0,
+                          "u16be / 1000 + 1 (0x0FFE = sensor absent)"),
     }
 
 

@@ -240,7 +240,7 @@
       "tx29": "0x767"
     }
   ],
-  "generated_at": "2026-10-16T19:08:49+00:00",
+  "generated_at": "2026-10-17T12:03:57+00:00",
   "profiles": {
     "eup": {
       "cell_voltages": null,
@@ -2416,6 +2416,7 @@
           "byte_order": "big-endian",
           "divisor": 1000.0,
           "formula": "u16be / 1000 + 1 (0x0FFE = sensor absent)",
+          "kind": "scalar",
           "length": 2,
           "offset": 0,
           "scale": 1.0,
