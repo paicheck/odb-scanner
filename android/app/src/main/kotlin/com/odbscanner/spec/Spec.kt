@@ -197,14 +197,19 @@ object SpecLoader {
         val cv = obj.optJSONObject("cell_voltages")
         val cellVoltages = cv?.let {
             val d = parseDecode(it.getJSONObject("decode"))
-                ?: error("cell_voltages decode must be scalar")
-            CellVoltages(
-                ecuKey = it.getString("ecu_key"),
-                didBase = hex(it.getString("did_base"))!!,
-                slots = it.getInt("slots"),
-                unusedMarker = hex(it.getString("unused_marker"))!!,
-                decode = d,
-            )
+            if (d == null) {
+                // A malformed cell_voltages entry must not crash the app; just
+                // skip the per-cell sweep.
+                null
+            } else {
+                CellVoltages(
+                    ecuKey = it.getString("ecu_key"),
+                    didBase = hex(it.getString("did_base"))!!,
+                    slots = it.getInt("slots"),
+                    unusedMarker = hex(it.getString("unused_marker"))!!,
+                    decode = d,
+                )
+            }
         }
         return ProfileSpec(measurements, cellVoltages)
     }
