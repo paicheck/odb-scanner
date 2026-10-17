@@ -1,6 +1,5 @@
 package com.odbscanner.spec
 
-import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -143,7 +142,7 @@ object SpecLoader {
             nrcNames = mapFrom(guardJson.getJSONObject("nrc_names")),
         )
 
-        val ecus = JSONArray(root.getJSONArray("ecus")).let { arr ->
+        val ecus = root.getJSONArray("ecus").let { arr ->
             (0 until arr.length()).map { i ->
                 val e = arr.getJSONObject(i)
                 val t = e.getJSONObject("transport")
@@ -181,7 +180,7 @@ object SpecLoader {
         obj.keys().asSequence().associate { k -> hex(k)!! to obj.getString(k) }
 
     private fun parseProfile(obj: JSONObject): ProfileSpec {
-        val measurements = JSONArray(obj.getJSONArray("measurements")).let { arr ->
+        val measurements = obj.getJSONArray("measurements").let { arr ->
             (0 until arr.length()).map { i ->
                 val m = arr.getJSONObject(i)
                 MeasurementSpec(
