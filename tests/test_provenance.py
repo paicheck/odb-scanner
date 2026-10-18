@@ -301,6 +301,49 @@ def test_summary_counts_every_row(repo, now):
     assert counts["unverified"] == len(rows)
 
 
+def test_a_simulated_row_is_never_live_however_recent(repo, now):
+    """Simulator output is not a reading of anything, so it cannot be live.
+
+    A simulated row is generated the same way a real one is -- decoded from a
+    plausible response, stamped with the current time -- so it satisfies every
+    test the live branch applies. Only the source label separates it, and
+    calling it live is the one answer a reader would act on.
+    """
+    from analysis.provenance import key_states
+    rows = key_states(make_repo({
+        "soc_abs": {"provenance": "simulated", "value": 81.2,
+                    "ts": stamp(now, 5)},
+    }), 1, FakeRegistry(), now=now)
+    soc = next(r for r in rows if r["key"] == "soc_abs")
+    assert soc["state"] == "simulated"
+
+
+def test_a_simulated_rollup_is_simulated_not_live(repo, now):
+    """The group state must follow its slots, or 108 simulated cells read as a
+    live pack."""
+    from analysis.provenance import key_states, summary
+    latest = {f"cell_v_{i:03d}": {"provenance": "simulated", "value": 3.9,
+                                  "ts": stamp(now, 5)}
+              for i in range(108)}
+    rows = key_states(make_repo(latest), 1, FakeRegistry(), now=now)
+    group = next(r for r in rows if r["key"] == "cell_voltages")
+    assert group["state"] == "simulated"
+    assert group["simulated"] == 108
+    assert group["live"] == 0
+    # summary() counts rows, not slots, so the group counts once -- the 108 is
+    # carried in the rollup's own tally that the /sources page renders.
+    counts = summary(rows)
+    assert counts["simulated"] == 1
+    assert counts["live"] == 0
+
+
+def test_the_summary_always_has_a_simulated_bucket(repo, now):
+    """The template reads counts.simulated, including on a clean database."""
+    from analysis.provenance import key_states, summary
+    counts = summary(key_states(make_repo({}), 1, FakeRegistry(), now=now))
+    assert counts["simulated"] == 0
+
+
 def test_works_without_an_explicit_now(repo):
     """The dashboard never passes `now`, so the default path must work.
 

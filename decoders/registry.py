@@ -25,6 +25,10 @@ class Provenance(str, Enum):
     REPORTED = "reported"        # directly reported by the vehicle
     CALCULATED = "calculated"    # derived in software from reported values
     ESTIMATED = "estimated"      # inferred; NOT an official vehicle measurement
+    # Produced by the vehicle simulator, so never a reading of any car. It wins
+    # over every label above: a simulated run returns values that *look* like
+    # readings, so "reported" would be a lie about where the number came from.
+    SIMULATED = "simulated"
 
 
 class DocStatus(str, Enum):

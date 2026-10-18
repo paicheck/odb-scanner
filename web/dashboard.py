@@ -170,7 +170,8 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         return None
 
     def measurement_sources():
-        """Per-measurement provenance: live / imported / stale / unavailable.
+        """Per-measurement provenance: live / imported / stale / simulated /
+        unavailable.
 
         Without this the battery page cannot tell an empty page (a defect) from
         a page full of values imported from a Car Scanner export (evidence), and
@@ -182,6 +183,7 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
                 "live": 0,
                 "imported": 0,
                 "stale": 0,
+                "simulated": 0,
                 "unavailable": 0,
                 "unverified": 0,
                 "total": 0,

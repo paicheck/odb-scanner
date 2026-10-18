@@ -33,13 +33,19 @@ log = logging.getLogger(__name__)
 # piece of cloud state that lives on this machine.
 WATERMARK_KEY = "cloud_sync.measurements.last_id"
 
+# Simulated rows (provenance='simulated', written when the collector is talking
+# to the vehicle simulator) are excluded here rather than filtered later: the
+# cloud schema is the vehicle's record, and the simulator reports the car's own
+# VIN, so an uploaded batch would be indistinguishable from real measurements on
+# the server. They are also never "pending", so the watermark simply walks past
+# them.
 _PENDING_SQL = """
 SELECT m.id, v.vin, m.ts, m.ecu, m.service, m.pid, m.key, m.value, m.text_value,
        m.unit, m.provenance, m.decoding_method, m.doc_status, m.raw_response,
        m.success, m.error
 FROM measurements m
 JOIN vehicles v ON v.id = m.vehicle_id
-WHERE m.id > ?
+WHERE m.id > ? AND m.provenance <> 'simulated'
 ORDER BY m.id
 LIMIT ?
 """

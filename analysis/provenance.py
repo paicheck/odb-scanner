@@ -16,6 +16,10 @@ report either "live" (hiding that the scale factor is a guess) or "unverified"
     imported    carried over from a Car Scanner export (provenance starts
                 "imported"), regardless of age -- it is evidence, not a reading
     stale       was read from the vehicle, but not recently
+    simulated   produced by the vehicle simulator, so never a reading of any
+                car. Checked earliest: it looks exactly like a live reading and
+                was computed the same way, so nothing about the value itself
+                would give it away
     unavailable in the decode registry, never successfully read here
 
 Nothing here infers a value or fills a gap. A missing measurement stays missing:
@@ -37,6 +41,11 @@ DEFAULT_STALE_AFTER_S = 900.0
 # Imported-row marker, owned by database/repository.py so the query filter and
 # the state machine cannot drift into disagreeing about what counts as imported.
 IMPORTED_PREFIX = IMPORTED_PREFIX
+
+# Set by the collector when the adapter identifies as the vehicle simulator
+# (decoders.registry.Provenance.SIMULATED). Kept as a literal rather than
+# imported so this module stays free of the decoder package.
+SIMULATED_PROVENANCE = "simulated"
 
 # Per-cell and per-sensor keys are rolled up: the registry carries 108 cell
 # voltage specs, and listing them individually would bury the other rows.
@@ -106,7 +115,7 @@ def key_states(repo, vehicle_id: int, registry, *,
             "name": _GROUP_NAMES.get(display, display),
             "state": "unavailable", "source": None, "ts": None, "age_s": None,
             "value": None, "unverified": True, "known": 0, "live": 0,
-            "imported": 0, "stale": 0, "unavailable": 0,
+            "imported": 0, "stale": 0, "simulated": 0, "unavailable": 0,
         })
         bucket["known"] += 1
         # Counted per state, so a sweep that answers 100 of 108 slots cannot
@@ -136,10 +145,11 @@ def key_states(repo, vehicle_id: int, registry, *,
         # unavailable -- undercounting live by the 126 of 157 registry keys
         # that sit inside them.
         #
-        # Precedence is live > imported > stale, with the counts shown next to
-        # it: a group holding any live slot is live, and the numbers say how
-        # much of it answered.
-        for state in ("live", "imported", "stale"):
+        # Precedence is simulated > live > imported > stale, with the counts
+        # shown next to it: a group holding any live slot is live, a group
+        # holding any simulated slot is simulated whatever else answered, and
+        # the numbers say how much of it answered.
+        for state in ("simulated", "live", "imported", "stale"):
             if bucket[state]:
                 bucket["state"] = state
                 break
@@ -176,7 +186,13 @@ def _row_for(spec, record, stale_after_s: float,
     row["ts"] = record.get("ts")
     row["age_s"] = age
     row["value"] = record.get("value")
-    if source.lower().startswith(IMPORTED_PREFIX):
+    if source.lower() == SIMULATED_PROVENANCE:
+        # Never a reading of any car, however fresh it looks: the simulator
+        # publishes plausible values and here they are indistinguishable from
+        # measured ones. Reported before the age test, so a simulated row can
+        # never be called live or stale.
+        row["state"] = "simulated"
+    elif source.lower().startswith(IMPORTED_PREFIX):
         # Imported evidence never becomes live and never goes stale: it is a
         # reading of the car taken by another tool, and its age relative to
         # "now" says nothing about whether it is trustworthy evidence.
@@ -190,8 +206,8 @@ def _row_for(spec, record, stale_after_s: float,
 
 def summary(rows: list[dict]) -> dict:
     """Counts per state, for the dashboard's one-line overview."""
-    out = {"live": 0, "imported": 0, "stale": 0, "unavailable": 0,
-           "unverified": 0, "total": len(rows)}
+    out = {"live": 0, "imported": 0, "stale": 0, "simulated": 0,
+           "unavailable": 0, "unverified": 0, "total": len(rows)}
     for row in rows:
         out[row["state"]] += 1
         if row["unverified"]:

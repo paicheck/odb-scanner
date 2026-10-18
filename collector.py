@@ -29,6 +29,18 @@ from diagnostic.uds import NegativeResponseError, ProtocolError
 
 log = logging.getLogger(__name__)
 
+# Adapter identification strings that mean "this is our own simulator, not a
+# car". The simulator announces itself as an ELM327 with this ATI response; a
+# real adapter answers "ATI ELM327 v1.5" (Veepeak) or the OBDLink equivalent.
+SIMULATOR_MARKERS = ("odb_scanner simulator", "sim327")
+
+
+def is_simulator(description: str) -> bool:
+    """True when an adapter identification string belongs to the simulator."""
+    low = (description or "").lower()
+    return any(marker in low for marker in SIMULATOR_MARKERS)
+
+
 # standard OBD-II PIDs to poll on BEVs (0x42 = control module voltage ~12V)
 OBD_PIDS = (0x00, 0x0D, 0x42)
 
@@ -113,6 +125,10 @@ class Collector:
         )
         self.vehicle_id: int | None = None
         self.vin: str | None = None
+        # Set by open_and_identify() when the adapter turns out to be the
+        # simulator. Every row this run writes keeps an honest source label
+        # (see _prov) and the cloud uploader skips it outright.
+        self.simulated = False
         self.slow_interval = float(
             self.cfg.get("collector.slow_poll_interval", 60.0))
         # Nominal pack capacity, only ever used for the ESTIMATED SOH figure.
@@ -214,12 +230,20 @@ class Collector:
             variant=self.cfg.get("vehicle.variant", ""),
             year=year,
         )
+        description = self.conn.t.description()
+        self.simulated = is_simulator(description)
         self.repo.add_event(self.vehicle_id, utcnow(), "adapter",
-                            f"Connected via {self.conn.t.description()}; "
+                            f"Connected via {description}; "
                             f"VIN read = {vin}")
         self._adopt_open_session()
         self._unsupported = self.repo.unsupported_did_keys(self.vehicle_id)
         self._ever_succeeded = self.repo.ever_succeeded_keys(self.vehicle_id)
+        if self.simulated:
+            log.warning(
+                "Adapter identifies as the simulator (%s): this run writes "
+                "provenance='simulated' and is never uploaded to the cloud. "
+                "Simulator output belongs in its own database "
+                "(simulation.db_path), not the car's.", description)
         log.info("Identified vehicle VIN=%s year=%s unsupported_dids=%d "
                  "ever_succeeded=%d", vin, year, len(self._unsupported),
                  len(self._ever_succeeded))
@@ -332,6 +356,15 @@ class Collector:
         return results
 
     # -- measurement recording --------------------------------------------------
+    def _prov(self, default: Provenance) -> str:
+        """Source label for a row this run writes.
+
+        A simulated run keeps 'simulated' whatever the decoder claims: the
+        value looks like a reading and was computed exactly the way a real one
+        is, so writing 'reported' would misstate where the number came from.
+        """
+        return (Provenance.SIMULATED if self.simulated else default).value
+
     def _record(self, spec, raw: bytes | None, ts: str, error: str | None = None,
                 success: bool = True) -> None:
         value = spec.decode_value(raw) if success else None
@@ -342,7 +375,7 @@ class Collector:
             self.vehicle_id, ts, spec.key, spec.ecu_key,
             "UDS-0x22" if spec.did else "-",
             f"0x{spec.did:04X}" if spec.did else "-",
-            spec.unit, spec.provenance.value,
+            spec.unit, self._prov(spec.provenance),
             "builtin" if spec.decode else "raw-only",
             spec.doc_status.value,
             raw.hex().upper() if raw else "", value, text_value,
@@ -463,7 +496,7 @@ class Collector:
             value = decoded[0]
             self.repo.record_measurement(
                 self.vehicle_id, ts, key, "-", "OBD-01",
-                f"0x{pid:02X}", unit, "reported", doc,
+                f"0x{pid:02X}", unit, self._prov(Provenance.REPORTED), doc,
                 "documented", data.hex().upper(), value,
             )
             snapshot[snap_key] = value
@@ -484,7 +517,7 @@ class Collector:
             snapshot["pack_power_kw"] = round(voltage * current / 1000.0, 3)
             self.repo.record_measurement(
                 self.vehicle_id, ts, "pack_power_kw", "bat_mgmt", "calc", "-",
-                "kW", Provenance.CALCULATED.value,
+                "kW", self._prov(Provenance.CALCULATED),
                 "voltage * current / 1000", "calculated", "",
                 snapshot["pack_power_kw"],
             )
@@ -494,7 +527,7 @@ class Collector:
             snapshot["cell_delta_mv"] = delta_mv
             self.repo.record_measurement(
                 self.vehicle_id, ts, "cell_delta_mv", "bat_mgmt", "calc", "-",
-                "mV", Provenance.CALCULATED.value,
+                "mV", self._prov(Provenance.CALCULATED),
                 "(max - min) * 1000", "calculated", "", delta_mv,
             )
 
@@ -600,7 +633,7 @@ class Collector:
         if soh:
             self.repo.record_measurement(
                 self.vehicle_id, ts, "soh_pct", "bat_mgmt", "calc", "-", "%",
-                Provenance.ESTIMATED.value, soh_basis,
+                self._prov(Provenance.ESTIMATED), soh_basis,
                 "estimated", "", soh,
             )
         mode = val("charge_mode")
