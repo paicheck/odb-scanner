@@ -6,6 +6,10 @@ Double-click any of these. No typing.
 The numbers are the order to do things in. You never have to
 remember a command.
 
+If you would rather click a window than a file, double-click
+0_OPEN_GUI.bat. It opens a window with all of these actions as
+buttons, plus a table of what the car has reported.
+
 
 BEFORE YOU DRIVE OUT (indoors, once)
 ------------------------------------
@@ -47,8 +51,9 @@ IN THE CAR
 4. When you are finished, double-click  3_STOP.bat
 
 
-THE FIVE SHORTCUTS
+THE SHORTCUTS
 ------------------
+    0_OPEN_GUI.bat      open a window with all of these as buttons
     5_TRY_IT_NOW.bat    test everything without a car
     2_DOCTOR.bat        work out why it will not connect
     1_START_COLLECTING.bat   check, then collect + dashboard
