@@ -38,6 +38,31 @@ log = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+
+def _format_value(value):
+    """Render one measurement value for the dashboard.
+
+    Most measurements are numbers, but not all of them are: the gear selector
+    answers "P" and the VIN is a string, and both are stored as TEXT in
+    `measurements.value` -- that column has no declared type, so SQLite keeps
+    whatever the decoder produced. Formatting one of those with `%.4g` raised
+    `TypeError: must be real number, not str`, which turned the entire
+    /measurements and /sources page into a 500. It went unnoticed because it
+    only bites once the collector can actually read the modules that answer
+    with text: while those readings were missing, there was nothing to format.
+
+    Numbers keep the four-significant-figure rendering. Anything else is shown
+    as it was recorded -- displayed, not rounded, not guessed at, not dropped.
+    """
+    if value is None:
+        return "—"
+    if isinstance(value, (int, float)):
+        return format(value, ".4g")
+    return str(value)
+
+
+_templates.env.filters["fmtvalue"] = _format_value
+
 # The question is the only unbounded user input in the app: it goes into an
 # LLM prompt and, on the default model, occupies a GPU for minutes. Without a
 # cap a single request can stall the box for anyone else using it.

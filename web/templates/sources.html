@@ -54,7 +54,7 @@
       {% if row.value is none %}
         <span style="color:#999;">&mdash;</span>
       {% else %}
-        {{ '%.4g'|format(row.value) }}{% if row.unit %} {{ row.unit }}{% endif %}
+        {{ row.value|fmtvalue }}{% if row.unit %} {{ row.unit }}{% endif %}
       {% endif %}
     </td>
     <td>

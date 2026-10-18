@@ -54,7 +54,7 @@
       <tr>
         <td>{{ it.name }}{% if it.unverified %} <span class="unverified" title="reverse-engineered scale, not a VW document">⚠ unverified</span>{% endif %}</td>
         <td>{{ it.unit }}</td>
-        <td>{% if it.value is not none %}{{ '%.4g'|format(it.value) }}{% else %}—{% endif %}</td>
+        <td>{% if it.value is not none %}{{ it.value|fmtvalue }}{% else %}—{% endif %}</td>
         <td><span class="state {{ it.state }}">{{ it.state }}</span></td>
         <td class="muted">{{ it.ts[:19] if it.ts else '—' }}</td>
       </tr>
