@@ -21,6 +21,34 @@ interface MeasurementDao {
 
     @Query("DELETE FROM measurements WHERE vehicleId = :vehicleId")
     suspend fun deleteAll(vehicleId: Long)
+
+    // -- cloud upload queue --------------------------------------------------
+    /**
+     * The next rows to upload. An index on uploadedAt is deliberately absent:
+     * the table is small (thousands of rows) and the query already scans for
+     * NULLs, so an index would only add write cost.
+     *
+     * remoteId IS NOT NULL because a row with no id cannot be uploaded
+     * idempotently; those are filled first by Repository.backfillRemoteIds().
+     */
+    @Query(
+        "SELECT * FROM measurements " +
+            "WHERE uploadedAt IS NULL AND remoteId IS NOT NULL " +
+            "ORDER BY id ASC LIMIT :limit"
+    )
+    suspend fun pendingUpload(limit: Int): List<MeasurementEntity>
+
+    @Query("UPDATE measurements SET uploadedAt = :at WHERE id IN (:ids)")
+    suspend fun markUploaded(ids: List<Long>, at: Long): Int
+
+    @Query("UPDATE measurements SET remoteId = :remoteId WHERE id = :id AND remoteId IS NULL")
+    suspend fun assignRemoteId(id: Long, remoteId: String): Int
+
+    @Query("SELECT id FROM measurements WHERE remoteId IS NULL")
+    suspend fun idsMissingRemoteId(): List<Long>
+
+    @Query("SELECT COUNT(*) FROM measurements WHERE uploadedAt IS NULL AND remoteId IS NOT NULL")
+    suspend fun pendingUploadCount(): Int
 }
 
 @Dao
@@ -51,6 +79,9 @@ interface VehicleDao {
 
     @Query("SELECT * FROM vehicles WHERE vin = :vin LIMIT 1")
     suspend fun getByVin(vin: String): VehicleEntity?
+
+    @Query("SELECT * FROM vehicles WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): VehicleEntity?
 
     @Query("SELECT * FROM vehicles LIMIT 1")
     suspend fun getFirst(): VehicleEntity?

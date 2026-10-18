@@ -2,6 +2,7 @@ package com.odbscanner.db
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 /**
  * Thin wrapper around the Room DAOs, mirroring `database/repository.py`'s
@@ -48,6 +49,11 @@ class Repository(private val db: AppDatabase) {
             key = key, value = value, textValue = textValue, unit = unit,
             provenance = provenance, decodingMethod = decodingMethod, docStatus = docStatus,
             rawResponse = rawResponse, success = success, error = error,
+            // The cloud id is assigned here, once, at write time. It must be
+            // stable across upload attempts and app restarts, because the
+            // shared schema deduplicates on it -- a fresh UUID per attempt
+            // would turn every retry into a duplicate row.
+            remoteId = UUID.randomUUID().toString(),
         ))
     }
 
@@ -95,4 +101,36 @@ class Repository(private val db: AppDatabase) {
                 .filter { it.success }
                 .distinctBy { it.key }
         }
+
+    // -- cloud upload --------------------------------------------------------
+    /** Rows not yet acknowledged by the cloud, oldest first. */
+    suspend fun pendingUploadBatch(limit: Int): List<MeasurementEntity> =
+        withContext(Dispatchers.IO) { measurements.pendingUpload(limit) }
+
+    suspend fun pendingUploadCount(): Int =
+        withContext(Dispatchers.IO) { measurements.pendingUploadCount() }
+
+    /**
+     * Give every row written before cloud support existed a stable cloud id.
+     *
+     * Cheap after the first run (the query returns nothing), and it is what
+     * makes those older readings uploadable rather than stranded forever.
+     */
+    suspend fun backfillRemoteIds(): Int = withContext(Dispatchers.IO) {
+        var filled = 0
+        for (rowId in measurements.idsMissingRemoteId()) {
+            filled += measurements.assignRemoteId(rowId, UUID.randomUUID().toString())
+        }
+        filled
+    }
+
+    /** Mark rows as uploaded. Only called after the API has accepted them. */
+    suspend fun markUploaded(ids: List<Long>, at: Long): Int = withContext(Dispatchers.IO) {
+        if (ids.isEmpty()) 0 else measurements.markUploaded(ids, at)
+    }
+
+    /** The VIN to stamp on uploads, or null when the vehicle is unknown yet. */
+    suspend fun vinFor(vehicleId: Long): String? = withContext(Dispatchers.IO) {
+        (vehicles.getById(vehicleId) ?: vehicles.getFirst())?.vin
+    }
 }

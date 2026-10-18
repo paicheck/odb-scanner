@@ -1,0 +1,68 @@
+# Local end-to-end stack: MariaDB + the ingest API.
+#
+# This exists so cloud logging can be proven against a REAL database before any
+# hosted infrastructure is paid for. The shape is exactly what a deploy looks
+# like -- an API that holds the database credentials, a database nothing else
+# can reach, and one token -- so moving to a host is only a change of env vars.
+#
+#   docker compose -f cloud/docker-compose.yml up -d --build
+#   python tools/cloud_local_check.py
+#   docker compose -f cloud/docker-compose.yml down          # keep the data
+#   docker compose -f cloud/docker-compose.yml down -v       # wipe it
+#
+# The `db` service deliberately has NO `ports:`. The whole point of the ingest
+# API is that nothing but it can reach MySQL; publishing 3306 here would make
+# the local stack easier to poke at and unrepresentative of the real one. To
+# look inside, exec a client in the container:
+#
+#   docker compose -f cloud/docker-compose.yml exec db \
+#     mariadb -u odb_ingest -pingest-local-only odb_cloud \
+#     -e "SELECT COUNT(*) FROM measurements;"
+#
+# Every default below is a development value and is obvious on purpose. Override
+# any of them by creating cloud/.env (gitignored) beside this file.
+
+name: odb-cloud-local
+
+services:
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root-local-only}
+      MARIADB_DATABASE: ${DB_NAME:-odb_cloud}
+      MARIADB_USER: ${DB_USER:-odb_ingest}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-ingest-local-only}
+    volumes:
+      - odb-cloud-data:/var/lib/mysql
+    healthcheck:
+      # The API waits for this, so the first request does not race the database
+      # still initialising its data directory.
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      # Built from the repository root so the `cloud` package is on the path.
+      context: ..
+      dockerfile: cloud/Dockerfile
+    restart: unless-stopped
+    environment:
+      ODB_CLOUD_API_TOKEN: ${API_TOKEN:-local-dev-token}
+      ODB_CLOUD_DB_HOST: db
+      ODB_CLOUD_DB_PORT: "3306"
+      ODB_CLOUD_DB_USER: ${DB_USER:-odb_ingest}
+      ODB_CLOUD_DB_PASSWORD: ${DB_PASSWORD:-ingest-local-only}
+      ODB_CLOUD_DB_NAME: ${DB_NAME:-odb_cloud}
+    ports:
+      # Loopback only: the local API must not appear on the LAN, where it would
+      # accept the development token from anything on the network.
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  odb-cloud-data:

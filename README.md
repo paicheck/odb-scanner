@@ -164,9 +164,11 @@ nothing in the log to say why.
 On Windows there are double-clickable shortcuts next to this file, and
 `HOW_IT_WORKS.txt` explains them in plain English. Start with
 **`5_TRY_IT_NOW.bat`** (needs no car) then **`1_START_COLLECTING.bat`**.
+**`0_OPEN_GUI.bat`** opens a desktop window with all of the actions as buttons.
 
 | Shortcut | Does |
 |---|---|
+| `0_OPEN_GUI.bat` | open the desktop GUI (all the actions as buttons) |
 | `1_START_COLLECTING.bat` | check the link, then start collecting + dashboard |
 | `2_DOCTOR.bat` | work out why it will not connect |
 | `2_DOCTOR_ALL_PORTS.bat` | try every COM port (Windows Bluetooth creates two) |
@@ -174,8 +176,8 @@ On Windows there are double-clickable shortcuts next to this file, and
 | `4_STATUS.bat` | what is running right now |
 | `5_TRY_IT_NOW.bat` | test the whole pipeline with no car |
 
-They only wrap the commands below, so anything you can do here you can do
-by double-clicking instead.
+The command shortcuts only wrap the commands below, so anything you can do
+here you can do by double-clicking instead.
 
 ### Doing it by hand
 
@@ -274,9 +276,11 @@ on Linux/macOS, where the compiled wheels differ.
 | `python main.py seed` | Load example 30-day dataset |
 | `python main.py guard-test` | Verify the read-only UDS guard |
 | `python main.py doctor` | **Work out why the adapter is not connecting** |
+| `python main.py sync-cloud` | Upload pending measurements to the cloud ingest API |
 | `python main.py prune --days 90` | Drop stale raw response bytes, keeping every parsed value |
 | `python main.py prune --days 90 --hard` | Delete history rows older than 90 days entirely |
 | `python main.py backup` | Consistent database snapshot (safe while a collector runs) |
+| `python main.py unsupported-dids` | List the DIDs the collector has stopped polling (`--clear` to poll them again) |
 
 ### Database growth
 
@@ -289,6 +293,25 @@ promptly (it vacuums). Vehicles, ECUs, sessions, DTCs and generated reports are
 never pruned — and neither is `tx_log`, the safety manifest that records every
 request ever sent to the vehicle. That record exists to be kept, so neither
 prune mode touches it.
+
+### Retired DIDs
+
+The collector stops re-asking for a DID when the car refuses it outright
+(NRC 0x31) or never answers it at all. That list is per-vehicle;
+`python main.py unsupported-dids` prints it, keyed to the decoder name, with
+when each was dropped. `--clear` empties it so everything is polled again
+(`--ecu bat_mgmt` limits it to one module), and DIDs the car really does not
+implement retire again on their own.
+
+A silent DID only counts toward retirement when its module answered something
+in the same rotation. A module that said nothing at all was unreachable — a
+sleeping car, a dropped Bluetooth link, or an adapter that has stopped reaching
+part of the bus — and "we never got there" is not evidence that the DID is
+unsupported. On 2026-10-17 the collector could not reach any 29-bit module
+(BMS, DC-DC, vehicle-info, electric drive) for a whole cycle while the 11-bit
+modules answered normally, and 72 DIDs were retired in that one pass —
+odometer, VIN and gear selector among them. Every one answered again when
+re-read, which is why the guard exists.
 
 ### Logs
 
@@ -313,6 +336,39 @@ file copy that would silently miss everything still sitting in the write-ahead
 log. Snapshots are timestamped (`data/backups/real_car-<UTC>.db`) so one bad
 day cannot overwrite the last good copy. Change `database.backup_dir` in
 `config.local.yaml` to keep them on a different drive.
+
+### Cloud logging
+
+The collector and the Android app can both mirror their measurements into one
+shared MySQL/MariaDB database, so a reading taken in the car lives in the same
+archive as one taken on the laptop. Local SQLite stays the source of truth and
+collection never blocks on the cloud: uploads are best-effort batches resumed
+from a watermark, and an unreachable cloud costs nothing but a log line.
+
+Neither writer talks to the database. Both POST to a small ingest API deployed
+beside MySQL (`cloud/`), which holds the credentials and is the only writer — so
+the phone carries a revocable token instead of a database password, and the
+database port never has to be open to the internet. Every row is keyed by a
+UUID the client assigns locally, and the API ignores an id it already holds, so
+retrying an interrupted upload is always safe and cannot duplicate data.
+
+```bat
+:: one-off upload of everything not yet mirrored
+.venv\Scripts\python main.py sync-cloud
+```
+
+Configure it under `cloud` in `config.local.yaml` (URL + token; leave
+`enabled: false` to turn it off) and see `cloud/README.md` for deploying the
+API. While `cloud.enabled` is true, a running `collect` also uploads in the
+background.
+
+Nothing needs to be hosted to try it: `cloud/docker-compose.yml` runs MariaDB
+plus the API locally, and `python tools/cloud_local_check.py` proves the whole
+path against a real database before any account or server is set up. Where
+Docker is not available (it needs admin rights, WSL2 and a reboot on Windows),
+`python tools/local_cloud.py up` runs the same MariaDB plus API unprivileged —
+see `cloud/README.md`. The settings can also be overridden per run with
+`ODB_CLOUD_ENABLED`, `ODB_CLOUD_API_URL` and `ODB_CLOUD_TOKEN`.
 
 ## When it will not connect — run the doctor
 

@@ -61,6 +61,37 @@ database:
   # only place a copy of the car's history should live.
   backup_dir: "backups"
 
+cloud:
+  # Optional cloud logging. When enabled, decoded measurements are mirrored to
+  # a shared MySQL/MariaDB database so the phone app and this collector write
+  # into ONE schema. Local SQLite stays the source of truth and collection
+  # NEVER blocks on the cloud: uploads are best-effort batches resumed from a
+  # watermark, so an unreachable cloud costs nothing but a log line.
+  #
+  # Nothing here talks to the database directly. Both writers POST to the
+  # cloud ingest API (see cloud/README.md), which owns the schema and the
+  # database credentials -- so no DB password ever lives on the phone or in
+  # this file.
+  #
+  # The target can also be overridden per run with the ODB_CLOUD_ENABLED,
+  # ODB_CLOUD_API_URL and ODB_CLOUD_TOKEN environment variables, which is how
+  # tools/cloud_local_check.py points at a throwaway local stack.
+  enabled: false
+  # Base URL of the ingest API, e.g. "https://odb-cloud.fly.dev".
+  api_url: ""
+  # This writer's stable identity in the cloud `sources` table. Leave empty to
+  # derive "python:<hostname>".
+  source_id: ""
+  # Readings per upload request, and how often a running collector flushes.
+  batch_size: 500
+  sync_interval_s: 60.0
+  timeout_s: 15.0
+  # Set false only for a self-signed certificate on a LAN deployment.
+  verify_tls: true
+  # Bearer token for the ingest API. Set it in config.local.yaml (gitignored)
+  # or export ODB_CLOUD_TOKEN; do not commit it here.
+  # token: "..."
+
 ollama:
   host: "http://localhost:11434"
   model: "qwen2.5:7b"       # change freely: ollama pull <model>, set here

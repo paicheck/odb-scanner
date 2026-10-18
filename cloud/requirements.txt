@@ -1,0 +1,9 @@
+# Dependencies for the cloud ingest service ONLY.
+#
+# The collector itself needs none of these: it uploads with `requests`, which
+# is already in the main requirements.txt, and never imports a database driver.
+# Keeping the service's dependencies separate means the database driver and the
+# server are not installed on the machine doing the collecting.
+fastapi>=0.110
+uvicorn>=0.29
+PyMySQL>=1.1

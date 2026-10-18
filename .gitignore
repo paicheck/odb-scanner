@@ -14,6 +14,10 @@ venv/
 .pytest_cache/
 .ruff_cache/
 config.local.yaml
+# Local overrides for `docker compose -f cloud/docker-compose.yml` (database and
+# API passwords). Defaults in the compose file are development values; a real
+# password must not be committed.
+cloud/.env
 
 # Generated experiment records. These are run output, not source: one holds a
 # simulator self-test, the other whatever the last real run produced. Both are

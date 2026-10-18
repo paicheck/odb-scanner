@@ -75,6 +75,19 @@ class Config:
                                     self.get("ollama.timeout", 300)))
 
     @property
+    def cloud_token(self) -> str:
+        """Bearer token for the cloud ingest API.
+
+        Environment first, then config, matching how the dashboard token is
+        handled: a secret belongs in the environment or a gitignored file, never
+        in the committed config.yaml. An empty string means "not configured",
+        which callers must treat as fatal when cloud logging is enabled rather
+        than silently uploading without authentication.
+        """
+        return (os.environ.get("ODB_CLOUD_TOKEN")
+                or self.get("cloud.token", "") or "")
+
+    @property
     def db_path(self) -> str:
         return self.get("database.path", "data/odb_scanner.db")
 
@@ -112,6 +125,12 @@ _REQUIRED_POSITIVE = (
     "collector.slow_poll_interval",
     "collector.max_value_age_s",
     "ollama.timeout",
+    # Cloud upload pacing. A zero batch size would send empty requests forever
+    # and a zero interval would spin the uploader; both are clearer as a
+    # startup error naming the key.
+    "cloud.batch_size",
+    "cloud.sync_interval_s",
+    "cloud.timeout_s",
 )
 
 

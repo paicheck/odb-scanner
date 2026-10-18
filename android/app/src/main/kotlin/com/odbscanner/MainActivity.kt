@@ -21,7 +21,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -41,6 +44,9 @@ import com.odbscanner.collect.Reading
 import com.odbscanner.db.AppDatabase
 import com.odbscanner.db.MeasurementEntity
 import com.odbscanner.db.Repository
+import com.odbscanner.net.CloudPrefs
+import com.odbscanner.net.CloudSync
+import com.odbscanner.net.CloudSyncException
 import com.odbscanner.spec.Spec
 import com.odbscanner.spec.SpecLoader
 import com.odbscanner.transport.BluetoothSpp
@@ -101,6 +107,42 @@ private fun CollectorScreen(spec: Spec) {
     var devices by remember { mutableStateOf(listOf<BluetoothDevice>()) }
     var showDeviceDialog by remember { mutableStateOf(false) }
 
+    // Cloud upload settings live in SharedPreferences so the endpoint and token
+    // can be changed on the device without rebuilding the app.
+    var cloudSettings by remember { mutableStateOf(CloudPrefs.load(context)) }
+    var showCloudDialog by remember { mutableStateOf(false) }
+    var cloudEnabled by remember { mutableStateOf(false) }
+    var cloudUrl by remember { mutableStateOf("") }
+    var cloudToken by remember { mutableStateOf("") }
+
+    // Upload whatever Room has not yet sent. Safe to call any time: it is
+    // idempotent, and a failure only sets the status line.
+    fun syncCloud() {
+        if (!cloudSettings.isUsable) {
+            status = "Cloud sync is not configured (set a URL and token)"
+            return
+        }
+        scope.launch {
+            status = "Uploading to cloud…"
+            try {
+                val result = CloudSync(repository, cloudSettings).uploadPending()
+                val pending = repository.pendingUploadCount()
+                status = if (result.batches == 0) {
+                    "Cloud: nothing to upload ($pending pending)"
+                } else {
+                    "Cloud: uploaded ${result.uploaded}, ${result.duplicates} " +
+                        "already present, $pending pending"
+                }
+            } catch (e: CloudSyncException) {
+                // Nothing was lost: the watermark is the local row itself, and
+                // rows stay pending until the API acknowledges them.
+                status = "Cloud upload failed (will retry): ${e.message}"
+            } catch (e: Exception) {
+                status = "Cloud upload failed: ${e.message}"
+            }
+        }
+    }
+
     // Load the latest persisted measurements on startup so history survives
     // an app restart (the collector is not running in the background on Android).
     LaunchedEffect(Unit) {
@@ -159,6 +201,19 @@ private fun CollectorScreen(spec: Spec) {
             Button(onClick = { readings = emptyList(); status = "Idle" }) { Text("Clear") }
         }
 
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(bottom = 8.dp),
+        ) {
+            Button(onClick = { syncCloud() }) { Text("Sync to cloud") }
+            Button(onClick = {
+                cloudEnabled = cloudSettings.enabled
+                cloudUrl = cloudSettings.apiUrl
+                cloudToken = cloudSettings.token
+                showCloudDialog = true
+            }) { Text("Cloud settings") }
+        }
+
         Text("Status: $status", style = MaterialTheme.typography.bodyMedium)
         Text("Decoded ${readings.count { it.status == "ok" }} of ${readings.size} readings")
 
@@ -192,12 +247,17 @@ private fun CollectorScreen(spec: Spec) {
                                         scope.launch {
                                             runCollection(spec, d, repository) { msg, result ->
                                                 status = msg
-                                                result?.let { readings = it }
-                                                // After collecting, reload from the store so
-                                                // the UI shows the persisted (deduplicated) state.
-                                                scope.launch {
-                                                    val latest = repository.latestMeasurements(1L)
-                                                    readings = latest.map { it.toReading() }
+                                                result?.let { collected ->
+                                                    readings = collected
+                                                    // After collecting, reload from the store
+                                                    // so the UI shows the persisted
+                                                    // (deduplicated) state, then push the new
+                                                    // rows to the cloud if it is configured.
+                                                    scope.launch {
+                                                        val latest = repository.latestMeasurements(1L)
+                                                        readings = latest.map { it.toReading() }
+                                                        if (cloudSettings.isUsable) syncCloud()
+                                                    }
                                                 }
                                             }
                                         }
@@ -210,6 +270,66 @@ private fun CollectorScreen(spec: Spec) {
             },
             confirmButton = {
                 TextButton(onClick = { showDeviceDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showCloudDialog) {
+        AlertDialog(
+            onDismissRequest = { showCloudDialog = false },
+            title = { Text("Cloud sync") },
+            text = {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = cloudEnabled,
+                            onCheckedChange = { cloudEnabled = it },
+                        )
+                        Text("Upload new readings")
+                    }
+                    OutlinedTextField(
+                        value = cloudUrl,
+                        onValueChange = { cloudUrl = it },
+                        label = { Text("Ingest API URL") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = cloudToken,
+                        onValueChange = { cloudToken = it },
+                        label = { Text("API token") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "Device: ${CloudPrefs.defaultSourceId(context)}\n" +
+                            "The token is a revocable ingest-API credential, not " +
+                            "a database password -- the phone never reaches MySQL.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    CloudPrefs.save(
+                        context,
+                        cloudSettings.copy(
+                            enabled = cloudEnabled,
+                            apiUrl = cloudUrl,
+                            token = cloudToken,
+                        ),
+                    )
+                    cloudSettings = CloudPrefs.load(context)
+                    showCloudDialog = false
+                    status = if (cloudSettings.isUsable) {
+                        "Cloud sync configured"
+                    } else {
+                        "Cloud settings saved (URL and token still needed)"
+                    }
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCloudDialog = false }) { Text("Cancel") }
             },
         )
     }

@@ -12,6 +12,11 @@ Commands:
     python main.py backup [--out FILE]   snapshot the database (safe while
                                          a collector is running)
     python main.py prune [--days N]      trim old history (never automatic)
+    python main.py unsupported-dids      list DIDs the collector has retired
+                                         from polling (--clear to poll them
+                                         again; --ecu KEY to scope it)
+    python main.py sync-cloud            upload pending measurements to the
+                                         cloud ingest API (see cloud/README.md)
 """
 from __future__ import annotations
 
@@ -66,13 +71,90 @@ def cmd_discover(cfg) -> int:
 def cmd_collect(cfg, cycles: int | None) -> int:
     from collector import Collector
     with Repository(cfg.db_path) as repo:
-        c = Collector(cfg, repo)
+        sync = _start_cloud_sync(cfg, repo)
         try:
-            c.run(max_cycles=cycles)
-        except KeyboardInterrupt:
-            print("Stopped.")
+            c = Collector(cfg, repo)
+            try:
+                c.run(max_cycles=cycles)
+            except KeyboardInterrupt:
+                print("Stopped.")
+            finally:
+                c.close()
         finally:
-            c.close()
+            # Stop the uploader before the repository closes underneath it.
+            if sync is not None:
+                sync.stop()
+    return 0
+
+
+def _start_cloud_sync(cfg, repo):
+    """Start the background cloud uploader, or return None when it is off.
+
+    A misconfigured cloud must not stop collection: the car is what is worth
+    capturing, and the local database already holds it. So a bad setting is
+    printed and collection proceeds without cloud sync, rather than refusing to
+    run at all.
+
+    The uploader runs on its own thread and reads the same Repository from it
+    (one connection per thread, by design), so it can never block a vehicle
+    read or hold the collector's connection.
+    """
+    from cloud.client import CloudSyncService
+    from cloud.config import CloudConfigError, client_settings
+
+    try:
+        settings = client_settings(cfg)
+    except CloudConfigError as exc:
+        print(f"Cloud logging is off for this run: {exc}")
+        return None
+    if not settings.enabled:
+        return None
+    service = CloudSyncService(settings, repo)
+    service.start()
+    return service
+
+
+def cmd_sync_cloud(cfg) -> int:
+    """Upload pending measurements to the cloud ingest API, once.
+
+    Safe to run repeatedly: the batch id is derived from the local row, so a
+    re-run re-sends only what has not been accepted yet and the cloud discards
+    anything it already holds.
+    """
+    from cloud.client import CloudClient, CloudSyncError, sync_pending
+    from cloud.config import CloudConfigError, client_settings
+
+    try:
+        settings = client_settings(cfg)
+    except CloudConfigError as exc:
+        print(f"Cloud logging is misconfigured: {exc}")
+        return 1
+    if not settings.enabled:
+        print("Cloud logging is disabled (cloud.enabled is false in "
+              "config.yaml / config.local.yaml).")
+        return 1
+
+    if settings.api_url.startswith("http://"):
+        print("Warning: cloud.api_url uses plain http; the bearer token and "
+              "the vehicle's data travel unencrypted. Use https off a LAN.")
+
+    client = CloudClient(settings)
+    try:
+        with Repository(cfg.db_path) as repo:
+            result = sync_pending(repo, client, settings)
+    except CloudSyncError as exc:
+        # Nothing is lost and the watermark has not moved, so this is a retry
+        # instruction, not a data-loss event.
+        print(f"Upload failed; nothing was lost and it will retry: {exc}")
+        return 1
+    finally:
+        client.close()
+
+    if not result["batches"]:
+        print("Everything is already in the cloud; nothing to upload.")
+    else:
+        print(f"Uploaded {result['uploaded']} row(s) in {result['batches']} "
+              f"batch(es); {result['duplicates']} duplicate(s) already present.")
     return 0
 
 
@@ -319,6 +401,69 @@ def cmd_prune(cfg, days: float, hard: bool) -> int:
     return 0
 
 
+def cmd_unsupported_dids(cfg, clear: bool, ecu: str | None) -> int:
+    """List -- or clear -- the DIDs the collector has retired from polling.
+
+    Retiring is how the collector stops re-asking for a DID this car does not
+    implement. It is also how a DID that does answer can vanish from collection:
+    72 were retired in one pass on 2026-10-17 while the adapter could not reach
+    the 29-bit bus, including the odometer and the VIN. So the record is
+    inspectable and reversible here rather than being a one-way door.
+    """
+    # Imported lazily: only this command needs the decoder registry, and the CLI
+    # has to stay importable without the optional decoder stack present.
+    from decoders.registry import build_default_registry
+
+    with Repository(cfg.db_path) as repo:
+        vehicle = repo.first_vehicle()
+        if vehicle is None:
+            print("No vehicle in the database yet -- nothing has been collected.")
+            return 0
+        vid = vehicle["id"]
+        rows = repo.unsupported_dids(vid)
+        if not rows:
+            print(f"{vehicle['vin']}: no retired DIDs -- every registered DID is "
+                  "being polled.")
+            return 0
+
+        names: dict[tuple[str, int], str] = {}
+        for spec in build_default_registry(
+                cfg.get("vehicle.did_profile", "eup")).all():
+            names.setdefault((spec.ecu_key, spec.did), spec.key)
+
+        by_ecu: dict[str, int] = {}
+        for r in rows:
+            by_ecu[r["ecu_key"]] = by_ecu.get(r["ecu_key"], 0) + 1
+        print(f"{vehicle['vin']}: {len(rows)} retired DIDs are SKIPPED "
+              f"({len(by_ecu)} modules: "
+              + ", ".join(f"{k} {v}" for k, v in sorted(by_ecu.items())) + ")")
+        print()
+        print(f"  {'module':<10} {'DID':<8} {'decoder key':<34} "
+              f"{'last retired':<20} count")
+        for r in rows:
+            name = names.get((r["ecu_key"], r["did"]), "?")
+            print(f"  {r['ecu_key']:<10} 0x{r['did']:04X}   {name:<34} "
+                  f"{r['last_seen'][:19]:<20} {r['count']}")
+
+        if not clear:
+            print()
+            print("These are skipped, not deleted. To poll them again:")
+            print("  python main.py unsupported-dids --clear"
+                  + (f" --ecu {ecu}" if ecu else ""))
+            print("then restart the collector (python tools/start_scanner.py). "
+                  "DIDs the car")
+            print("really does not implement retire again on their own.")
+            return 0
+
+        removed = repo.clear_unsupported_dids(vid, ecu)
+        print()
+        print(f"Cleared {removed} retired DID(s)"
+              + (f" for module {ecu}" if ecu else "") + ".")
+        print("Restart the collector to re-poll them: "
+              "python tools/start_scanner.py")
+    return 0
+
+
 def _db_size_mb(path: str) -> float:
     """On-disk size including the WAL, which holds recent writes not yet folded in."""
     total = 0
@@ -334,7 +479,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("command",
                         choices=["discover", "collect", "analyze", "report",
                                  "serve", "simulate", "seed", "guard-test",
-                                 "prune", "backup", "doctor"])
+                                 "prune", "backup", "doctor", "sync-cloud",
+                                 "unsupported-dids"])
     parser.add_argument("--days", type=float, default=90.0,
                         help="prune: age in days to keep (default 90)")
     parser.add_argument("--hard", action="store_true",
@@ -343,6 +489,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=str, default=None,
                         help="backup: destination file (default: a timestamped "
                              "file beside the database)")
+    parser.add_argument("--clear", action="store_true",
+                        help="unsupported-dids: clear the retired list so those "
+                             "DIDs are polled again")
+    parser.add_argument("--ecu", type=str, default=None,
+                        help="unsupported-dids: limit --clear to one module")
     parser.add_argument("--cycles", type=int, default=None)
     parser.add_argument("--question", type=str, default=None)
     parser.add_argument("--config", type=str, default=None)
@@ -377,6 +528,8 @@ LOG_COMPONENT = {
     "backup": "maintenance",
     "migrate": "maintenance",
     "seed": "maintenance",
+    "unsupported-dids": "maintenance",
+    "sync-cloud": "cloud",
 }
 
 
@@ -462,6 +615,10 @@ def main() -> int:
         return cmd_backup(cfg, args.out)
     if args.command == "prune":
         return cmd_prune(cfg, args.days, args.hard)
+    if args.command == "unsupported-dids":
+        return cmd_unsupported_dids(cfg, args.clear, args.ecu)
+    if args.command == "sync-cloud":
+        return cmd_sync_cloud(cfg)
     try:
         if args.command == "discover":
             return cmd_discover(cfg)

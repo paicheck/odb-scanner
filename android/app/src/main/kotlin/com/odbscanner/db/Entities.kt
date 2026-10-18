@@ -6,6 +6,13 @@ import androidx.room.PrimaryKey
 /**
  * One decoded measurement, mirroring `database/models.py`'s `measurements`.
  * Raw bytes are ALWAYS preserved (`rawResponse`), even when `value` is null.
+ *
+ * [remoteId] and [uploadedAt] exist only for cloud upload. `remoteId` is the
+ * measurement's UUID in the shared cloud schema and is assigned once, when the
+ * row is written; [uploadedAt] is null until the cloud has acknowledged it, so
+ * the uploader's queue is just "rows where uploadedAt is null". Both are
+ * nullable because rows written before cloud support existed have neither --
+ * [Repository.backfillRemoteIds] fills the first, the uploader fills the second.
  */
 @Entity(tableName = "measurements")
 data class MeasurementEntity(
@@ -25,6 +32,8 @@ data class MeasurementEntity(
     val rawResponse: String,
     val success: Boolean = true,
     val error: String?,
+    val remoteId: String? = null,
+    val uploadedAt: Long? = null,
 )
 
 /** One retired DID, mirroring `database/models.py`'s `unsupported_dids`. */
