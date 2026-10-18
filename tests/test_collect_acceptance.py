@@ -157,7 +157,8 @@ def test_ever_succeeded_keys(repo):
 
 
 def _silent_collector(tmp_path, threshold=2):
-    """A Collector whose read_did always returns NO DATA, over a scratch DB."""
+    """A Collector over a scratch DB whose read_did returns NO DATA for every
+    DID (use _no_data_except to let some DIDs answer)."""
     from collector import Collector
     from config import Config
     from diagnostic.interface import CommunicationError
@@ -176,33 +177,94 @@ def _silent_collector(tmp_path, threshold=2):
     return col, repo
 
 
-def test_silent_did_is_retired_after_threshold(tmp_path):
-    """A never-succeeded DID that returns NO DATA for the threshold count of
-    consecutive reads is retired (and skipped thereafter)."""
+def _no_data_except(col, *answer_dids):
+    """Answer `answer_dids` with bytes; everything else returns NO DATA."""
+    from diagnostic.interface import CommunicationError
+
+    answering = set(answer_dids)
+
+    def read(ecu, did):
+        if did in answering:
+            return b"\x00\x2B"
+        raise CommunicationError(f"No/undecodable response to DID 0x{did:04X}")
+    col.conn.read_did = read
+
+
+def _answering_spec(col):
+    """A real bat_mgmt DID the collector knows, preferably one with no decoder
+    so the test does not depend on a payload of the right length."""
+    specs = [s for s in col.registry.all()
+             if s.ecu_key == "bat_mgmt" and s.did is not None]
+    return next((s for s in specs if s.decode is None), specs[0])
+
+
+def _rotate(col, specs, ts):
+    """One retirement phase: poll `specs`, then let the collector judge them."""
+    col._begin_silence_phase()
+    out = [col.poll_did(spec, ts) for spec in specs]
+    col._end_silence_phase(ts)
+    return out
+
+
+def test_never_answering_module_does_not_retire_its_dids(tmp_path):
+    """Regression: a module that answered nothing at all is unreachable, not
+    unsupported, so its DIDs must not be retired.
+
+    On 2026-10-17 the adapter stopped reaching every 29-bit module for a whole
+    cycle -- pack_voltage, soc_abs and pack_current all returned NO DATA while
+    the 11-bit energy/climate/GPS modules answered normally. The old
+    unconditional rule retired 72 DIDs in that one pass, odometer, VIN and gear
+    among them, and every one of them answered again when re-read.
+    """
     from decoders.registry import DIDSpec
+
     col, repo = _silent_collector(tmp_path, threshold=2)
     try:
         spec = DIDSpec(key="bogus", ecu_key="bat_mgmt", did=0x1234,
                        name="b", unit="")
-        assert col.poll_did(spec, utcnow()) is None
-        assert ("bat_mgmt", 0x1234) not in col._unsupported  # 1 < threshold
-        assert col.poll_did(spec, utcnow()) is None
-        assert ("bat_mgmt", 0x1234) in col._unsupported      # 2 == threshold
+        for _ in range(5):
+            assert _rotate(col, [spec], utcnow()) == [None]
+        assert ("bat_mgmt", 0x1234) not in col._unsupported
+        assert repo.unsupported_did_keys(col.vehicle_id) == set()
+    finally:
+        repo.close()
+
+
+def test_silent_did_is_retired_when_its_module_answers(tmp_path):
+    """The positive case the guard must not break: a module that answered one
+    DID has been reached, so a never-succeeded DID that stays silent really is
+    unsupported and is retired at the threshold."""
+    from decoders.registry import DIDSpec
+
+    col, repo = _silent_collector(tmp_path, threshold=2)
+    try:
+        answering = _answering_spec(col)
+        _no_data_except(col, answering.did)
+        silent = DIDSpec(key="bogus", ecu_key="bat_mgmt", did=0x1234,
+                         name="b", unit="")
+        _rotate(col, [answering, silent], utcnow())
+        assert ("bat_mgmt", 0x1234) not in col._unsupported     # 1 < threshold
+        _rotate(col, [answering, silent], utcnow())
+        assert ("bat_mgmt", 0x1234) in col._unsupported         # 2 == threshold
         assert ("bat_mgmt", 0x1234) in repo.unsupported_did_keys(col.vehicle_id)
     finally:
         repo.close()
 
 
 def test_silent_did_never_retired_if_ever_succeeded(tmp_path):
-    """A DID that has ever answered is never retired for being silent."""
+    """A DID that has ever answered is never retired for being silent, even when
+    its module is answering so the silence would otherwise count."""
     from decoders.registry import DIDSpec
+
     col, repo = _silent_collector(tmp_path, threshold=2)
     try:
+        answering = _answering_spec(col)
+        _no_data_except(col, answering.did)
         col._ever_succeeded.add(("bat_mgmt", 0x1234))
         spec = DIDSpec(key="bogus", ecu_key="bat_mgmt", did=0x1234,
                        name="b", unit="")
         for _ in range(5):
-            assert col.poll_did(spec, utcnow()) is None
+            assert _rotate(col, [answering, spec], utcnow())[1] is None
         assert ("bat_mgmt", 0x1234) not in col._unsupported
     finally:
         repo.close()

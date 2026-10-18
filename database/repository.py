@@ -768,6 +768,40 @@ class Repository:
         )
         self.conn.commit()
 
+    def unsupported_dids(self, vehicle_id: int) -> list[sqlite3.Row]:
+        """Retired DIDs with the evidence for the retirement, by module.
+
+        The collector skips these. `count` is how many times the retirement was
+        recorded and `first_seen`/`last_seen` when -- which is what tells a DID
+        the car genuinely refuses (NRC 0x31) apart from one retired during a
+        spell when the adapter could not reach its module.
+        """
+        return self.conn.execute(
+            "SELECT ecu_key, did, first_seen, last_seen, count "
+            "FROM unsupported_dids WHERE vehicle_id=? ORDER BY ecu_key, did",
+            (vehicle_id,),
+        ).fetchall()
+
+    def clear_unsupported_dids(self, vehicle_id: int,
+                               ecu_key: str | None = None) -> int:
+        """Un-retire DIDs so the collector polls them again; returns rows removed.
+
+        Measured history is untouched -- this only forgets a "do not poll"
+        decision, so re-polling is always safe. DIDs the car really does not
+        implement retire again on their own. Scoped to one module when
+        `ecu_key` is given.
+        """
+        if ecu_key is None:
+            cur = self.conn.execute(
+                "DELETE FROM unsupported_dids WHERE vehicle_id=?",
+                (vehicle_id,))
+        else:
+            cur = self.conn.execute(
+                "DELETE FROM unsupported_dids WHERE vehicle_id=? AND ecu_key=?",
+                (vehicle_id, ecu_key))
+        self.conn.commit()
+        return cur.rowcount
+
     def ever_succeeded_keys(self, vehicle_id: int) -> set[tuple[str, int]]:
         """(ecu_key, did) pairs that have ever produced a successful read.
 

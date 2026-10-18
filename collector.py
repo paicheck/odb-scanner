@@ -144,11 +144,18 @@ class Collector:
         self._unsupported: set[tuple[str, int]] = set()
         # Silent-DID retirement: a DID that has NEVER succeeded on this vehicle
         # and returns NO DATA (not NRC) for `silent_retire_threshold` consecutive
-        # reads is also retired. `_ever_succeeded` is the guard -- silence on a
-        # DID that has answered before means "car asleep", not "DID dead", so a
-        # DID that has EVER answered is never retired for being silent.
+        # reads is also retired. Two guards keep that honest. `_ever_succeeded`:
+        # silence on a DID that has answered before means "car asleep", not "DID
+        # dead", so it is never retired. `_phase_ok_ecus`: silence only counts
+        # when the DID's module answered something in the same phase, because a
+        # module that said nothing at all was unreachable and its silence says
+        # nothing about the DID (see _end_silence_phase).
         self._ever_succeeded: set[tuple[str, int]] = set()
         self._silent_failures: dict[tuple[str, int], int] = {}
+        # Bookkeeping for the reachability guard: which ECUs answered in the
+        # phase now running, and the silent reads buffered during it.
+        self._phase_ok_ecus: set[str] = set()
+        self._pending_silent: dict[tuple[str, int], int] = {}
         self.silent_retire_threshold = int(
             self.cfg.get("collector.silent_retire_threshold", 3))
         # Set False by discover_ecus() when the battery DIDs are refused on
@@ -352,6 +359,7 @@ class Collector:
             self._record(spec, raw, ts)
             self._attempt(True)
             self._ever_succeeded.add(key)
+            self._phase_ok_ecus.add(spec.ecu_key)
             self._silent_failures.pop(key, None)
             return raw
         except NegativeResponseError as exc:
@@ -370,11 +378,12 @@ class Collector:
             self._attempt(False)
             return None
         except CommunicationError as exc:
-            # NO DATA: the ECU said nothing. Count it toward silent-DID
-            # retirement -- a never-succeeded DID that stays silent is dead.
+            # NO DATA: the ECU said nothing. Buffered, not retired: whether the
+            # silence is meaningful depends on whether the module answered at
+            # all, which is only known once the phase ends.
             self._record(spec, None, ts, error=str(exc), success=False)
             self._attempt(False)
-            self._note_silent(key, ts)
+            self._note_silent(key)
             return None
 
     def _retire_did(self, key: tuple[str, int], ts: str) -> None:
@@ -383,18 +392,54 @@ class Collector:
         self.repo.mark_did_unsupported(
             self.vehicle_id, key[0], key[1], ts)
 
-    def _note_silent(self, key: tuple[str, int], ts: str) -> None:
-        """Count one NO DATA read; retire the DID once it has never succeeded
-        and stayed silent for the configured number of consecutive reads."""
+    def _begin_silence_phase(self) -> None:
+        """Start a stretch of reads over which module reachability is judged.
+
+        One entry per rotation of the registry (the fast DIDs, then the slow
+        DIDs with the cell sweep), so a module that answered earlier in the same
+        rotation is not credited to a read it never saw.
+        """
+        self._phase_ok_ecus = set()
+        self._pending_silent = {}
+
+    def _note_silent(self, key: tuple[str, int]) -> None:
+        """Buffer one NO DATA read for _end_silence_phase to judge."""
         if key in self._ever_succeeded:
             # It answered before, so silence here means "car asleep", not "DID
             # dead". Never retire a DID that has ever produced data.
             return
-        count = self._silent_failures.get(key, 0) + 1
-        self._silent_failures[key] = count
-        if count >= self.silent_retire_threshold:
-            self._retire_did(key, ts)
-            self._silent_failures.pop(key, None)
+        self._pending_silent[key] = self._pending_silent.get(key, 0) + 1
+
+    def _end_silence_phase(self, ts: str) -> None:
+        """Count the phase's silent reads -- but only where that proves anything.
+
+        Retirement says "this car does not implement that DID", so it is only
+        sound when the module was actually answering. On 2026-10-17 every DID on
+        the 29-bit bus (BMS, DC-DC, vehicle-info, electric drive) returned NO
+        DATA for a whole cycle while the 11-bit modules answered normally: the
+        adapter had stopped reaching the 29-bit bus. The unconditional rule then
+        retired 72 DIDs in a single pass -- including the odometer, the VIN and
+        the gear selector -- and re-reading them the next day returned every
+        value. So a silent read counts only when the same ECU produced at least
+        one successful read in this same phase. A module that said nothing at
+        all was unreachable, and "we never reached it" is not evidence about
+        what it implements.
+        """
+        pending, self._pending_silent = self._pending_silent, {}
+        answered, self._phase_ok_ecus = self._phase_ok_ecus, set()
+        for key, silent in pending.items():
+            if key[0] not in answered:
+                log.debug(
+                    "Not retiring %s DID 0x%04X: module answered nothing this "
+                    "phase (unreachable, so silence is uninformative)",
+                    key[0], key[1])
+                continue
+            count = self._silent_failures.get(key, 0) + silent
+            if count >= self.silent_retire_threshold:
+                self._retire_did(key, ts)
+                self._silent_failures.pop(key, None)
+            else:
+                self._silent_failures[key] = count
 
     # -- phase 3/4: one collection pass ----------------------------------------
     def collect_once(self) -> dict:
@@ -424,12 +469,14 @@ class Collector:
             snapshot[snap_key] = value
 
         # fast battery DIDs
+        self._begin_silence_phase()
         for spec in self.registry.fast():
             raw = self.poll_did(spec, ts)
             if raw is not None and spec.decode:
                 v = spec.decode_value(raw)
                 if not isinstance(v, dict):
                     snapshot[spec.key] = v
+        self._end_silence_phase(ts)
 
         # computed values (labelled calculated)
         voltage, current = snapshot.get("pack_voltage"), snapshot.get("pack_current")
@@ -455,10 +502,15 @@ class Collector:
         # it runs on its own cadence (collector.slow_poll_interval) rather than
         # on every fast poll.
         if self._slow_phase_due():
+            # The cell sweep and the slow DIDs are one rotation: a module that
+            # answered a cell DID has been reached, so its slow DIDs are judged
+            # against the same evidence.
+            self._begin_silence_phase()
             if self.cfg.get("collector.read_cell_voltages", True) \
                     and self._cells_readable:
                 self._sweep_cells(ts)
             self._slow_pass(ts, snapshot)
+            self._end_silence_phase(ts)
         self._battery_snapshot(ts, snapshot)
         self._charging_tracking(ts, snapshot)
         return snapshot
