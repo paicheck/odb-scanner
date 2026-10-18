@@ -140,6 +140,46 @@ Manual equivalent, in two terminals:
 .venv\Scripts\python main.py seed
 ```
 
+### Simulated and seeded data never share the car's database
+
+The simulator answers with plausible engineering values and the collector stores
+them by exactly the same code path as a real reading, so the *file* a run writes
+to is the only thing keeping demo data out of the vehicle's record. (It is not
+hypothetical: 265,014 simulator readings and a month of seeded history once
+ended up under this car's own VIN, with nothing on any row to say so.)
+
+| run | database | VIN reported |
+| --- | --- | --- |
+| real car (`adapter.type: elm327_serial`) | `database.path` | `vehicle.vin` |
+| simulator + collector | `simulation.db_path` | `simulation.vin` |
+| `python main.py seed` | `seed.db_path` | `seed.vin` |
+
+Three independent defences, so one mistake is not enough to mix them:
+
+* **Separate files.** `tools/start_scanner.py` points the collector it starts in
+  simulator mode at `simulation.db_path` via `ODB_DB_PATH`. Config loading
+  refuses a config where `simulation.db_path` or `seed.db_path` equals
+  `database.path`.
+* **Separate identity.** The simulator reports `simulation.vin`, not the car's,
+  so a run that lands in the wrong file still lands on a different vehicle row.
+* **Separate label.** The collector recognises the simulator's adapter
+  identification string and writes `provenance='simulated'` on every measurement
+  it records. Those rows show as *simulated* on `/sources`, are excluded from the
+  live/stale counts, and the cloud uploader never sends them.
+
+If a database already holds both, `tools/purge_synthetic_data.py` reports what
+it would remove and deletes it with a snapshot of its own:
+
+```bat
+.venv\Scripts\python tools\purge_synthetic_data.py            :: dry run
+.venv\Scripts\python tools\purge_synthetic_data.py --apply    :: back up, then delete
+```
+
+It removes every reading older than the first real adapter connection
+(`--before` to change the cutoff), keeps imported Car Scanner evidence and the
+adapter-connection log that justifies the decision, and drops anything already
+tagged `simulated` whatever its date.
+
 ## Running the stack continuously
 
 ### If the adapter disappears
@@ -273,7 +313,8 @@ on Linux/macOS, where the compiled wheels differ.
 | `python tools/elm_console.py` | Raw ELM327 console for live debugging (`--tcp` for simulator) |
 | `python tools/start_scanner.py` | Start/stop the simulated stack (`--status`, `--stop`) |
 | `python tools/import_carscanner.py "export.csv"` | Import a Car Scanner CSV as evidence labelled `imported` (`--dry-run` previews) |
-| `python main.py seed` | Load example 30-day dataset |
+| `python main.py seed` | Load the example 30-day dataset into its own database (`seed.db_path`) |
+| `python tools/purge_synthetic_data.py` | Report (then remove) simulator/demo rows that got into the car's database (`--apply`) |
 | `python main.py guard-test` | Verify the read-only UDS guard |
 | `python main.py doctor` | **Work out why the adapter is not connecting** |
 | `python main.py sync-cloud` | Upload pending measurements to the cloud ingest API |
