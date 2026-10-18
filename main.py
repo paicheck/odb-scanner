@@ -211,14 +211,41 @@ def cmd_simulate(cfg) -> int:
     from simulator.vehicle import SimServer
     host = cfg.get("simulation.host", "127.0.0.1")
     port = int(cfg.get("simulation.port", 35000))
+    vin = cfg.get("simulation.vin")
     print(f"Simulator listening on tcp://{host}:{port} — Ctrl+C to stop")
-    with SimServer(host, port):
+    if vin:
+        print(f"Reporting VIN {vin} (simulation.vin, not vehicle.vin). "
+              f"Simulator runs belong in {cfg.simulator_db_path}, never in "
+              f"{cfg.db_path}.")
+    with SimServer(host, port, vin=vin):
         try:
             while True:
                 import time
                 time.sleep(3600)
         except KeyboardInterrupt:
             pass
+    return 0
+
+
+def cmd_seed(cfg) -> int:
+    """Write the example dataset, but never into the car's database.
+
+    The seeded history is plausible enough to be mistaken for measured data
+    (that is the point of a demo), so it gets the same treatment as the
+    simulator: its own file and its own VIN. Writing it into database.path
+    would put a fabricated month of readings into the vehicle's own record
+    with nothing to mark it apart.
+    """
+    from tools.seed_demo_data import seed
+
+    target = cfg.seed_db_path
+    if Path(target).resolve() == Path(cfg.db_path).resolve():
+        print(f"refusing: seed.db_path and database.path are the same file "
+              f"({target}). Example history must not share a file with "
+              f"measured data.", file=sys.stderr)
+        return 2
+    print(f"Seeding example data into {target} (not {cfg.db_path}).")
+    seed(target, vin=str(cfg.get("seed.vin", "") or "") or None)
     return 0
 
 
@@ -588,9 +615,7 @@ def main() -> int:
     if args.command == "simulate":
         return cmd_simulate(load_config(args.config))
     if args.command == "seed":
-        from tools.seed_demo_data import seed
-        seed(load_config(args.config).db_path)
-        return 0
+        return cmd_seed(load_config(args.config))
 
     cfg = load_config(args.config)
     if args.command == "doctor":

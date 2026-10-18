@@ -123,3 +123,23 @@ battery:
 simulation:
   host: "127.0.0.1"
   port: 35000
+  # The VIN the simulator answers with -- deliberately NOT vehicle.vin. A
+  # simulator that reports the car's own VIN is indistinguishable from the car
+  # the moment its rows are written next to real ones: that is exactly how 265k
+  # simulated readings and a month of seeded example history ended up inside
+  # this vehicle's own record (see docs/DATA_CATALOGUE.md). Keeping the demo
+  # identity separate means a stray simulator run lands on its own vehicle row
+  # instead of merging into the car's.
+  vin: "WVWZZZE1ZMS000001"
+  # ...and it writes to its own database. `tools/start_scanner.py` points the
+  # collector at this file whenever it starts the simulator, and config loading
+  # refuses a configuration where the two are the same file.
+  db_path: "data/simulator.db"
+
+seed:
+  # `main.py seed` writes a 31-day example dataset so the dashboard and the
+  # analysis paths can be exercised without a car. It gets its own file for the
+  # same reason the simulator does: example history must never share a file (or
+  # a VIN) with measured history.
+  db_path: "data/seed_demo.db"
+  vin: "WVWZZZE1ZMS000001"

@@ -89,7 +89,25 @@ class Config:
 
     @property
     def db_path(self) -> str:
-        return self.get("database.path", "data/odb_scanner.db")
+        """Where measurements are read and written.
+
+        ``ODB_DB_PATH`` wins so a launcher can point one run at a different
+        file without editing configuration -- that is how
+        ``tools/start_scanner.py`` keeps a simulator run away from the car's
+        database (see ``simulator_db_path``).
+        """
+        return (os.environ.get("ODB_DB_PATH")
+                or self.get("database.path", "data/odb_scanner.db"))
+
+    @property
+    def simulator_db_path(self) -> str:
+        """Database for simulator runs. Never the car's (see _validate)."""
+        return self.get("simulation.db_path", "data/simulator.db")
+
+    @property
+    def seed_db_path(self) -> str:
+        """Database for `main.py seed`'s example dataset. Never the car's."""
+        return self.get("seed.db_path", "data/seed_demo.db")
 
 
 class ConfigError(ValueError):
@@ -157,6 +175,24 @@ def _validate(data: dict) -> None:
             "collector.max_value_age_s must exceed "
             "collector.slow_poll_interval, otherwise values that are "
             f"legitimately absent from a cycle are dropped ({age} <= {slow})")
+
+    # Synthetic data must not share a file with measured data. The simulator
+    # reports a VIN and publishes plausible engineering values, so once its rows
+    # are written next to real ones nothing downstream can tell them apart --
+    # which is how a month of simulated readings became part of this vehicle's
+    # history. Comparing the two settings here is the earliest point at which
+    # the mistake is still cheap to fix.
+    for key, label in (("simulation.db_path", "simulator"),
+                       ("seed.db_path", "seed")):
+        other = cfg.get(key)
+        if not other or not cfg.get("database.path"):
+            continue
+        if Path(str(other)) == Path(str(cfg.get("database.path"))):
+            raise ConfigError(
+                f"{key} and database.path are the same file ({other}). The "
+                f"{label} writes synthetic data; pointing it at the car's "
+                "database merges the two with no way to tell them apart "
+                "afterwards. Give it its own file.")
 
 
 def load_config(path: str | Path | None = None,

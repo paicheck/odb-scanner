@@ -302,7 +302,9 @@ def main() -> int:
     # strict=True: the simulator reproduces the field clone's documented
     # refusals (8-digit ATSH, ATCAF0, an >7-byte request under ATCAF1), so a
     # transport regression fails this smoke test rather than only the car.
-    with SimServer("127.0.0.1", args.port, strict=True):
+    # vin=VIN: the simulator now defaults to its own demo VIN, and this run
+    # asserts the VIN read path end to end against the value below.
+    with SimServer("127.0.0.1", args.port, strict=True, vin=VIN):
         run_adapter_checks(cfg, args.cycles)
     run_analysis_checks(cfg)
     run_web_checks(cfg)

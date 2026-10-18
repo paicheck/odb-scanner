@@ -97,7 +97,8 @@ def _alive(pid: int) -> bool:
         return False
 
 
-def _spawn(name: str, args: list[str]) -> int:
+def _spawn(name: str, args: list[str],
+           extra_env: dict[str, str] | None = None) -> int:
     """Start a component detached so it survives this script exiting."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     flags = 0
@@ -122,7 +123,8 @@ def _spawn(name: str, args: list[str]) -> int:
             stdout=log, stderr=subprocess.STDOUT, creationflags=flags,
             # Tells main.py that stderr already goes to a file we manage, so it
             # does not add a console handler and write every line twice.
-            env={**os.environ, "ODB_STDERR_CAPTURED": "1"})
+            env={**os.environ, "ODB_STDERR_CAPTURED": "1",
+                 **(extra_env or {})})
     finally:
         log.close()
     return proc.pid
@@ -241,7 +243,8 @@ def cmd_start(cfg, cycles: int | None, with_web: bool) -> int:
     try:
         sim_host = cfg.get("simulation.host", "127.0.0.1")
         sim_port = int(cfg.get("simulation.port", 35000))
-        if cfg.get("adapter.type", "elm327_tcp") == "elm327_tcp":
+        sim_mode = cfg.get("adapter.type", "elm327_tcp") == "elm327_tcp"
+        if sim_mode:
             if _is_ours(state.get("simulator")) \
                     or _port_open(sim_host, sim_port):
                 skipped.append(f"simulator already up on {sim_host}:{sim_port}")
@@ -265,9 +268,16 @@ def cmd_start(cfg, cycles: int | None, with_web: bool) -> int:
             args = ["main.py", "collect"]
             if cycles is not None:
                 args += ["--cycles", str(cycles)]
-            pid = _spawn("collector", args)
+            # Point a simulator run at its own database. The simulator answers
+            # with a demo VIN, but the collector would still key its readings to
+            # whatever database.path says, and synthetic rows sitting beside
+            # measured ones cannot be told apart afterwards -- this is how a
+            # month of simulated readings became part of the car's history.
+            env = {"ODB_DB_PATH": cfg.simulator_db_path} if sim_mode else None
+            pid = _spawn("collector", args, extra_env=env)
             state["collector"] = _record(pid)
-            started.append(f"collector pid {pid} -> {cfg.get('database.path')} "
+            target = cfg.simulator_db_path if sim_mode else cfg.db_path
+            started.append(f"collector pid {pid} -> {target} "
                            f"(log: data/logs/collector.log)")
 
         web_host = cfg.get("web.host", "127.0.0.1")
@@ -307,12 +317,18 @@ def cmd_status(cfg) -> int:
     state = _load_state()
     sim_host = cfg.get("simulation.host", "127.0.0.1")
     sim_port = int(cfg.get("simulation.port", 35000))
+    sim_mode = cfg.get("adapter.type", "elm327_tcp") == "elm327_tcp"
     web_host = cfg.get("web.host", "127.0.0.1")
     web_port = int(cfg.get("web.port", 8000))
     rows = [
         ("simulator", state.get("simulator"),
          f"{sim_host}:{sim_port} listening={_port_open(sim_host, sim_port)}"),
-        ("collector", state.get("collector"), f"db={cfg.get('database.path')}"),
+        # The collector's database is not always database.path: a simulator run
+        # is pointed at its own file, so report the one it is actually using.
+        ("collector", state.get("collector"),
+         f"db={cfg.simulator_db_path if sim_mode else cfg.db_path}"
+         + (f" (simulator mode; database.path is {cfg.db_path})"
+            if sim_mode else "")),
         ("web", state.get("web"),
          f"{_probe_host(web_host)}:{web_port} "
          f"listening={_port_open(_probe_host(web_host), web_port)}"),

@@ -16,7 +16,21 @@ import socketserver
 import threading
 import time
 
-VIN = b"WVWZZZE1ZMP087053"
+# The VIN the simulator answers with. Deliberately NOT the car's: a simulator
+# that reports the real VIN is indistinguishable from the car as soon as its
+# rows are written next to measured ones, which is how a month of simulated
+# readings (and a seeded example history) became part of this vehicle's own
+# record. Override at run time with `main.py simulate` (config: simulation.vin).
+DEMO_VIN = b"WVWZZZE1ZMS000001"
+VIN = DEMO_VIN
+
+
+def set_vin(vin) -> None:
+    """Point the simulator at another VIN. None/empty leaves it alone."""
+    global VIN
+    if not vin:
+        return
+    VIN = vin.encode() if isinstance(vin, str) else bytes(vin)
 
 # --- synthetic vehicle state -------------------------------------------------
 _state_lock = threading.Lock()
@@ -532,7 +546,8 @@ class _SimTCPServer(socketserver.ThreadingTCPServer):
 
 
 class SimServer:
-    def __init__(self, host: str, port: int, strict: bool = False):
+    def __init__(self, host: str, port: int, strict: bool = False,
+                 vin: str | bytes | None = None):
         self.host, self.port = host, port
         # strict=True makes the simulator reproduce the field clone's
         # documented refusals (8-digit ATSH, ATCAF0, an >7-byte request under
@@ -540,6 +555,14 @@ class SimServer:
         # permissive so the experiment-harness contract tests can still send
         # the forms the real clone refuses.
         self.strict = strict
+        # VIN the simulated vehicle reports; None keeps whatever is current. The
+        # VIN lives in a module global because the DID tables that answer 0xF190
+        # and 0x17FE0076 are plain functions, so this sets it for the process --
+        # one simulator per process is the only arrangement that was ever used.
+        # stop() puts the previous value back, so a caller that pins a VIN for
+        # one server does not silently change the next one's identity.
+        self._prev_vin = VIN
+        set_vin(vin)
         self._srv = None
         self._thread = None
 
@@ -553,6 +576,10 @@ class SimServer:
         if self._srv:
             self._srv.shutdown()
             self._srv.server_close()
+            self._srv = None
+        # See __init__: the VIN is process-global, so hand back whatever was
+        # current before this server claimed it.
+        set_vin(self._prev_vin)
 
     def __enter__(self):
         self.start()

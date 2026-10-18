@@ -155,3 +155,60 @@ def test_a_live_process_with_a_foreign_identity_is_not_ours(monkeypatch):
     assert ss._is_ours({"pid": 10, "identity": "B"}) is False
     assert ss._is_ours({"pid": 10, "identity": None}) is False
     assert ss._is_ours(None) is False
+
+
+# --- which database a run writes to ------------------------------------------
+def _start_config(adapter_type: str):
+    from config import Config
+    return Config({
+        "adapter": {"type": adapter_type, "port": "COM3",
+                    "tcp_host": "127.0.0.1", "tcp_port": 35000},
+        "simulation": {"host": "127.0.0.1", "port": 35000,
+                       "db_path": "data/simulator.db"},
+        "database": {"path": "data/car.db"},
+        "web": {"host": "127.0.0.1", "port": 8000},
+    })
+
+
+def _fake_start(tmp_path, monkeypatch):
+    """Intercept every spawn. No process starts, no port is probed."""
+    _state_at(tmp_path, monkeypatch)
+    monkeypatch.setattr(ss, "LOCK", tmp_path / "start.lock")
+    monkeypatch.setattr(ss, "ROOT", tmp_path.parent)
+    monkeypatch.setattr(ss, "_process_identity", lambda pid: "fake")
+    monkeypatch.setattr(ss, "_wait_port", lambda host, port: True)
+    monkeypatch.setattr(ss, "_port_open", lambda host, port: False)
+    monkeypatch.setattr(ss, "_is_ours", lambda entry: False)
+
+    spawned: dict[str, dict] = {}
+
+    def spawn(name, args, extra_env=None):
+        spawned[name] = {"args": args, "env": extra_env}
+        return 100 + len(spawned)
+
+    monkeypatch.setattr(ss, "_spawn", spawn)
+    return spawned
+
+
+def test_a_simulator_run_is_pointed_at_the_simulators_own_database(
+        tmp_path, monkeypatch):
+    """The collector's database is chosen here, so it is chosen here wrongly.
+
+    This is the step that put the simulator's readings into the car's file: the
+    simulator reports a VIN and the collector keys its rows by whatever
+    `database.path` says, so nothing downstream could tell the two apart.
+    """
+    spawned = _fake_start(tmp_path, monkeypatch)
+    assert ss.cmd_start(_start_config("elm327_tcp"), None, with_web=False) == 0
+    assert spawned["simulator"]["env"] is None
+    assert spawned["collector"]["env"] == {"ODB_DB_PATH": "data/simulator.db"}
+
+
+def test_a_real_car_run_writes_to_the_configured_database(tmp_path, monkeypatch):
+    """An override that leaked into the real-car path would send measured data
+    to the simulator's file instead -- the same mix-up, pointing the other way."""
+    spawned = _fake_start(tmp_path, monkeypatch)
+    assert ss.cmd_start(_start_config("elm327_serial"), None,
+                        with_web=False) == 0
+    assert "simulator" not in spawned, "started a simulator for a real adapter"
+    assert spawned["collector"]["env"] is None

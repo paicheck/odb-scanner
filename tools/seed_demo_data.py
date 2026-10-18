@@ -1,8 +1,13 @@
-"""Seed the database with a realistic 30-day example diagnostic dataset.
+"""Seed a database with a realistic 30-day example diagnostic dataset.
 
 Synthetic data clearly marked as test data. Values mimic an ID.3 58 kWh with
 a slowly growing cell-voltage imbalance and occasional communication DTCs
 after AC charging — enough to exercise every analysis and report path.
+
+It writes under its own VIN and, via `main.py seed`, into its own database
+(seed.db_path). Example history must never share a vehicle row with measured
+history: it is built to look plausible, so nothing downstream could separate
+the two afterwards.
 """
 from __future__ import annotations
 
@@ -12,12 +17,28 @@ from datetime import datetime, timedelta, timezone
 from database.repository import Repository
 from decoders.bms import NOMINAL_CAC_AH_58KWH
 
-VIN = "WVWZZZE1ZMP087053"
+# Demo identity shared with the simulator (simulation.vin). Deliberately not
+# the car's VIN.
+DEMO_VIN = "WVWZZZE1ZMS000001"
+VIN = DEMO_VIN
 
 
-def seed(db_path: str, days: int = 30) -> None:
+def seed(db_path: str, days: int = 30, vin: str | None = None) -> None:
+    """Write `days + 1` days of example data into `db_path`.
+
+    Rows are attached to `vin` (default: the demo identity), so seeding a
+    database that also holds real readings cannot merge the two: they stay on
+    separate vehicle rows.
+    """
+    vin = vin or DEMO_VIN
     with Repository(db_path) as repo:
-        vid = repo.ensure_vehicle(VIN, make="Volkswagen", model="ID.3",
+        others = [row["vin"] for row in repo.conn.execute(
+            "SELECT DISTINCT vin FROM vehicles WHERE vin <> ?", (vin,))]
+        if others:
+            print(f"note: {db_path} also holds data for {', '.join(others)}; "
+                  f"example rows are written under {vin} so the two stay "
+                  f"separable.")
+        vid = repo.ensure_vehicle(vin, make="Volkswagen", model="ID.3",
                                   variant="58 kWh (Pro)", year=2021)
         now = datetime.now(timezone.utc)
         rng = random.Random(42)

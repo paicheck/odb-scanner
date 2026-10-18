@@ -3210,7 +3210,9 @@ def test_simulator_end_to_end():
     from diagnostic.connection import DiagnosticConnection
     from diagnostic.ecus import get_ecu
 
-    with SimServer("127.0.0.1", 35123):
+    # vin=...: the simulator defaults to its own demo VIN (it must not claim the
+    # car's identity by default), and this test asserts the VIN read path.
+    with SimServer("127.0.0.1", 35123, vin="WVWZZZE1ZMP087053"):
         t = Elm327Transport(host="127.0.0.1", tcp_port=35123, timeout=5.0)
         c = DiagnosticConnection(t)
         c.open()
@@ -3246,7 +3248,8 @@ def test_simulator_meb_addressing_end_to_end():
     from decoders.meb import register_meb
     from decoders.registry import DIDRegistry
 
-    with SimServer("127.0.0.1", 35124):
+    # vin=...: see test_simulator_end_to_end; this test asserts the VIN too.
+    with SimServer("127.0.0.1", 35124, vin="WVWZZZE1ZMP087053"):
         t = Elm327Transport(host="127.0.0.1", tcp_port=35124, timeout=5.0)
         c = DiagnosticConnection(t)
         try:
