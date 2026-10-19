@@ -61,8 +61,52 @@ class AnalysisService:
             self.repo, vehicle_id, days)
         anomalies = [dict(a) for a in self.repo.anomalies(vehicle_id, days)]
         ecus = [dict(e) for e in self.repo.list_ecus(vehicle_id)]
+        platform = self._platform_evidence(vehicle_id)
         return prompts.build_context(vehicle, overview, dtcs, charging,
-                                     correlation, anomalies, ecus)
+                                     correlation, anomalies, ecus, **platform)
+
+    def _platform_evidence(self, vehicle_id: int | None) -> dict:
+        """Quality / freshness / provenance summary for the evidence packet.
+
+        The LLM must be told which measurements have a known-wrong decoder and
+        which values are historical, otherwise it will happily call a 1681 °C
+        PCB temperature the most alarming finding on the car. A failure here
+        must never break the AI path, so it degrades to empty on any error.
+        """
+        if not vehicle_id:
+            return {}
+        try:
+            from analysis import freshness
+            from decoders.quality import quality_registry, summary
+            from analysis.provenance import key_states, summary as prov_summary
+
+            profile = self.cfg.get("vehicle.did_profile", "eup")
+            qsum = summary(profile)
+            qrows = quality_registry(profile)
+            excluded = sorted(k for k, q in qrows.items()
+                              if not q.use_in_scoring)
+            quality = {
+                "counts": qsum,
+                "excluded_keys": excluded,
+                "note": "excluded_keys have a known-wrong decoder and must not "
+                        "be used as findings about the vehicle",
+            }
+            module = freshness.module_status(self.repo, vehicle_id)
+            fresh = {
+                "modules": [m.as_dict() for m in module],
+                "silence": freshness.silence_summary(module),
+            }
+            from decoders.registry import build_default_registry
+            registry = build_default_registry(profile)
+            stale_after = float(self.cfg.get("collector.max_value_age_s", 900.0))
+            states = key_states(self.repo, vehicle_id, registry,
+                                stale_after_s=stale_after)
+            provenance = prov_summary(states)
+            return {"quality": quality, "freshness": fresh,
+                    "provenance": provenance}
+        except Exception:  # pragma: no cover - defensive: never break AI
+            log.warning("platform evidence unavailable", exc_info=True)
+            return {}
 
     def ask(self, question: str) -> dict:
         """Generate an LLM diagnostic report. Returns dict with report and

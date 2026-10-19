@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .v { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .v.FAIL { background:#fdecea; color:#a1261b; }
+  .v.INDETERMINATE { background:#fff3cd; color:#7a5d00; }
+  .v.PASS { background:#d4f4dd; color:#136b2c; }
+  .tag-invalid { background:#fdecea; color:#a1261b; }
+  .muted { color:#777; font-size:12px; }
+  details summary { cursor:pointer; font-size:12px; color:#556; }
+</style>
+
+<h2>Measurement quality &amp; decoder lab</h2>
+
+<div class="warn">
+  The known-bad decoders on this car (a 1681&nbsp;&deg;C PCB, a 1738&nbsp;V DC
+  link on a ~435&nbsp;V pack, and their relatives) are <strong>excluded from
+  health scoring, fault attribution and rankings</strong>, but never deleted.
+  They live here instead, next to a re-decode of the car's own stored bytes, so
+  the problem can be investigated rather than hidden. No scale factor is ever
+  changed silently.
+</div>
+
+<div class="cards">
+  <div class="card"><h3>Keys</h3><div class="big">{{ counts.total }}</div><div class="note">{{ counts.excluded }} excluded from scoring</div></div>
+  <div class="card"><h3>Decoder FAIL</h3><div class="big">{{ by_verdict.FAIL or 0 }}</div><div class="note">re-decode or plausibility problem</div></div>
+  <div class="card"><h3>Indeterminate</h3><div class="big">{{ by_verdict.INDETERMINATE or 0 }}</div><div class="note">not enough raw evidence to judge</div></div>
+  <div class="card"><h3>Pass</h3><div class="big">{{ by_verdict.PASS or 0 }}</div><div class="note">reproduces and within range</div></div>
+</div>
+
+<p class="muted" style="margin-top:10px;">
+  Trust mix: {% for v, n in counts.by_verification.items() %}{{ v }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}.
+  Showing worst {{ rows|length }} of {{ total }}.
+</p>
+
+<table>
+  <tr><th>Key</th><th>Verdict</th><th>Trust</th><th>Samples</th><th>Unit</th>
+      <th>Plausible range</th><th>Issues</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><code>{{ r.key }}</code>{% if not r.use_in_scoring %} <span class="v tag-invalid">excluded</span>{% endif %}</td>
+    <td><span class="v {{ r.verdict }}">{{ r.verdict }}</span></td>
+    <td class="muted">{{ r.verification }}</td>
+    <td class="muted">{{ r.n_samples }}</td>
+    <td class="muted">{{ r.unit }}</td>
+    <td class="muted">
+      {% if r.plausible_min is not none %}[{{ r.plausible_min|fmtvalue }}, {{ r.plausible_max|fmtvalue }}]{% else %}—{% endif %}
+    </td>
+    <td class="muted">
+      {% for i in r.issues %}{{ i }}{% if not loop.last %}; {% endif %}{% endfor %}
+      {% if r.examples %}
+      <details>
+        <summary>examples</summary>
+        <ul>
+          {% for ex in r.examples %}<li>{{ ex.ts }} {{ ex.why }}{% if ex.raw %} raw={{ ex.raw }}{% endif %}</li>{% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<p class="muted">
+  Machine-readable: <a href="/api/quality">/api/quality</a> ·
+  <a href="/explore?scoring=0">browse excluded keys</a>
+</p>
+{% endblock %}

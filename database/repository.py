@@ -452,6 +452,30 @@ class Repository:
             (vehicle_id, key, _iso_days_ago(days)),
         ).fetchall()
 
+    def raw_measurement_series(self, vehicle_id: int, key: str, days: int = 30):
+        """Every stored column for one key, oldest first, failures included.
+
+        This backs the evidence export, which must not silently drop rows the
+        way a chart does: unlike `measurement_series` it keeps failed reads,
+        text decodes and the raw response bytes. `success` travels with each
+        row so a reader can filter for themselves.
+        """
+        return self.conn.execute(
+            "SELECT ts, ecu, service, pid, key, value, text_value, unit, "
+            "provenance, decoding_method, doc_status, raw_response, success, "
+            "error FROM measurements WHERE vehicle_id=? AND key=? AND ts>=? "
+            "ORDER BY ts",
+            (vehicle_id, key, _iso_days_ago(days)),
+        ).fetchall()
+
+    def raw_cell_series(self, vehicle_id: int, cell_index: int, days: int = 30):
+        """Every stored column for one physical cell, oldest first."""
+        return self.conn.execute(
+            "SELECT ts, cell_index, voltage_v FROM cell_voltages "
+            "WHERE vehicle_id=? AND cell_index=? AND ts>=? ORDER BY ts",
+            (vehicle_id, cell_index, _iso_days_ago(days)),
+        ).fetchall()
+
     def latest_measurements(self, vehicle_id: int,
                             max_age_s: float | None = None,
                             live_only: bool = False) -> dict:
@@ -1114,6 +1138,114 @@ class Repository:
             "SELECT * FROM anomalies WHERE vehicle_id=? AND ts>=? ORDER BY ts",
             (vehicle_id, _iso_days_ago(days)),
         ).fetchall()
+
+    # -- baselines ------------------------------------------------------------
+    def save_baseline(self, vehicle_id: int, key: str, window_days: float,
+                      method: str, stats: dict, notes: str = "",
+                      ts: str | None = None) -> None:
+        """Upsert the robust baseline for (vehicle, key, window, method).
+
+        Keyed so a recomputation over the same window replaces the row rather
+        than accumulating near-identical copies; a different window is a
+        different baseline and gets its own row.
+        """
+        self.conn.execute(
+            "INSERT INTO baselines(vehicle_id, key, window_days, method, "
+            "median, mad, sigma, mean, std, p05, p95, n, notes, computed_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(vehicle_id, key, window_days, method) DO UPDATE SET "
+            "median=excluded.median, mad=excluded.mad, sigma=excluded.sigma, "
+            "mean=excluded.mean, std=excluded.std, p05=excluded.p05, "
+            "p95=excluded.p95, n=excluded.n, notes=excluded.notes, "
+            "computed_at=excluded.computed_at",
+            (vehicle_id, key, float(window_days), method,
+             stats.get("median"), stats.get("mad"), stats.get("sigma"),
+             stats.get("mean"), stats.get("std"), stats.get("p05"),
+             stats.get("p95"), int(stats.get("n") or 0), notes or None,
+             ts or utcnow()),
+        )
+        self.conn.commit()
+
+    def baselines(self, vehicle_id: int, key: str | None = None) -> list:
+        sql = "SELECT * FROM baselines WHERE vehicle_id=?"
+        args: list = [vehicle_id]
+        if key:
+            sql += " AND key=?"
+            args.append(key)
+        sql += " ORDER BY key, window_days"
+        return self.conn.execute(sql, args).fetchall()
+
+    def baseline(self, vehicle_id: int, key: str, window_days: float,
+                 method: str = "robust-median-mad"):
+        return self.conn.execute(
+            "SELECT * FROM baselines WHERE vehicle_id=? AND key=? AND "
+            "window_days=? AND method=?",
+            (vehicle_id, key, float(window_days), method)).fetchone()
+
+    # -- investigations -------------------------------------------------------
+    def open_investigation(self, vehicle_id: int, title: str, symptom: str,
+                           criteria: str = "", anchor_key: str | None = None,
+                           anchor_ecu: str | None = None,
+                           ts: str | None = None) -> int:
+        stamp = ts or utcnow()
+        cur = self.conn.execute(
+            "INSERT INTO investigations(vehicle_id, title, symptom, anchor_key, "
+            "anchor_ecu, opened_at, updated_at, status, criteria) "
+            "VALUES (?,?,?,?,?,?,?, 'open', ?)",
+            (vehicle_id, title, symptom, anchor_key, anchor_ecu, stamp, stamp,
+             criteria or None),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def add_investigation_evidence(self, investigation_id: int, stage: str,
+                                   kind: str, observation: str,
+                                   ref: str | None = None,
+                                   detail: str | None = None,
+                                   ts: str | None = None,
+                                   certain: bool = True) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO investigation_evidence(investigation_id, ts, stage, "
+            "kind, ref, observation, detail, certain) VALUES (?,?,?,?,?,?,?,?)",
+            (investigation_id, ts or utcnow(), stage, kind, ref, observation,
+             detail, int(certain)),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def update_investigation(self, investigation_id: int, *, status: str | None = None,
+                             summary: str | None = None,
+                             conclusion: str | None = None,
+                             criteria: str | None = None,
+                             ts: str | None = None) -> None:
+        fields = []
+        args: list = []
+        for col, value in (("status", status), ("summary", summary),
+                           ("conclusion", conclusion), ("criteria", criteria)):
+            if value is not None:
+                fields.append(f"{col}=?")
+                args.append(value)
+        fields.append("updated_at=?")
+        args.append(ts or utcnow())
+        args.append(investigation_id)
+        self.conn.execute(
+            f"UPDATE investigations SET {', '.join(fields)} WHERE id=?", args)
+        self.conn.commit()
+
+    def investigations(self, vehicle_id: int) -> list:
+        return self.conn.execute(
+            "SELECT * FROM investigations WHERE vehicle_id=? "
+            "ORDER BY updated_at DESC, id DESC", (vehicle_id,)).fetchall()
+
+    def investigation(self, investigation_id: int):
+        return self.conn.execute(
+            "SELECT * FROM investigations WHERE id=?",
+            (investigation_id,)).fetchone()
+
+    def investigation_evidence(self, investigation_id: int) -> list:
+        return self.conn.execute(
+            "SELECT * FROM investigation_evidence WHERE investigation_id=? "
+            "ORDER BY ts, id", (investigation_id,)).fetchall()
 
 
 

@@ -309,6 +309,74 @@ def _analyze(repo, vid: int, cfg) -> int:
     return 0
 
 
+def cmd_quality(cfg, persist: bool = False) -> int:
+    """Print the measurement-quality registry and the decoder-lab verdicts.
+
+    Read-only unless --persist is given: the decoder lab re-decodes the car's
+    own stored raw bytes, and storing the verdict is a deliberate act.
+    """
+    with Repository(cfg.db_path) as repo:
+        row = repo.first_vehicle()
+        if not row:
+            print("No vehicle in database.")
+            return 1
+        vid = row["id"]
+        profile = cfg.get("vehicle.did_profile", "eup")
+
+        from analysis import decoder_lab
+        from decoders.quality import summary
+
+        s = summary(profile)
+        print(f"Measurement quality ({profile}): {s['total']} keys, "
+              f"{s['excluded']} excluded from scoring")
+        for v, n in sorted(s["by_verification"].items()):
+            print(f"  {v:<12} {n}")
+
+        evals = decoder_lab.evaluate_all(repo, vid, profile)
+        fails = [e for e in evals if e.verdict == "FAIL"]
+        print(f"\nDecoder lab: {len(fails)} FAIL of {len(evals)} evaluated")
+        for e in fails:
+            print(f"  {e.key:<48} {e.verdict:<14} {e.n_samples:>4} samples")
+            for issue in e.issues:
+                print(f"      - {issue}")
+        if persist:
+            n = decoder_lab.persist_evaluations(repo, profile, evals)
+            print(f"\nPersisted {n} evaluations to definition_evaluations.")
+        else:
+            print("\n(print-only; pass --persist to store evaluations)")
+    return 0
+
+
+def cmd_status(cfg) -> int:
+    """Print per-module freshness and the observation state of key anchors."""
+    with Repository(cfg.db_path) as repo:
+        row = repo.first_vehicle()
+        if not row:
+            print("No vehicle in database.")
+            return 1
+        vid = row["id"]
+        from analysis import freshness
+
+        statuses = freshness.module_status(repo, vid)
+        summary = freshness.silence_summary(statuses)
+        print(f"Modules: {summary['active']} active, {summary['idle']} idle, "
+              f"{summary['silent']} silent, "
+              f"{summary['imported-only']} imported-only, "
+              f"{summary['no-readings']} no-readings")
+        for m in statuses:
+            age = f"{m.age_s / 3600:.1f}h" if m.age_s is not None else "—"
+            print(f"  {m.ecu:<14} {m.status:<12} last {age:>8}  "
+                  f"ok/fail {m.successes}/{m.failures}")
+        print("\nKey anchors:")
+        fresh_after = float(cfg.get("collector.max_value_age_s", 900.0))
+        for key in ("soc_abs", "pack_voltage", "lv_voltage_obd",
+                    "battery_temp", "odometer_km", "charge_mode"):
+            obs = freshness.observe_key(repo, vid, key,
+                                        fresh_after_s=fresh_after)
+            print(f"  {key:<16} {obs.state.value:<18} {obs.ts or '—'}")
+    return 0
+
+
 def cmd_guard_test() -> int:
     """Verify the UDS read-only guard.
 
@@ -507,7 +575,7 @@ def build_parser() -> argparse.ArgumentParser:
                         choices=["discover", "collect", "analyze", "report",
                                  "serve", "simulate", "seed", "guard-test",
                                  "prune", "backup", "doctor", "sync-cloud",
-                                 "unsupported-dids"])
+                                 "unsupported-dids", "quality", "status"])
     parser.add_argument("--days", type=float, default=90.0,
                         help="prune: age in days to keep (default 90)")
     parser.add_argument("--hard", action="store_true",
@@ -534,6 +602,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="doctor: per-command timeout in seconds")
     parser.add_argument("--only-config", action="store_true",
                         help="doctor: print configuration, touch no hardware")
+    parser.add_argument("--persist", action="store_true",
+                        help="quality: also store the decoder evaluations in "
+                             "the definition store (default: print only)")
     return parser
 
 
@@ -557,6 +628,8 @@ LOG_COMPONENT = {
     "seed": "maintenance",
     "unsupported-dids": "maintenance",
     "sync-cloud": "cloud",
+    "quality": "maintenance",
+    "status": "maintenance",
 }
 
 
@@ -644,6 +717,10 @@ def main() -> int:
         return cmd_unsupported_dids(cfg, args.clear, args.ecu)
     if args.command == "sync-cloud":
         return cmd_sync_cloud(cfg)
+    if args.command == "quality":
+        return cmd_quality(cfg, args.persist)
+    if args.command == "status":
+        return cmd_status(cfg)
     try:
         if args.command == "discover":
             return cmd_discover(cfg)

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .state { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .state.fresh, .state.repeated { background:#d6f5d6; color:#1c6b1c; }
+  .state.stale { background:#fff3cd; color:#8a6d00; }
+  .state.missing, .state.unknown, .state.carried-forward { background:#eceff1; color:#546e7a; }
+  .state.collector-failure { background:#fdecea; color:#a1261b; }
+  .muted { color:#777; font-size:12px; }
+</style>
+
+<h2>Collection status</h2>
+
+<div class="warn">
+  A module is <strong>silent</strong> when it stopped answering while the rest of
+  the car kept answering. It is <strong>idle</strong> when the whole vehicle has
+  been quiet. Neither is the same as a module reporting a normal value, and an
+  old reading is never shown as current.
+</div>
+
+<div class="cards">
+  <div class="card"><h3>Active</h3><div class="big">{{ silence.active or 0 }}</div><div class="note">answering normally</div></div>
+  <div class="card"><h3>Idle</h3><div class="big">{{ silence.idle or 0 }}</div><div class="note">whole vehicle quiet (car asleep / collector stopped)</div></div>
+  <div class="card"><h3>Silent</h3><div class="big">{{ silence.silent or 0 }}</div><div class="note">stopped while others kept answering</div></div>
+  <div class="card"><h3>No readings</h3><div class="big">{{ silence['no-readings'] or 0 }}</div><div class="note">never answered here</div></div>
+  <div class="card"><h3>Imported only</h3><div class="big">{{ silence['imported-only'] or 0 }}</div><div class="note">only Car Scanner evidence; never read live</div></div>
+</div>
+
+<h3 style="margin-top:20px;">Modules</h3>
+<table>
+  <tr><th>ECU</th><th>Status</th><th>Last success</th><th>Age</th><th>OK / failed</th><th>Note</th></tr>
+  {% for m in modules %}
+  <tr>
+    <td><code>{{ m.ecu }}</code></td>
+    <td><span class="state {{ m.status }}">{{ m.status }}</span></td>
+    <td class="muted">{{ m.last_success_ts[:19] if m.last_success_ts else '—' }}</td>
+    <td class="muted">{% if m.age_s is not none %}{{ (m.age_s / 3600)|round(1) }} h{% else %}—{% endif %}</td>
+    <td class="muted">{{ m.successes }} / {{ m.failures }}</td>
+    <td class="muted">{{ m.note }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h3 style="margin-top:20px;">Key anchors</h3>
+<table>
+  <tr><th>Key</th><th>State</th><th>Value</th><th>Observed at</th><th>Reason</th></tr>
+  {% for k, o in observations.items() %}
+  <tr>
+    <td><code>{{ k }}</code></td>
+    <td><span class="state {{ o.state }}">{{ o.state }}</span></td>
+    <td>{% if o.value is not none %}{{ o.value|fmtvalue }}{% else %}—{% endif %}</td>
+    <td class="muted">{{ o.ts[:19] if o.ts else '—' }}</td>
+    <td class="muted">{{ o.reason }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% if provenance %}
+<h3 style="margin-top:20px;">Provenance across the catalogue</h3>
+<p class="muted">
+  live {{ provenance.live }} · stale {{ provenance.stale }} · imported
+  {{ provenance.imported }} · simulated {{ provenance.simulated }} ·
+  unavailable {{ provenance.unavailable }} · unverified {{ provenance.unverified }}
+  (of {{ provenance.total }})
+</p>
+{% endif %}
+{% endblock %}

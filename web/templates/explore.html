@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .filters { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .filters label { display:flex; flex-direction:column; font-size:12px; color:#556; gap:3px; }
+  .filters input, .filters select { padding:6px 8px; font-size:13px; border:1px solid #cfd8e0; border-radius:4px; }
+  .state { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .state.fresh, .state.repeated { background:#d6f5d6; color:#1c6b1c; }
+  .state.stale { background:#fff3cd; color:#8a6d00; }
+  .state.missing { background:#e6e8ea; color:#6a7076; }
+  .state.collector-failure { background:#fdecea; color:#a1261b; }
+  .state.unknown, .state.carried-forward { background:#eceff1; color:#546e7a; }
+  .v-invalid { background:#fdecea; color:#a1261b; }
+  .v-unknown { background:#eceff1; color:#546e7a; }
+  .v-provisional { background:#fff3cd; color:#7a5d00; }
+  .v-verified { background:#d4f4dd; color:#136b2c; }
+  table.disc td { font-size:13px; }
+  table.disc tbody tr:hover { background:#f0f5fa; }
+  .muted { color:#777; font-size:12px; }
+  .marker-note { font-size:12px; color:#556; }
+</style>
+
+<h2>Explore measurements</h2>
+<p class="muted">
+  Search and filter every key in the decoder catalogue. {{ entries|length }} of
+  {{ total_entries }} keys match. Charts are downsampled on the server
+  ({{ chart.raw_points }} raw &rarr; {{ chart.returned_points }} points,
+  method {{ chart.method }}); the raw rows are never discarded.
+</p>
+
+<div class="card">
+  <form class="filters" method="get" action="/explore">
+    <label>Search
+      <input type="text" name="q" value="{{ query or '' }}" placeholder="key, name or unit">
+    </label>
+    <label>Trust
+      <select name="verification">
+        <option value="">any</option>
+        {% for v in ['verified','provisional','unknown','invalid'] %}
+        <option value="{{ v }}" {% if verification == v %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Kind
+      <select name="kind">
+        <option value="">any</option>
+        {% for k in ['numeric','text','json','derived','unknown'] %}
+        <option value="{{ k }}" {% if kind == k %}selected{% endif %}>{{ k }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Observation
+      <select name="state">
+        <option value="">any</option>
+        {% for s in ['fresh','repeated','stale','missing','collector-failure','carried-forward','unknown'] %}
+        <option value="{{ s }}" {% if state == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Scoring
+      <select name="scoring">
+        <option value="">any</option>
+        <option value="1" {% if scoring == '1' %}selected{% endif %}>usable</option>
+        <option value="0" {% if scoring == '0' %}selected{% endif %}>excluded (known-bad)</option>
+      </select>
+    </label>
+    <label>ECU
+      <select name="ecu">
+        <option value="">any</option>
+        {% for e, n in facets.ecu.items() %}
+        <option value="{{ e }}" {% if ecu == e %}selected{% endif %}>{{ e }} ({{ n }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Days
+      <input type="number" name="days" value="{{ days }}" min="1" max="3650" style="width:80px;">
+    </label>
+    <label>Max points
+      <input type="number" name="max_points" value="{{ max_points }}" min="20" max="20000" style="width:90px;">
+    </label>
+    <button type="submit">Apply</button>
+  </form>
+</div>
+
+{% if entries %}
+<div class="card chartbox">
+  <h3>{{ key }} <span class="muted">{{ chart.raw_points }} raw points</span></h3>
+  <div class="muted" style="margin:4px 0 8px;">
+    export raw rows (all columns, failures kept):
+    <a href="/api/export/series?key={{ key }}&days={{ days }}&format=csv">CSV</a>
+    &middot;
+    <a href="/api/export/series?key={{ key }}&days={{ days }}&format=json">JSON</a>
+    &middot;
+    <a href="/api/export/discovery?{% if query %}q={{ query }}&{% endif %}{% if verification %}verification={{ verification }}&{% endif %}{% if kind %}kind={{ kind }}&{% endif %}{% if state %}state={{ state }}&{% endif %}{% if ecu %}ecu={{ ecu }}&{% endif %}format=csv">filtered catalogue CSV</a>
+  </div>
+  {% for o in observations %}
+  <p class="muted">
+    observation: <span class="state {{ o.state }}">{{ o.state }}</span>
+    {% if o.ts %}observed at {{ o.ts }}{% endif %}
+    {% if o.age_s is not none %} ({{ o.age_s|round(0) }}s ago){% endif %}
+    {% if o.reason %} &mdash; {{ o.reason }}{% endif %}
+  </p>
+  {% endfor %}
+  <canvas id="chart" height="80"></canvas>
+  <div id="empty" class="warn" style="display:none;">No numeric readings in this window.</div>
+  {% if markers %}
+  <details style="margin-top:8px;">
+    <summary class="marker-note">{{ markers|length }} events in this window (not causes &mdash; just when things happened)</summary>
+    <ul class="marker-note">
+      {% for m in markers[:40] %}<li>{{ m.ts[:19] }} &mdash; [{{ m.kind }}] {{ m.label }}</li>{% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</div>
+
+<table class="disc">
+  <thead><tr>
+    <th>Key</th><th>Name</th><th>Unit</th><th>ECU</th><th>Trust</th>
+    <th>Kind</th><th>Observation</th><th>Last read</th><th>Scoring</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for e in entries %}
+  <tr>
+    <td><code>{{ e.key }}</code></td>
+    <td>{{ e.name }}</td>
+    <td>{{ e.unit }}</td>
+    <td class="muted">{{ e.ecu_key }}</td>
+    <td><span class="state v-{{ e.verification.value }}">{{ e.verification.value }}</span></td>
+    <td class="muted">{{ e.data_kind.value }}</td>
+    <td><span class="state {{ e.state.value }}">{{ e.state.value }}</span></td>
+    <td class="muted">{{ e.last_success_ts[:19] if e.last_success_ts else '—' }}</td>
+    <td>{% if e.use_in_scoring %}<span class="muted">usable</span>{% else %}<span class="state v-invalid" title="{{ e.known_issue }}">excluded</span>{% endif %}</td>
+    <td><a href="/explore?key={{ e.key }}{% if query %}&q={{ query }}{% endif %}&days={{ days }}&max_points={{ max_points }}">chart</a></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<script>
+  const CHART = {{ chart|tojson }};
+  const MARKERS = {{ markers|tojson }};
+  (function () {
+    const n = (CHART.value || []).length;
+    document.getElementById('empty').style.display = n ? 'none' : 'block';
+    if (!n) return;
+    const ctx = document.getElementById('chart').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: CHART.ts.map(t => t.slice(5, 16).replace('T', ' ')),
+        datasets: [{
+          label: CHART.key, data: CHART.value,
+          borderColor: '#0b2340', backgroundColor: 'rgba(11,35,64,0.08)',
+          borderWidth: 1.5, pointRadius: 0, tension: 0.12,
+        }]
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: { x: { ticks: { maxTicksLimit: 12, font: { size: 10 } } } },
+        animation: false,
+      }
+    });
+  })();
+</script>
+
+{% else %}
+<div class="warn">No keys match those filters.</div>
+{% endif %}
+{% endblock %}

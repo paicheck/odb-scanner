@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .st { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .st.open { background:#dbe7fb; color:#1b4f8f; }
+  .st.investigating { background:#fff3cd; color:#7a5d00; }
+  .st.resolved { background:#d4f4dd; color:#136b2c; }
+  .st.insufficient-evidence { background:#eceff1; color:#546e7a; }
+  .muted { color:#777; font-size:12px; }
+</style>
+
+<h2>Investigations</h2>
+
+<div class="warn">
+  An investigation keeps the four stages apart: what was <strong>observed</strong>,
+  what else happened nearby (<strong>association</strong>, never a cause), a
+  candidate <strong>explanation</strong> with what would falsify it, and a
+  <strong>diagnosis</strong> only when the criteria written up front are met.
+  When the evidence is too thin the result is stated plainly as
+  <em>insufficient evidence</em>.
+</div>
+
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <h3>Open an investigation</h3>
+  <form method="post" action="/investigations/new" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+    <label style="display:flex;flex-direction:column;font-size:12px;color:#556;gap:3px;">Title
+      <input name="title" required placeholder="e.g. Electric drive warning on 12 Oct">
+    </label>
+    <label style="display:flex;flex-direction:column;font-size:12px;color:#556;gap:3px;">Symptom
+      <input name="symptom" required size="40" placeholder="what was seen, by whom, when">
+    </label>
+    <label style="display:flex;flex-direction:column;font-size:12px;color:#556;gap:3px;">Anchor key
+      <input name="anchor_key" placeholder="e.g. torque_calculated_from_measured_currents">
+    </label>
+    <label style="display:flex;flex-direction:column;font-size:12px;color:#556;gap:3px;">Resolution criteria (written first)
+      <input name="criteria" size="40" placeholder="what evidence would confirm or refute it">
+    </label>
+    <button type="submit">Open</button>
+  </form>
+</div>
+
+<table>
+  <tr><th>Title</th><th>Symptom</th><th>Status</th><th>Anchor</th><th>Updated</th><th>Conclusion</th></tr>
+  {% for i in investigations %}
+  <tr>
+    <td><a href="/investigations/{{ i.id }}">{{ i.title }}</a></td>
+    <td class="muted">{{ i.symptom }}</td>
+    <td><span class="st {{ i.status }}">{{ i.status }}</span></td>
+    <td class="muted">{{ i.anchor_key or '—' }}</td>
+    <td class="muted">{{ i.updated_at[:19] }}</td>
+    <td class="muted">{{ (i.conclusion or '')[:80] }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">No investigations yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

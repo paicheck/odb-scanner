@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .stage { margin: 14px 0; }
+  .stage h3 { font-size: 14px; text-transform: uppercase; letter-spacing:.04em; color:#456; }
+  .ev { background:#fff; border-left:3px solid #0b2340; padding:8px 12px; margin:6px 0; font-size:13px; }
+  .ev.association { border-color:#8a6d00; }
+  .ev.explanation { border-color:#1b4f8f; }
+  .ev.diagnosis { border-color:#136b2c; }
+  .certain-flag { font-size:11px; color:#a1261b; }
+  .muted { color:#777; font-size:12px; }
+  .st { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .st.open { background:#dbe7fb; color:#1b4f8f; }
+  .st.resolved { background:#d4f4dd; color:#136b2c; }
+  .st.insufficient-evidence { background:#eceff1; color:#546e7a; }
+</style>
+
+<h2>{{ inv.title }} <span class="st {{ inv.status }}">{{ inv.status }}</span></h2>
+<p><strong>Symptom:</strong> {{ inv.symptom }}</p>
+<p class="muted">
+  Anchor: {{ inv.anchor_key or '—' }}{% if inv.anchor_ecu %} ({{ inv.anchor_ecu }}){% endif %} ·
+  opened {{ inv.opened_at[:19] }} · criteria: {{ inv.criteria or 'none written' }} ·
+  export evidence packet:
+  <a href="/api/export/investigation/{{ inv.id }}?format=json">JSON</a> /
+  <a href="/api/export/investigation/{{ inv.id }}?format=csv">CSV</a>
+</p>
+
+{% if inv.conclusion %}
+<div class="{% if inv.status == 'resolved' %}card{% else %}warn{% endif %}">{{ inv.conclusion }}</div>
+{% endif %}
+
+<div class="stage">
+  <h3>Observation</h3>
+  {% for e in inv.evidence if e.stage == 'observation' %}
+  <div class="ev">{{ e.observation }} — <span class="muted">{{ e.detail }}</span>
+    {% if not e.certain %}<span class="certain-flag">[uncertain]</span>{% endif %}</div>
+  {% else %}<p class="muted">Nothing observed yet.</p>{% endfor %}
+</div>
+
+<div class="stage">
+  <h3>Association (not causation)</h3>
+  {% for e in inv.evidence if e.stage == 'association' %}
+  <div class="ev association">{{ e.observation }} — <span class="muted">{{ e.detail }}</span></div>
+  {% else %}<p class="muted">Nothing recorded nearby.</p>{% endfor %}
+</div>
+
+<div class="stage">
+  <h3>Explanation</h3>
+  {% for e in inv.evidence if e.stage == 'explanation' %}
+  <div class="ev explanation">[{{ e.kind }}] {{ e.observation }} — <span class="muted">{{ e.detail }}</span></div>
+  {% else %}<p class="muted">No mechanism stated.</p>{% endfor %}
+</div>
+
+<div class="stage">
+  <h3>Diagnosis</h3>
+  {% for e in inv.evidence if e.stage == 'diagnosis' %}
+  <div class="ev diagnosis">{{ e.observation }}</div>
+  {% else %}
+  <p class="muted">
+    Not concluded. Criteria {{ 'are' if criteria_ok else 'are not' }} met:
+    {{ criteria_reason }}.
+  </p>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h3>Add evidence or close</h3>
+  <form method="post" action="/investigations/{{ inv.id }}/observe" style="display:flex;gap:8px;align-items:flex-end;">
+    <label style="display:flex;flex-direction:column;font-size:12px;color:#556;gap:3px;">Observe a measurement key
+      <input name="key" placeholder="e.g. soc_abs" required>
+    </label>
+    <button type="submit">Record observation</button>
+  </form>
+  <form method="post" action="/investigations/{{ inv.id }}/finalize" style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;">
+    <label style="display:flex;flex-direction:column;font-size:12px;color:#556;gap:3px;">Summary
+      <input name="summary" size="50" placeholder="one-line summary">
+    </label>
+    <button type="submit">Finalise</button>
+  </form>
+</div>
+
+<p class="muted">Machine-readable: <a href="/api/investigations">/api/investigations</a></p>
+{% endblock %}

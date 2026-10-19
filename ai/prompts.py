@@ -51,9 +51,21 @@ Write the report now."""
 
 def build_context(vehicle: dict, overview: dict, dtcs: dict,
                   charging: dict, correlation: dict, anomalies: list,
-                  ecus: list | None = None, events: list | None = None) -> dict:
-    """Assemble the structured evidence packet (compact JSON)."""
-    return {
+                  ecus: list | None = None, events: list | None = None,
+                  *, quality: dict | None = None,
+                  freshness: dict | None = None,
+                  provenance: dict | None = None,
+                  investigation: dict | None = None) -> dict:
+    """Assemble the structured evidence packet (compact JSON).
+
+    The optional arguments carry the platform's newer evidence discipline:
+    `quality` (which decoders are trusted / excluded), `freshness` (what was
+    actually observed and when), `provenance` (live vs imported vs simulated)
+    and `investigation` (the staged, persisted fault hunt). They are additive so
+    existing callers (and tests) that pass the first seven arguments keep
+    working unchanged.
+    """
+    context = {
         "vehicle": vehicle,
         "battery": {
             "soc_latest_pct": overview.get("soc_latest_pct"),
@@ -69,6 +81,15 @@ def build_context(vehicle: dict, overview: dict, dtcs: dict,
         "accessible_ecus": ecus or [],
         "recent_events": events or [],
     }
+    if quality is not None:
+        context["measurement_quality"] = quality
+    if freshness is not None:
+        context["observation_freshness"] = freshness
+    if provenance is not None:
+        context["provenance"] = provenance
+    if investigation is not None:
+        context["investigation"] = investigation
+    return context
 
 
 def interpret_prompt(context: dict, question: str) -> str:
@@ -76,6 +97,28 @@ def interpret_prompt(context: dict, question: str) -> str:
         question=question,
         context=json.dumps(context, indent=1, default=str),
     )
+
+
+# Appended to the analyst rules for evidence-citation requests. Kept separate
+# from SYSTEM_PROMPT so the base prompt (and its tests) do not move.
+CITATION_RULES = """
+Evidence discipline (mandatory):
+- Cite the exact measurement key and its observed timestamp for every claim you
+  make, in the form key@timestamp. Never cite "latest" without its timestamp.
+- State the sample size behind every statistic and the limitations of that
+  evidence. If there is too little evidence, say so and refuse to conclude.
+- Measurements listed under measurement_quality with use_in_scoring=false have a
+  known-wrong decoder. You may mention them as findings about the DATA, never as
+  findings about the VEHICLE, and never as the basis of a diagnosis.
+- Values whose observation_freshness state is not "fresh" are historical. Do not
+  describe them as current.
+- Report counter-evidence explicitly, and do not treat temporal order (something
+  that happened after a warning) as cause.
+"""
+
+
+def investigation_prompt(context: dict, question: str) -> str:
+    return interpret_prompt(context, question) + CITATION_RULES
 
 
 def health_report_question(days: int) -> str:

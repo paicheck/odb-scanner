@@ -299,4 +299,63 @@ CREATE TABLE IF NOT EXISTS unsupported_dids (
     count INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (vehicle_id, ecu_key, did)
 );
+
+-- ======================================================================
+-- Investigation platform (additive; SCHEMA_VERSION stays 1)
+-- ======================================================================
+-- A baseline is how this car *usually* behaves for one key over one window,
+-- computed robustly (median/MAD) and stored with its sample size so a report
+-- quoting it can be reproduced. Storing it rather than only recomputing it is
+-- deliberate: "the baseline changed since the report" must be a visible fact,
+-- not a silent one. `method` and `n` are recorded so a small-sample baseline
+-- cannot pass itself off as a well-established one.
+CREATE TABLE IF NOT EXISTS baselines (
+    id INTEGER PRIMARY KEY,
+    vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
+    key TEXT NOT NULL,
+    window_days REAL NOT NULL,
+    method TEXT NOT NULL,          -- robust-median-mad | mean-std
+    median REAL, mad REAL, sigma REAL, mean REAL, std REAL,
+    p05 REAL, p95 REAL,
+    n INTEGER NOT NULL DEFAULT 0,
+    notes TEXT,
+    computed_at TEXT NOT NULL,
+    UNIQUE(vehicle_id, key, window_days, method)
+);
+
+-- An investigation is the durable record of a fault hunt. `status` cannot be
+-- 'resolved' without the evidence trail satisfying `criteria`; the module that
+-- writes it (analysis/investigation.py) enforces that. The four stages are
+-- kept as separate evidence rows because the brief insists observation,
+-- association, explanation and confirmed diagnosis are not conflated.
+CREATE TABLE IF NOT EXISTS investigations (
+    id INTEGER PRIMARY KEY,
+    vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
+    title TEXT NOT NULL,
+    symptom TEXT NOT NULL,
+    anchor_key TEXT,               -- measurement key the symptom is anchored on
+    anchor_ecu TEXT,
+    opened_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',   -- open | investigating | insufficient-evidence | resolved
+    criteria TEXT,                 -- what would confirm / refute it, written first
+    summary TEXT,
+    conclusion TEXT
+);
+
+CREATE TABLE IF NOT EXISTS investigation_evidence (
+    id INTEGER PRIMARY KEY,
+    investigation_id INTEGER NOT NULL REFERENCES investigations(id),
+    ts TEXT NOT NULL,
+    stage TEXT NOT NULL,           -- observation | association | explanation | diagnosis
+    kind TEXT NOT NULL,            -- measurement | event | dtc | baseline | counter-evidence
+    ref TEXT,                      -- e.g. "key@2026-10-12T09:00:00+00:00" or "event:104"
+    observation TEXT NOT NULL,
+    detail TEXT,
+    -- Whether the value behind this row was freshly observed AND scoreable.
+    -- Stored, not recomputed, because a diagnosis must not later be upgraded by
+    -- a value going stale (or a decoder being reclassified) after the fact.
+    certain INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS ix_invev_inv ON investigation_evidence(investigation_id, ts);
 """
