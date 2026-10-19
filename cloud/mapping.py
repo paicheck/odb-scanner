@@ -8,6 +8,8 @@ every retry of the same local row.
 """
 from __future__ import annotations
 
+import json
+import math
 import re
 import uuid
 from datetime import datetime, timezone
@@ -113,6 +115,49 @@ def _text_or_none(value, limit: int | None = None) -> str | None:
     return text
 
 
+def split_value(value, text_value) -> tuple[float | None, str | None]:
+    """Split a local measurement into the cloud's (numeric, text) pair.
+
+    SQLite declares no type for ``measurements.value``, so a decoder that
+    returns text stores text in it: the gear selector is "P", ``vin`` is a
+    17-character string. The cloud column is DOUBLE and ``value`` in the payload
+    is typed as a number, so forwarding the local value unchanged is rejected at
+    the edge -- which is how the first sync of this car's history died, on
+    ``gear``, with 27 batches already uploaded and the remaining rows held back
+    by the watermark. The row is not wrong; only its destination is.
+
+    A value that reads as a number stays numeric, because that is what the
+    column is for and "31.4" means 31.4. Anything else moves to ``text_value``,
+    preserved exactly, and the numeric column is left NULL -- absent rather than
+    zero, the same way the local row already reads. Nothing is ever truncated or
+    re-formatted to fit.
+
+    Local rows never set both (a structured decode puts the JSON in
+    ``text_value`` and leaves ``value`` NULL), so the two fields cannot
+    disagree. Non-finite floats go to ``text_value`` as well: MySQL cannot store
+    NaN or infinity in a DOUBLE, and one such row would otherwise block every
+    later upload of the archive.
+    """
+    text = _text_or_none(text_value)
+    if value is None:
+        return None, text
+    if isinstance(value, bool):          # bool is an int; keep it a 0/1 number
+        return float(value), text
+    if isinstance(value, (int, float)):
+        if math.isfinite(value):
+            return float(value), text
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            number = None
+        if number is not None and math.isfinite(number):
+            return number, text
+    if text is None:
+        text = value if isinstance(value, str) else json.dumps(value)
+    return None, text
+
+
 def row_from_payload(source_id: str, payload: dict, received_at: datetime) -> tuple:
     """Turn one validated request measurement into a DB column tuple.
 
@@ -143,8 +188,14 @@ def row_from_payload(source_id: str, payload: dict, received_at: datetime) -> tu
         _optional_float(payload.get("value")),
         text_value,
         _text_or_none(payload.get("unit"), 24),
-        _text_or_none(payload.get("provenance")) or "reported",
-        _text_or_none(payload.get("decoding_method")) or "unknown",
+        # Every width here mirrors the column in schema.sql, and it is checked
+        # rather than assumed because the INSERT is an INSERT IGNORE: MySQL
+        # downgrades "data too long" to a warning under IGNORE, so an overlong
+        # value is TRUNCATED, not rejected. That is how 266 imported rows
+        # reached the archive with provenance "imported: Car Scanner CS" -- the
+        # final "V" cut off by a VARCHAR(24) column, silently.
+        _text_or_none(payload.get("provenance"), 64) or "reported",
+        _text_or_none(payload.get("decoding_method"), 120) or "unknown",
         _text_or_none(payload.get("doc_status"), 160),
         raw_response,
         1 if _truthy(payload.get("success", True)) else 0,

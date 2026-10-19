@@ -44,15 +44,35 @@ def test_settings_point_at_the_ingest_endpoint():
 
 def test_the_scratch_seed_is_shaped_like_real_measurements(tmp_path, capsys):
     db = tmp_path / "check.db"
-    check_tool.seed_scratch_database(db, 3)
+    total = check_tool.seed_scratch_database(db, 3)
     with Repository(db) as repo:
         rows = repo.conn.execute(
-            "SELECT m.key, m.raw_response, v.vin FROM measurements m "
-            "JOIN vehicles v ON v.id = m.vehicle_id ORDER BY m.id").fetchall()
-    assert len(rows) == 3
+            "SELECT m.key, m.value, m.text_value, m.raw_response, v.vin "
+            "FROM measurements m JOIN vehicles v ON v.id = m.vehicle_id "
+            "ORDER BY m.id").fetchall()
+    assert total == 5 and len(rows) == 5
     assert all(r["vin"] == check_tool.TEST_VIN for r in rows)
     # Raw bytes preserved, exactly as the real collector writes them.
     assert rows[0]["raw_response"] == "62 2AB8 00"
+
+
+def test_the_scratch_seed_includes_the_rows_that_are_not_numbers(tmp_path):
+    """The check is worthless if it only ever sends rows shaped like floats.
+
+    A text reading and a structured one are what the payload used to get wrong,
+    and the check is the only thing that runs the whole path against a real
+    database -- so they have to be in it.
+    """
+    db = tmp_path / "check.db"
+    check_tool.seed_scratch_database(db, 1)
+    with Repository(db) as repo:
+        rows = {r["key"]: r for r in repo.conn.execute(
+            "SELECT key, value, text_value FROM measurements")}
+    assert rows["cloud_check_gear"]["value"] == "P"
+    assert rows["cloud_check_gear"]["text_value"] is None
+    structured = rows["cloud_check_json"]
+    assert structured["value"] is None
+    assert structured["text_value"].startswith("{")
 
 
 def test_the_test_vin_is_the_advertised_length():

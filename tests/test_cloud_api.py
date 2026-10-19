@@ -153,6 +153,38 @@ def test_an_oversized_batch_is_refused(client):
     assert r.status_code == 413
 
 
+def test_an_overlong_source_id_is_refused(client, store):
+    # The INSERT uses IGNORE, so MySQL would truncate this to the column width
+    # and store it, quietly merging two different devices into one key.
+    r = client.post("/ingest/measurements", json=body(measurement(),
+                    source_id="python:" + "x" * 120), headers=auth_header())
+    assert r.status_code == 422
+    assert store.seen == set()
+
+
+def test_an_overlong_source_label_is_refused(client, store):
+    payload = body(measurement())
+    payload["source"]["label"] = "x" * 201
+    r = client.post("/ingest/measurements", json=payload, headers=auth_header())
+    assert r.status_code == 422
+    assert store.seen == set()
+
+
+def test_an_overlong_provenance_is_refused_not_truncated(client, store):
+    """The exact shape that silently lost its last character in the archive.
+
+    `imported: Car Scanner CSV` is 25 characters and the column was
+    VARCHAR(24). Because the INSERT is an INSERT IGNORE, MySQL stored
+    "imported: Car Scanner CS" and said nothing. A clear 422 is what should
+    happen instead, and it is recoverable: the watermark does not advance.
+    """
+    r = client.post("/ingest/measurements",
+                    json=body(measurement(provenance="x" * 65)),
+                    headers=auth_header())
+    assert r.status_code == 422
+    assert store.seen == set()
+
+
 def test_an_empty_batch_is_accepted_and_writes_nothing(client, store):
     r = client.post("/ingest/measurements", json=body(), headers=auth_header())
     assert r.status_code == 200
@@ -193,3 +225,54 @@ def test_the_python_clients_payload_validates_against_the_api_model():
     assert parsed.source.source_id == "python:host"
     assert parsed.measurements[0].key == "hvb_energy_content_kwh"
     assert parsed.measurements[0].raw_response == "62 2AB8 0C 44"
+
+
+def _row(key, value, text_value=None):
+    """A row shaped exactly like the collector's own SELECT returns it."""
+    return {
+        "id": 1, "vin": "WVWZZZE1ZMP087053", "ts": "2026-10-17T12:00:00Z",
+        "ecu": "-", "service": "UDS-0x22", "pid": "0xF190", "key": key,
+        "value": value, "text_value": text_value, "unit": "",
+        "provenance": "reported", "decoding_method": "scalar",
+        "doc_status": "experimentally determined", "raw_response": "",
+        "success": 1, "error": None,
+    }
+
+
+def _validate(payload):
+    return (IngestRequest.model_validate(payload)
+            if hasattr(IngestRequest, "model_validate")
+            else IngestRequest.parse_obj(payload))
+
+
+def test_a_text_reading_validates_against_the_api_model():
+    """The row shape that broke the first sync of this car's real history.
+
+    SQLite declares no type for `measurements.value`, so a text decode stores
+    text THERE, not in text_value: `gear` is "P" and `vin` is the car's
+    17-character VIN. Forwarded unchanged they are a 422 from
+    `value: float | None`, and because a batch is all-or-nothing the upload
+    never lands -- 27 batches of them had landed when the first sync stopped.
+    """
+    for key, value in (("gear", "P"), ("vin", "WVWZZZE1ZMP087053"),
+                       ("gear", "B")):
+        parsed = _validate(build_payload("python:host", [_row(key, value)]))
+        measurement = parsed.measurements[0]
+        assert measurement.value is None, f"{key} kept text in the numeric field"
+        assert measurement.text_value == value, f"{key} lost its reading"
+
+
+def test_a_structured_reading_validates_against_the_api_model():
+    """A dict decode: JSON in text_value and the numeric column already NULL."""
+    text = '{"value": 85.04, "index": 50}'
+    parsed = _validate(build_payload("python:host", [_row("cell_soc_max", None, text)]))
+    assert parsed.measurements[0].value is None
+    assert parsed.measurements[0].text_value == text
+
+
+def test_a_reading_that_is_neither_keeps_its_shape():
+    """A row with no value at all -- a failed read -- must still validate."""
+    parsed = _validate(build_payload(
+        "python:host", [_row("soc_abs", None, None)]))
+    assert parsed.measurements[0].value is None
+    assert parsed.measurements[0].text_value is None

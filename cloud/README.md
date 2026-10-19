@@ -199,6 +199,25 @@ Codes: `401` bad/missing token · `413` batch larger than 5000 rows · `422` a
 field is invalid (the whole batch is rejected, never half-written) · `5xx` the
 database is unavailable — retry later; nothing was lost.
 
+### Numbers in `value`, everything else in `text_value`
+
+`value` is a `DOUBLE` and `text_value` is `TEXT`; they are not
+interchangeable. The collector's own SQLite schema declares no type for its
+`value` column, so a text decode is stored *there*: the gear selector is `"P"`
+and the `vin` key is a 17-character string. A client has to move those across
+and send `value: null` (the collector does it in `mapping.split_value`), and
+the API refuses a non-number in `value` with a 422 rather than coercing it —
+the batch is all-or-nothing, so a coerced row would be a wrong reading while a
+refused one is merely retried.
+
+Every field is also checked against its column width at the edge, because the
+INSERT is an `INSERT IGNORE` and MySQL downgrades "data too long" to a warning
+under IGNORE: an over-long value is **truncated in silence**, not rejected.
+That is how 266 imported rows first reached the archive with provenance
+`imported: Car Scanner CS`. `cloud/db.py` widens a column that a later change
+made longer (`GROWN_COLUMNS`) at first request, so an existing deployment
+catches up on restart without a migration step.
+
 `GET /healthz` is unauthenticated and returns `{"ok": true}` (liveness only).
 `GET /status` requires the token and returns row counts.
 

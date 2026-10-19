@@ -43,7 +43,11 @@ CREATE TABLE IF NOT EXISTS measurements (
     value           DOUBLE       NULL,
     text_value      TEXT         NULL,
     unit            VARCHAR(24)  NULL,
-    provenance      VARCHAR(24)  NOT NULL,     -- reported | calculated | estimated
+    provenance      VARCHAR(64)  NOT NULL,     -- reported | calculated | estimated
+                                                -- or "imported: <tool>", which is
+                                                -- longer than the first three;
+                                                -- measured, not guessed: see
+                                                -- GROWN_COLUMNS in cloud/db.py
     decoding_method VARCHAR(120) NOT NULL,
     doc_status      VARCHAR(160) NULL,
     raw_response    TEXT         NULL,

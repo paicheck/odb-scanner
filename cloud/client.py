@@ -24,7 +24,7 @@ import threading
 import requests
 
 from .config import ClientSettings
-from .mapping import cloud_measurement_id
+from .mapping import cloud_measurement_id, split_value
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +88,10 @@ def pending_rows(repo, after_id: int, limit: int) -> list[dict]:
 
 
 def _row_payload(source_id: str, row: dict) -> dict:
+    # The local row's value/text_value pair is not yet the payload's: a text
+    # reading lives in `value` locally and must move, or the API rejects the
+    # batch. See mapping.split_value.
+    value, text_value = split_value(row["value"], row["text_value"])
     return {
         "id": cloud_measurement_id(source_id, row["id"]),
         "vin": row["vin"],
@@ -96,8 +100,8 @@ def _row_payload(source_id: str, row: dict) -> dict:
         "service": row["service"],
         "pid": row["pid"],
         "key": row["key"],
-        "value": row["value"],
-        "text_value": row["text_value"],
+        "value": value,
+        "text_value": text_value,
         "unit": row["unit"],
         "provenance": row["provenance"],
         "decoding_method": row["decoding_method"],

@@ -139,3 +139,60 @@ def test_a_retry_after_a_failure_re_sends_the_same_ids(repo):
     assert len(set(first_ids)) == 5
     assert first_ids == [m["id"] for m in build_payload(
         "python:test-host", pending_rows(repo, 0, 5))["measurements"]]
+
+
+# ---------------------------------------------------- value vs text_value
+def _text_row(repo, key, value):
+    """A reading whose value is text, exactly as the collector stores it."""
+    vid = repo.ensure_vehicle(VIN)
+    repo.record_measurement(
+        vid, "2026-10-17T12:00:09Z", key, "-", "UDS-0x22", "-", "", "reported",
+        "scalar", "experimental", "", value, None, True, None)
+    repo.conn.commit()
+
+
+def test_a_text_reading_leaves_value_null_and_keeps_the_text(repo):
+    """`gear` is "P" and `vin` is a string, and both live in `value` locally.
+
+    The cloud column is DOUBLE and the payload types `value` as a number, so
+    forwarding the local column unchanged is a 422 at the edge -- which is how
+    the first sync of this car's history stopped, on `gear`, with 27 batches
+    uploaded and the rest held back by the watermark. The row is not malformed;
+    it belongs in the other column.
+    """
+    _text_row(repo, "gear", "P")
+    payload = build_payload("python:test-host", pending_rows(repo, 5, 10))
+    m = payload["measurements"][0]
+    assert m["key"] == "gear"
+    assert m["value"] is None
+    assert m["text_value"] == "P"
+
+
+def test_a_numeric_reading_still_travels_as_a_number(repo):
+    """The fix must not push numbers into the text column."""
+    payload = build_payload("python:test-host", pending_rows(repo, 0, 1))
+    assert payload["measurements"][0]["value"] == 30.0
+    assert payload["measurements"][0]["text_value"] is None
+
+
+def test_split_value_moves_only_what_is_not_a_number():
+    from cloud.mapping import split_value
+    assert split_value(31.4, None) == (31.4, None)
+    assert split_value(0, None) == (0.0, None)            # zero is not missing
+    assert split_value(None, '{"value": 1}') == (None, '{"value": 1}')
+    assert split_value("12.5", None) == (12.5, None)      # a numeric string
+    assert split_value(" P ", None) == (None, " P ")      # preserved exactly
+    assert split_value("WVWZZZE1ZMP087053", None) == (None, "WVWZZZE1ZMP087053")
+    assert split_value(True, None) == (1.0, None)
+
+
+def test_split_value_carries_a_value_mysql_cannot_store(repo):
+    """NaN would fail the INSERT and then wedge every later batch."""
+    from cloud.mapping import split_value
+    value, text = split_value(float("nan"), None)
+    assert value is None and text == "NaN"
+    value, text = split_value(float("inf"), None)
+    assert value is None and text == "Infinity"
+    # A number already accompanied by structured data keeps both: the text
+    # column is not overwritten by the numeric one.
+    assert split_value(31.4, '{"a": 1}') == (31.4, '{"a": 1}')

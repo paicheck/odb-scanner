@@ -130,11 +130,80 @@ def test_an_overlong_vin_is_rejected_rather_than_truncated():
         row_from_payload("s", _payload(vin="X" * 18), datetime.now())
 
 
+def test_an_overlong_provenance_is_rejected_rather_than_truncated():
+    """`imported: Car Scanner CSV` is 25 characters and the column was 24.
+
+    Because the INSERT is an INSERT IGNORE, MySQL reported the overflow as a
+    warning and stored "imported: Car Scanner CS" -- 266 rows lost the last
+    character while the ingest reported success. The edge has to refuse it.
+    """
+    assert len("imported: Car Scanner CSV") == 25
+    with pytest.raises(InvalidMeasurement):
+        row_from_payload("s", _payload(provenance="x" * 65), datetime.now())
+    # ...and the real label passes, with room to spare.
+    row = row_from_payload("s", _payload(provenance="imported: Car Scanner CSV"),
+                           datetime.now())
+    assert row[12] == "imported: Car Scanner CSV"
+
+
+def test_an_overlong_decoding_method_is_rejected_rather_than_truncated():
+    with pytest.raises(InvalidMeasurement):
+        row_from_payload("s", _payload(decoding_method="x" * 121),
+                         datetime.now())
+
+
 def test_value_may_be_absent_for_a_text_decode():
     row = row_from_payload("s", _payload(value=None, text_value='{"a":1}'),
                            datetime.now())
     assert row[9] is None                      # value
     assert row[10] == '{"a":1}'                # text_value
+
+
+# ------------------------------------------------------------------ columns
+def test_the_schema_is_wide_enough_for_every_label_this_project_writes():
+    """A label longer than its column fails the INSERT, and one failed row
+    fails its whole batch -- so the archive stops until someone notices.
+
+    `imported: Car Scanner CSV` is 25 characters and `provenance` was declared
+    VARCHAR(24). The client now moves a text reading to the right column; this
+    checks the other half of the same failure: that the column can hold what is
+    put in it.
+    """
+    import re
+    from pathlib import Path
+
+    from cloud.db import GROWN_COLUMNS
+    from decoders.registry import Provenance
+    from tools.import_carscanner import PROVENANCE
+
+    schema = (Path(__file__).resolve().parents[1] / "cloud" / "schema.sql"
+              ).read_text(encoding="utf-8")
+    declared = {name: int(size) for name, size in
+                re.findall(r"(\w+)\s+VARCHAR\((\d+)\)", schema)}
+
+    labels = [p.value for p in Provenance] + [PROVENANCE]
+    for label in labels:
+        width = declared["provenance"]
+        for _table, column, needed, _ in GROWN_COLUMNS:
+            if column == "provenance":
+                width = max(width, needed)
+        assert len(label) <= width, (
+            f"provenance {label!r} is {len(label)} characters but the column "
+            f"allows {width}")
+
+
+def test_grown_columns_name_columns_that_exist_in_the_schema():
+    """The widening step must not be a typo that silently never matches."""
+    from pathlib import Path
+
+    from cloud.db import GROWN_COLUMNS
+
+    schema = (Path(__file__).resolve().parents[1] / "cloud" / "schema.sql"
+              ).read_text(encoding="utf-8")
+    for table, column, needed, definition in GROWN_COLUMNS:
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in schema, table
+        assert column in schema, column
+        assert str(needed) in definition, definition
 
 
 def test_timestamps_are_compared_in_utc_not_local_time():

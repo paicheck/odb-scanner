@@ -25,6 +25,22 @@ log = logging.getLogger(__name__)
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
+# Columns that have grown since the schema was first deployed, as
+# (table, column, characters_needed, full column definition).
+#
+# `CREATE TABLE IF NOT EXISTS` cannot widen a table that already exists, so a
+# database created before a change keeps the narrow column and starts
+# *silently truncating* values that used to fit -- the INSERT is an INSERT
+# IGNORE, and MySQL downgrades "data too long" to a warning under IGNORE. That
+# is how the first real sync of the car's history stored 266 imported rows with
+# provenance "imported: Car Scanner CS" (`imported: Car Scanner CSV` is 25
+# characters and the column was VARCHAR(24)). Hence these are checked against
+# INFORMATION_SCHEMA at startup rather than left to the next deployment to
+# discover.
+GROWN_COLUMNS = (
+    ("measurements", "provenance", 64, "VARCHAR(64) NOT NULL"),
+)
+
 
 def _statements(sql: str) -> list[str]:
     """Split a .sql file into executable statements.
@@ -69,7 +85,10 @@ class MySqlStore:
         return pymysql.connect(**kwargs)
 
     def ensure_schema(self) -> None:
-        """Create the tables if they are missing. Safe to call concurrently."""
+        """Create the tables if they are missing, and widen any grown column.
+
+        Safe to call concurrently.
+        """
         with self._schema_lock:
             if self._schema_ready:
                 return
@@ -79,6 +98,7 @@ class MySqlStore:
                 with conn.cursor() as cur:
                     for statement in statements:
                         cur.execute(statement)
+                    self._widen_grown_columns(cur)
                 conn.commit()
             except Exception:
                 # Leaving _schema_ready False means the next request retries,
@@ -89,6 +109,27 @@ class MySqlStore:
             finally:
                 conn.close()
             self._schema_ready = True
+
+    def _widen_grown_columns(self, cur) -> None:
+        """Widen a column that a later change made longer. See GROWN_COLUMNS."""
+        for table, column, needed, definition in GROWN_COLUMNS:
+            cur.execute(
+                "SELECT CHARACTER_MAXIMUM_LENGTH AS n FROM "
+                "INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() "
+                "AND TABLE_NAME = %s AND COLUMN_NAME = %s", (table, column))
+            row = cur.fetchone()
+            if not row:
+                continue          # not created yet: CREATE TABLE just did
+            current = int(row["n"] or 0)
+            if current >= needed:
+                continue
+            log.warning(
+                "%s.%s is VARCHAR(%d) but this code writes up to %d characters; "
+                "widening it. MySQL truncates an over-long value silently under "
+                "INSERT IGNORE, so the old width would corrupt the archive "
+                "rather than fail.", table, column, current, needed)
+            cur.execute(f"ALTER TABLE `{table}` MODIFY COLUMN `{column}` "
+                        f"{definition}")
 
     # -- writes --------------------------------------------------------------
     def touch_source(self, source_id: str, kind: str, label: str,

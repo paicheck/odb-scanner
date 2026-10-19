@@ -41,9 +41,12 @@ MAX_BODY_FIELD = 100_000
 
 
 class SourceIn(BaseModel):
-    source_id: str
-    kind: str = "python"
-    label: str = ""
+    # Widths again mirror schema.sql (sources/source_id VARCHAR(120),
+    # kind VARCHAR(16), label VARCHAR(200)) for the same reason as below: the
+    # INSERT uses IGNORE, so an over-long value would be truncated in silence.
+    source_id: str = Field(..., max_length=120)
+    kind: str = Field("python", max_length=16)
+    label: str = Field("", max_length=200)
 
 
 class MeasurementIn(BaseModel):

@@ -75,8 +75,17 @@ def status_counts(url: str, token: str) -> dict:
     return response.json()
 
 
-def seed_scratch_database(path: Path, count: int) -> None:
-    """A handful of measurements, shaped exactly like collected ones."""
+def seed_scratch_database(path: Path, count: int) -> int:
+    """A handful of measurements, shaped exactly like collected ones.
+
+    Returns the number of rows written. Deliberately includes the two shapes
+    that are NOT plain numbers, because they are the ones the payload gets
+    wrong: a text reading (`gear` = "P") and a structured one (JSON beside a
+    NULL numeric column). SQLite stores a text decode in `measurements.value`
+    and the cloud column is DOUBLE, so a client that forwards the local value
+    unchanged sends a batch the API rejects in full -- which is how the first
+    real sync of this car stopped, on `gear`, partway through.
+    """
     with Repository(path) as repo:
         vid = repo.ensure_vehicle(TEST_VIN, make="TEST", model="CLOUD-CHECK")
         for i in range(count):
@@ -85,6 +94,21 @@ def seed_scratch_database(path: Path, count: int) -> None:
                 "kWh", "reported", "scalar", "verified",
                 raw_response=f"62 2AB8 0{i}", value=30.0 + i,
             )
+        # A text reading: what the gear selector actually looks like locally.
+        repo.record_measurement(
+            vid, utcnow(), "cloud_check_gear", "bms", "UDS-0x22", "0x221E3B",
+            "", "reported", "scalar", "verified",
+            raw_response="62 1E3B 50", value="P",
+        )
+        # A structured reading: the numeric column is NULL and the payload JSON
+        # sits in text_value, exactly as the collector writes it.
+        repo.record_measurement(
+            vid, utcnow(), "cloud_check_json", "bat_mgmt", "UDS-0x22", "0x028C",
+            "", "reported", "raw-only", "verified",
+            raw_response="62 028C 01", value=None,
+            text_value='{"value": 85.04, "index": 50}',
+        )
+    return count + 2
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -124,8 +148,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "cloud_check.db"
-            seed_scratch_database(db, args.measurements)
-            check("scratch data seeded", True, f"{args.measurements} rows")
+            seeded = seed_scratch_database(db, args.measurements)
+            check("scratch data seeded", True,
+                  f"{seeded} rows: {args.measurements} numeric + 1 text + 1 "
+                  f"structured")
 
             with Repository(db) as repo:
                 result = sync_pending(repo, client, settings)
@@ -137,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
 
     accounted = result["uploaded"] + result["duplicates"]
     check("every row acknowledged",
-          accounted == args.measurements,
+          accounted == seeded,
           f"{result['uploaded']} new, {result['duplicates']} already present")
 
     # Read the counts back from the API: the rows have to be visible in MySQL,
