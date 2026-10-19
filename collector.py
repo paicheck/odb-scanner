@@ -703,14 +703,14 @@ class Collector:
     # -- DTCs -------------------------------------------------------------------
     def _ecu_label_for_source(self, src: int | None) -> str:
         """Best label for a responding ECU: a registry key if the address is
-        known (learned functionally, or a documented 11-bit rx id), else a
-        plain address label."""
+        known (learned functionally, or a documented request/response id), else
+        a plain address label."""
         for key, addr in self.ecu_addresses.items():
             if addr == src:
                 return key
-        if src is not None and src <= 0x7FF:
+        if src is not None:
             for key, spec in ECUS.items():
-                if spec.rx == src:
+                if spec.rx == src or spec.rx29 == src:
                     return key
         return f"uds-{uds.source_label(src)}"
 
@@ -750,12 +750,40 @@ class Collector:
         except CommunicationError as exc:
             log.debug("UDS DTC read failed: %s", exc)
             payloads = {}
+        # A functional request on 18DB33F1 cannot reach a module that only
+        # answers physical requests. eldrive is read physically for its DIDs,
+        # so its DTCs are asked for the same way; otherwise an electric-drive
+        # fault can light the dash for weeks while this tool sees no code at
+        # all. Each configured ECU costs one request per cycle, so the list is
+        # deliberately short and configurable.
+        extra_ecus = self.cfg.get("collector.dtc_ecu_keys", ["eldrive"]) or []
+        for key in extra_ecus:
+            spec = ECUS.get(key)
+            if spec is None or getattr(spec, "tx29", None) is None:
+                continue
+            try:
+                extra = self.conn.functional_probe(
+                    f"1902{mask}", f"UDS 0x19 0x02 ReadDTCInformation from "
+                                   f"{spec.name} (status mask 0x{mask}, "
+                                   f"physical, read-only)",
+                    ecu=spec)
+            except CommunicationError as exc:
+                log.debug("Physical DTC read failed for %s: %s", key, exc)
+                continue
+            for src, payload in extra.items():
+                if payload and payload[0] == 0x59:
+                    payloads.setdefault(src, payload)
         uds_items: list[tuple[int | None, str, dict]] = []
+        seen_items: set[tuple[str, str, int | None]] = set()
         for src, payload in payloads.items():
             if not payload or payload[0] != 0x59:
                 continue
             label = self._ecu_label_for_source(src)
             for item in obd2.parse_uds_dtc_response(payload):
+                sig = (label, item["code"], item.get("status_byte"))
+                if sig in seen_items:
+                    continue
+                seen_items.add(sig)
                 uds_items.append((src, label, item))
         # Freeze-frame snapshots (0x19 0x04): one functional read per unique
         # code, attempted once per run (see _dtc_snapshots). Each ECU that

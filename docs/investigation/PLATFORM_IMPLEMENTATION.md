@@ -119,6 +119,14 @@ key anchors).
   used to return early for codes in the hand-maintained VW table, which meant
   the lamp/pending bits never reached exactly the codes this car emits. That
   early return was removed; the curated categories are still applied first.
+* **The electric-drive ECU is now asked for DTCs physically.** The functional
+  `0x19 0x02` read is pinned to `18DB33F1` (29-bit) and cannot reach a module
+  that answers only physical requests. `eldrive` is read physically for its
+  DIDs, so `collector.dtc_ecu_keys` (default `["eldrive"]`) asks it physically
+  for DTCs as well, one request per configured ECU per cycle. Without this, an
+  electric-drive fault can light the dash for weeks while the tool sees no code
+  at all. This is the most plausible explanation for the six-week warning with
+  zero recorded DTCs; it is not retroactive.
 
 ## 3. Migration instructions
 
@@ -150,33 +158,39 @@ python main.py quality --persist
 
 ## 4. Tests run and actual results
 
-* `python -m pytest -q` → **709 passed** in 128 s (baseline was 658; the
+* `python -m pytest -q` → **710 passed** in 130 s (baseline was 658; the
   platform added 45 tests in `tests/test_platform.py`, the DTC-read widening
-  added 4 in `tests/test_diagnostic.py` (configurable mask, invalid-mask
-  fallback, warning-lamp/pending classification, status-label priority), and
-  the migration + finalize-confirmation fixes added 2 more platform tests.)
+  added 5 in `tests/test_diagnostic.py` (configurable mask, invalid-mask
+  fallback, warning-lamp/pending classification, status-label priority, and the
+  physical eldrive DTC read), and the migration + finalize-confirmation fixes
+  added 2 more platform tests.)
 * `python main.py guard-test` → **READ-ONLY guarantee verified** (all write
   services blocked).
 * `python main.py quality` (real `data/odb_scanner.db`, `meb` profile) →
   282 keys, 19 excluded from scoring; decoder lab **19 FAIL of 282**, and every
   FAIL is exactly one of the 19 known-invalid keys. No false failures once
   imported CSV rows were no longer treated as vehicle responses.
-* `python main.py status` (real DB) →
-  `1 silent, 7 idle, 3 imported-only, 1 no-readings, 0 active`
-  (the last collection was 2026-10-18 18:26 UTC; `chg` is `no-readings` here
-  because this database holds no successful on-board-charger read).
+* `python main.py status` / `quality` are point-in-time now that collection is
+  live. The last successful read at the time of writing was
+  `2026-10-19T19:32:25Z`; the adapter then became unreachable
+  (`COM3` semaphore timeout / file not found), so freshness must not be read as
+  "right now".
 * **Real-DB hygiene check** — an early smoke test had written one throwaway
   investigation (id 1) plus 3 evidence rows into `data/odb_scanner.db`; those
   were deleted. The only investigation now in the real DB is genuine: id 1,
   "Electric-drive dash warning extinguished (owner report, 2026-10-19)", with
-  28 evidence rows (6 observations, 16 associations, 6 explanations) and status
-  **insufficient-evidence**. It records the absence of any DTC, the absence of a
-  lamp channel, the unknown onset/clearing time, and the fact that the running
-  collector still used the old confirmed-only mask. No synthetic artefact is
-  presented as car evidence.
-* **`main.py status` / `quality` re-run against the live DB** — measurement
-  count is no longer the pre-purge figure; collection is live and the DB grows
-  on each cycle, so freshness numbers are point-in-time.
+  **32 evidence rows** (8 observations, 16 associations, 8 explanations) and
+  status **insufficient-evidence**. It records the owner's 8–10 Sep window, the
+  absence of any DTC, the absence of a lamp channel, the coverage gap, and the
+  fact that the running collector still used the old confirmed-only mask. No
+  synthetic artefact is presented as car evidence.
+* **The reported 8–10 September 2026 window was never collected.** Every
+  database has **zero measurements for 2026-09-07..11**: the pre-purge backup
+  jumps `2026-09-01` → `2026-09-19..20`, the 19–20 Sep block is the simulator
+  (`135,355` rows on 20 Sep), and the real DB starts `2026-10-05`. The only
+  September DTC (`chg_mgmt U112300`) is a simulator artefact (475 occurrences
+  in the simulator-only DB on 20 Sep, zero in 7–11 Sep), so it cannot be used
+  as car evidence. This is why the investigation stays unresolved.
 
 ## 5. How to launch / use the dashboard
 
@@ -198,13 +212,16 @@ insufficient).
   point at a code the car never recorded. The widened `0x8F` read only helps
   from the next collector restart onward — it cannot recover a lamp state that
   was never requested.
-* **Collection is live again** (last read `2026-10-19T19:30` UTC at the time of
-  writing), but only while the collector process is running. Gaps remain in the
-  history (`10-06…10-11`, `10-13…10-14`), and `eldrive` only starts
-  `2026-10-16`. A warning that came and went inside a gap was never observed.
-* **Confirmed-only history.** Every DTC read before this change used mask
-  `0x08`, so the absence of an electric-drive DTC in older data does not prove
-  one was never pending or never lit the lamp.
+* **Collection was live, then the adapter dropped** (last successful read
+  `2026-10-19T19:32:25Z`; `COM3` semaphore timeout / file not found). Gaps
+  remain in the history (`10-06…10-11`, `10-13…10-14`), and `eldrive` only
+  starts `2026-10-16`. A warning that came and went inside a gap was never
+  observed — and the owner's 8–10 Sep window is exactly such a gap.
+* **Confirmed-only and bus-limited history.** Every DTC read before this change
+  used mask `0x08`, and the functional read was pinned to `18DB33F1`, so the
+  absence of an electric-drive DTC in older data proves neither that none was
+  pending nor that the module was ever asked. The physical `eldrive` read is
+  not retroactive.
 * **Only two keys are decoder-VERIFIED** (`hv_energy_content`, `hv_energy_max`).
   The rest are provisional/unknown, and 19 are known invalid.
 * **Plausibility ranges cover a subset of keys.** Keys without an established

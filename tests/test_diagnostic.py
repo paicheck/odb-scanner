@@ -1627,6 +1627,51 @@ def test_dtc_read_uses_the_configured_status_mask(repo, tmp_path):
     assert out and out[0]["code"] == "U112300"
 
 
+def test_dtc_read_asks_the_electric_drive_ecu_physically(repo, tmp_path):
+    """Functional 18DB33F1 cannot reach a module that answers only physically.
+
+    eldrive is read physically for its DIDs, so its DTCs must be asked for the
+    same way -- otherwise an electric-drive fault is invisible even though the
+    dash is lit.
+    """
+    from collector import Collector
+
+    cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
+                                "max_value_age_s": 900.0,
+                                "dtc_ecu_keys": ["eldrive"]},
+                  "database": {"path": str(tmp_path / "c.db")}})
+    calls: list[tuple[str, str | None]] = []
+
+    class _Conn:
+        def functional_probe(self, hexcmd, purpose, ecu=None):
+            calls.append((hexcmd, None if ecu is None else ecu.key))
+            if ecu is not None:
+                # 17FE007C is eldrive's physical response id
+                return {0x17FE007C: bytes([0x59, 0x02, 0xFF,
+                                           0xD1, 0x23, 0x00, 0x8B])}
+            return {}
+
+        def read_dtcs_obd2(self):
+            return []
+
+        def read_dtc_snapshots(self, code):
+            return {}
+
+    col = Collector(cfg, repo)
+    col.conn = _Conn()
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    out = col.read_and_store_dtcs()
+
+    assert ("19028F", None) in calls, calls
+    assert ("19028F", "eldrive") in calls, calls
+    row = repo.conn.execute(
+        "SELECT ecu, status FROM dtcs WHERE vehicle_id=?",
+        (col.vehicle_id,)).fetchone()
+    assert row is not None and row["ecu"] == "eldrive"
+    assert row["status"] == "warning"
+    assert out and out[0]["ecu"] == "eldrive"
+
+
 def test_dtc_status_mask_falls_back_when_invalid(repo, tmp_path):
     from collector import Collector
 

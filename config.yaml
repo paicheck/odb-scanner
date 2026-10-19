@@ -58,6 +58,12 @@ collector:
   # request -- it widens one read -- and it is how a fault that lights the dash
   # before it is confirmed becomes visible at all.
   dtc_status_mask: "8F"
+  # Extra ECUs to ask for DTCs *physically* (one request each per cycle).
+  # The functional 0x19 0x02 read goes out on 29-bit 18DB33F1 and cannot reach
+  # a module that only answers physical requests. eldrive is read physically
+  # for its DIDs, so it is asked physically for DTCs too -- otherwise an
+  # electric-drive fault can light the dash while this tool sees no code.
+  dtc_ecu_keys: ["eldrive"]
 
 database:
   # The car's own history, and nothing else's. The simulator writes to
