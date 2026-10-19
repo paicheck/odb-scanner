@@ -19,7 +19,27 @@ from __future__ import annotations
 
 from analysis import baseline as baseline_mod
 from analysis import stats
-from decoders.quality import use_in_scoring
+from decoders.quality import DataKind, quality_for, quality_registry
+
+# A scan only makes sense on a single real number. Text keys (gear, VIN) and
+# JSON keys share the `value` column but hold strings, and feeding one to the
+# numeric detectors raises `float('P')`. Derived values are still numbers, so
+# they are scanable; everything else is refused.
+_SCANABLE_KINDS = (DataKind.NUMERIC, DataKind.DERIVED)
+
+
+def _as_float(value):
+    """A stored value as a float, or None if it is not a single number.
+
+    `value` has no declared type in SQLite, so a text decode lands there
+    verbatim; a scan must drop those rather than crash on them.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def detect_series_anomalies(ts_list: list[str], values: list[float],
@@ -113,17 +133,25 @@ def scan_robust(repo, vehicle_id: int, metric: str, description: str,
     Returns the findings (also persisted when `persist`). A metric whose
     decoder is known invalid returns [] and records nothing: scoring it would
     make the vehicle's most alarming numbers the ones the decoder got wrong.
+    A key that is not a single number (text or JSON) likewise returns [], and
+    individual non-numeric rows inside a series are dropped rather than
+    crashing the detector.
     """
     key = metric if not battery_field else _BATTERY_FIELD_TO_KEY.get(metric,
                                                                     metric)
-    if not use_in_scoring(profile, key):
+    q = quality_for(profile, key)
+    if not q.use_in_scoring:
+        return []
+    if not battery_field and q.data_kind not in _SCANABLE_KINDS:
         return []
     if battery_field:
         rows = repo.battery_history(days, vehicle_id)
-        pairs = [(r["ts"], r[metric]) for r in rows if r[metric] is not None]
+        pairs = [(r["ts"], v) for r in rows
+                 if (v := _as_float(r[metric])) is not None]
     else:
         rows = repo.measurement_series(vehicle_id, metric, days)
-        pairs = [(r["ts"], r["value"]) for r in rows if r["value"] is not None]
+        pairs = [(r["ts"], v) for r in rows
+                 if (v := _as_float(r["value"])) is not None]
     ts_list = [p[0] for p in pairs]
     values = [p[1] for p in pairs]
     findings = scan_series_robust(ts_list, values, z_threshold=z_threshold)
@@ -138,16 +166,32 @@ def scan_robust(repo, vehicle_id: int, metric: str, description: str,
 
 def scan_all_robust(repo, vehicle_id: int, keys: list[str], *,
                     days: int = 30, profile: str = "meb",
-                    z_threshold: float = baseline_mod.DEFAULT_Z) -> dict:
-    """Scan many measurement keys; report counts and which keys were skipped as
-    known-invalid so the omission is explicit rather than silent."""
-    out = {"scanned": 0, "findings": 0, "skipped": []}
+                    z_threshold: float = baseline_mod.DEFAULT_Z,
+                    persist: bool = True) -> dict:
+    """Scan many measurement keys; report counts and which keys were skipped so
+    the omission is explicit rather than silent.
+
+    Skipped keys are split by reason: `skipped` (a known-invalid decoder),
+    `unknown` (a key with no catalogue definition) and `not_numeric` (text or
+    JSON, not a single number). Set `persist=False` for a dry run that writes
+    nothing.
+    """
+    registry = quality_registry(profile)
+    out = {"scanned": 0, "findings": 0, "skipped": [], "unknown": [],
+           "not_numeric": []}
     for key in keys:
-        if not use_in_scoring(profile, key):
+        q = registry.get(key)
+        if q is None:
+            out["unknown"].append(key)
+            continue
+        if not q.use_in_scoring:
             out["skipped"].append(key)
             continue
+        if q.data_kind not in _SCANABLE_KINDS:
+            out["not_numeric"].append(key)
+            continue
         found = scan_robust(repo, vehicle_id, key, key, days, profile=profile,
-                            z_threshold=z_threshold)
+                            z_threshold=z_threshold, persist=persist)
         out["scanned"] += 1
         out["findings"] += len(found)
     return out

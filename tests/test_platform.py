@@ -252,6 +252,40 @@ def test_anomaly_scan_excludes_known_bad_keys(repo):
     assert repo.conn.execute("SELECT COUNT(*) FROM anomalies").fetchone()[0] == 0
 
 
+def test_robust_scan_ignores_text_keys_and_rows_without_crashing(repo):
+    from analysis import anomaly
+
+    for i in range(12):
+        _record(repo, "gear", _now_iso(-i * 60), "P" if i % 2 else "D")
+    assert anomaly.scan_robust(repo, repo.vehicle_id, "gear", "gear", 30,
+                               profile="meb") == []
+    # A single non-numeric row inside an otherwise numeric series must be
+    # dropped, not fed to float().
+    for i in range(10):
+        _record(repo, "soc_abs", _now_iso(-i * 60), 50.0 + i)
+    _record(repo, "soc_abs", _now_iso(0), "not-a-number")
+    findings = anomaly.scan_robust(repo, repo.vehicle_id, "soc_abs", "soc", 30,
+                                   profile="meb", persist=False)
+    assert all(not isinstance(f.value, str) for f in findings)
+
+
+def test_scan_all_robust_dry_run_writes_nothing(repo):
+    from analysis import anomaly
+
+    for i in range(20):
+        _record(repo, "soc_abs", _now_iso(-i * 60), 50.0 + i)
+        _record(repo, "gear", _now_iso(-i * 60), "P")
+    report = anomaly.scan_all_robust(
+        repo, repo.vehicle_id,
+        ["soc_abs", "gear", "dc_link_voltage", "made_up_key"],
+        profile="meb", persist=False)
+    assert report["not_numeric"] == ["gear"]
+    assert "dc_link_voltage" in report["skipped"]
+    assert report["unknown"] == ["made_up_key"]
+    assert report["scanned"] == 1
+    assert repo.conn.execute("SELECT COUNT(*) FROM anomalies").fetchone()[0] == 0
+
+
 # --------------------------------------------------------------- discovery
 def test_discovery_search_and_facets(repo):
     from analysis import discovery
