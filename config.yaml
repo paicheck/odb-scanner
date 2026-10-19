@@ -53,9 +53,17 @@ collector:
   silent_retire_threshold: 3
 
 database:
-  # Real-car sessions get their own file: vehicles are keyed by VIN, and this
-  # keeps simulator data (odb_scanner.db) separate from measured data.
-  path: "data/real_car.db"
+  # The car's own history, and nothing else's. The simulator writes to
+  # simulation.db_path and `main.py seed` to seed.db_path; config.py refuses to
+  # start if either is set to this same file.
+  #
+  # This file holds every real reading from the first adapter connection
+  # (2026-10-05T18:03:02Z) onward. Two neighbours are NOT it: data/real_car.db
+  # is an older, partial copy of the same history (Oct 5-15) kept as the
+  # evidence artifact that docs/investigation/ and decoders/meb.py cite by name,
+  # and data/odb_scanner_cdrive_20261015.db holds nothing but simulator output
+  # from 2026-09-20 -- despite a name that reads like a car session.
+  path: "data/odb_scanner.db"
   # Sub-folder (beside the database) that `main.py backup` writes timestamped
   # snapshots into. Point this at a different drive if this machine is not the
   # only place a copy of the car's history should live.
