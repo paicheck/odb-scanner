@@ -52,34 +52,71 @@ def classify_dtc(code: str, status_byte: int | None = None) -> list[str]:
     known = KNOWN_VAG_CODES.get(code)
     if known:
         cats.extend(known[1])
-        return cats
-    letter = code[:1].upper()
-    if letter == "U":
-        cats.extend(["communication", "informational"])
-    elif letter == "P":
-        cats.append("powertrain")
-        if code.startswith(("P0A7", "P0A8", "P0AA")):
-            cats.append("potentially critical")
-    elif letter == "C":
-        cats.append("chassis")
-    elif letter == "B":
-        cats.append("body")
+        # NOTE: this used to `return cats` here, so a known VW code was never
+        # classified by its status byte. The lamp-driving bits below therefore
+        # did not apply to exactly the codes this car is most likely to emit.
     else:
-        cats.append("unknown")
+        letter = code[:1].upper()
+        if letter == "U":
+            cats.extend(["communication", "informational"])
+        elif letter == "P":
+            cats.append("powertrain")
+            if code.startswith(("P0A7", "P0A8", "P0AA")):
+                cats.append("potentially critical")
+        elif letter == "C":
+            cats.append("chassis")
+        elif letter == "B":
+            cats.append("body")
+        else:
+            cats.append("unknown")
     if status_byte is not None:
         # ISO 14229 DTC status byte bits [documented]:
-        # bit2=0 pendingDTC, bit3=0 confirmedDTC, bit0 testFailed (active-ish)
+        #   bit0 testFailed                 (active-ish)
+        #   bit2 pendingDTC
+        #   bit3 confirmedDTC
+        #   bit7 warningIndicatorRequested   <- the bit the dashboard lamp reads
         active = status_byte & 0x01
+        pending = status_byte & 0x04
         confirmed = status_byte & 0x08
+        warning = status_byte & 0x80
+        if warning:
+            # This is the closest the vehicle will ever come to saying "the
+            # warning lamp is on": the ECU is asking for the indicator. It is
+            # categorised first and separately because a lamp can be requested
+            # for a fault that is neither testFailed nor confirmed yet.
+            cats.append("warning-lamp")
         if active:
             cats.append("active")
         elif confirmed:
             cats.append("historical")
         else:
             cats.append("intermittent")
+        if pending and not confirmed:
+            cats.append("pending")
     else:
         cats.append("historical")
     return cats
+
+
+def status_label(status_byte: int | None) -> str:
+    """One short word for a DTC's ISO 14229 status byte.
+
+    Ordered so the most alerting bit wins: a warning indicator outranks an
+    active test failure, which outranks a pending or confirmed code. The
+    collector stores this in `dtcs.status` so the dashboard can say plainly
+    whether a stored code is currently lighting the dash.
+    """
+    if status_byte is None:
+        return "unknown"
+    if status_byte & 0x80:
+        return "warning"
+    if status_byte & 0x01:
+        return "active"
+    if status_byte & 0x04:
+        return "pending"
+    if status_byte & 0x08:
+        return "confirmed"
+    return "stored"
 
 
 def describe(code: str) -> tuple[str, bool]:
@@ -149,6 +186,10 @@ def dtc_summary(dtc_rows, freeze_frames: dict | None = None) -> dict:
             "first_seen": r["first_seen"], "last_seen": r["last_seen"],
             "count": r["occurrence_count"],
         }
+        # `status` is not always selected (older callers pass a narrow row), so
+        # it is added only when present rather than assumed.
+        if "status" in r.keys():
+            entry["status"] = r["status"]
         ff = (freeze_frames or {}).get((r["ecu"], r["code"]))
         if ff:
             entry["status_byte"] = ff.get("status_byte")

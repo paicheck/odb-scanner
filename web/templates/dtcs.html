@@ -9,7 +9,7 @@
 {% for d in dtcs.codes %}
 <tr>
   <td>{{ d.ecu }}</td><td><strong>{{ d.code }}</strong></td>
-  <td>{{ d.description }}</td>
+  <td>{% if d.status %}<span class="tag {{ d.status }}">{{ d.status }}</span> {% endif %}{{ d.description }}</td>
   <td>{% for c in d.categories %}<span class="tag {{ 'critical' if c == 'potentially critical' else c }}">{{ c }}</span>{% endfor %}</td>
   <td>{{ d.first_seen }}</td><td>{{ d.last_seen }}</td><td>{{ d.count }}</td>
   <td>{% for r in d.snapshot_records | default([], true) %}

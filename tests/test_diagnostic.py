@@ -1561,6 +1561,95 @@ def test_dtc_classification():
     assert "historical" in classify_dtc("P123400", status_byte=0x08)
 
 
+def test_dtc_classification_sees_the_warning_lamp_and_pending_bits():
+    """A lamp can be requested for a fault that is neither active nor confirmed.
+
+    Mask 0x08 (confirmed only) could not see it; the classification now marks
+    warningIndicatorRequested (bit7) and pendingDTC (bit2) explicitly.
+    """
+    assert "warning-lamp" in classify_dtc("P123400", status_byte=0x80)
+    assert "warning-lamp" not in classify_dtc("P123400", status_byte=0x08)
+    assert "pending" in classify_dtc("P123400", status_byte=0x04)
+    # pending is not repeated once the code is also confirmed
+    assert "pending" not in classify_dtc("P123400", status_byte=0x0C)
+
+
+def test_dtc_status_label_priority():
+    from analysis.dtc import status_label
+
+    assert status_label(0x80) == "warning"
+    assert status_label(0x8F) == "warning"     # warning outranks the rest
+    assert status_label(0x01) == "active"
+    assert status_label(0x04) == "pending"
+    assert status_label(0x08) == "confirmed"
+    assert status_label(0x00) == "stored"
+    assert status_label(None) == "unknown"
+
+
+def test_dtc_read_uses_the_configured_status_mask(repo, tmp_path):
+    """The UDS DTC read must be able to see a warning-lamp / pending fault.
+
+    It used to be hard-coded to mask 0x08 (confirmed only), so a fault that was
+    lighting the dash but had not yet been confirmed was invisible to this tool.
+    """
+    import json
+    from collector import Collector
+
+    cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
+                                "max_value_age_s": 900.0, "dtc_status_mask": "8F"},
+                  "database": {"path": str(tmp_path / "c.db")}})
+    seen: dict = {}
+
+    class _Conn:
+        def functional_probe(self, hexcmd, purpose, ecu=None):
+            seen["cmd"], seen["purpose"] = hexcmd, purpose
+            # 59 02 FF | U112300 | 0x8B (warning+confirmed+failedThisCycle+testFailed)
+            return {0x18DAF10A: bytes([0x59, 0x02, 0xFF, 0xD1, 0x23, 0x00, 0x8B])}
+
+        def read_dtcs_obd2(self):
+            return []
+
+        def read_dtc_snapshots(self, code):
+            return {}
+
+    col = Collector(cfg, repo)
+    col.conn = _Conn()
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    out = col.read_and_store_dtcs()
+
+    assert seen["cmd"] == "19028F", seen
+    assert "0x8F" in seen["purpose"]
+    row = repo.conn.execute("SELECT status, categories FROM dtcs "
+                            "WHERE vehicle_id=?", (col.vehicle_id,)).fetchone()
+    assert row is not None
+    assert row["status"] == "warning"
+    assert "warning-lamp" in json.loads(row["categories"])
+    assert out and out[0]["code"] == "U112300"
+
+
+def test_dtc_status_mask_falls_back_when_invalid(repo, tmp_path):
+    from collector import Collector
+
+    cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
+                                "max_value_age_s": 900.0, "dtc_status_mask": "zz"},
+                  "database": {"path": str(tmp_path / "c.db")}})
+    seen: dict = {}
+
+    class _Conn:
+        def functional_probe(self, hexcmd, purpose, ecu=None):
+            seen["cmd"] = hexcmd
+            return {}
+
+        def read_dtcs_obd2(self):
+            return []
+
+    col = Collector(cfg, repo)
+    col.conn = _Conn()
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.read_and_store_dtcs()
+    assert seen["cmd"] == "19028F"
+
+
 def test_dtc_description_lookup():
     # the hand-maintained VAG data-bus wording wins over the generic SAE text
     desc, doc = describe("U112300")

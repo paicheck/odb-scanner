@@ -51,6 +51,13 @@ collector:
   # it if you collect while the car is asleep; a DID that has EVER answered is
   # never retired, because silence then means "car asleep", not "DID dead".
   silent_retire_threshold: 3
+  # UDS DTC status mask for the single functional 0x19 0x02 read each cycle.
+  # 0x8F asks for DTCs that are lighting the warning lamp (0x80), or that are
+  # confirmed (0x08), pending (0x04), failed-this-cycle (0x02) or testFailed
+  # (0x01). 0x08 is the old confirmed-only behaviour. This does NOT add a
+  # request -- it widens one read -- and it is how a fault that lights the dash
+  # before it is confirmed becomes visible at all.
+  dtc_status_mask: "8F"
 
 database:
   # The car's own history, and nothing else's. The simulator writes to

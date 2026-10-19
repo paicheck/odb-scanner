@@ -729,10 +729,24 @@ class Collector:
         # UDS DTCs: ONE functional read, attributed per responding ECU by its
         # response header. Per-ECU reads would send the identical functional
         # request N times and could not tell whose DTCs came back anyway.
+        #
+        # The status mask decides which DTCs the ECU reports. It used to be
+        # 0x08 (confirmed only), which cannot see a fault that is lighting the
+        # dash before it is confirmed. The default is now 0x8F -- warning
+        # indicator (0x80), confirmed (0x08), pending (0x04), failed-this-cycle
+        # (0x02) and testFailed (0x01) -- still a single request, so this is a
+        # wider read rather than extra polling. It is configurable because the
+        # right mask is a judgement call, not a fact.
+        mask = str(self.cfg.get("collector.dtc_status_mask", "8F")).upper()
+        if len(mask) != 2 or any(ch not in "0123456789ABCDEF" for ch in mask):
+            log.warning("collector.dtc_status_mask=%r is not a hex byte; "
+                        "using the default 8F", mask)
+            mask = "8F"
         try:
             payloads = self.conn.functional_probe(
-                "190208", "UDS 0x19 0x02 ReadDTCInformation (status mask "
-                          "0x08, confirmed DTCs) - functional, read-only")
+                f"1902{mask}", "UDS 0x19 0x02 ReadDTCInformation (status mask "
+                               f"0x{mask}, warning+active+pending+confirmed "
+                               "DTCs) - functional, read-only")
         except CommunicationError as exc:
             log.debug("UDS DTC read failed: %s", exc)
             payloads = {}
@@ -764,7 +778,9 @@ class Collector:
             if records:
                 freeze["snapshot"] = records
             self.repo.upsert_dtc(self.vehicle_id, ts, label, code, desc,
-                                 cats, status="confirmed", freeze_frame=freeze)
+                                 cats, status=dtc_analysis.status_label(
+                                     item.get("status_byte")),
+                                 freeze_frame=freeze)
             entry = {"ecu": label, "code": code,
                      "status_byte": item.get("status_byte")}
             if records:
