@@ -320,17 +320,28 @@ def criteria_met(inv: Investigation) -> tuple[bool, str]:
                   "criteria satisfied (counter-evidence sought)")
 
 
-def finalize(repo, inv_id: int, *, summary: str = "") -> Investigation:
+def finalize(repo, inv_id: int, *, summary: str = "",
+             criteria_confirmed: bool = False) -> Investigation:
     """Close an investigation honestly.
 
-    Sets `resolved` only when `criteria_met` says so; otherwise it records
-    `insufficient-evidence` and says why. It never upgrades a hypothesis to a
-    diagnosis to make a tidier report.
+    `criteria_met` can only check structure (criteria written, enough rows, a
+    certain observation, a stated mechanism) -- it cannot read the prose
+    criteria to see whether they are actually true. So resolving also requires
+    the caller to assert `criteria_confirmed=True`, which the UI does with an
+    explicit checkbox. The default is False, so a bare "Finalise" click can
+    never upgrade a hypothesis to a diagnosis.
+
+    Sets `resolved` only when both gates pass; otherwise it records
+    `insufficient-evidence` and says why.
     """
     inv = load_investigation(repo, inv_id)
     if inv is None:
         raise KeyError(f"no investigation {inv_id}")
     ok, reason = criteria_met(inv)
+    if ok and not criteria_confirmed:
+        ok = False
+        reason = ("the written criteria were not confirmed as satisfied by the "
+                  "operator; the structural checks alone cannot establish that")
     status = "resolved" if ok else "insufficient-evidence"
     conclusion = (f"CONFIRMED. {reason}." if ok else
                   f"NOT CONFIRMED. Insufficient evidence: {reason}. The "

@@ -345,9 +345,30 @@ def test_investigation_resolves_only_with_criteria_and_evidence(repo):
     inv.observe_key(repo, repo.vehicle_id, "soc_abs", inv_id=i.id)
     inv.add_hypothesis(repo, i.id, "sensor drift", would_falsify="stable value")
     inv.add_counter_evidence(repo, i.id, "no other module disagrees")
-    done = inv.finalize(repo, i.id)
+    done = inv.finalize(repo, i.id, criteria_confirmed=True)
     assert done.status == "resolved"
     assert "CONFIRMED" in done.conclusion
+
+
+def test_finalize_cannot_resolve_without_the_operator_confirming_criteria(repo):
+    """The structural gate counts rows; it cannot read the prose criteria.
+
+    A bare Finalise click must therefore stay at insufficient-evidence even
+    when every structural check passes.
+    """
+    from analysis import investigation as inv
+
+    _record(repo, "soc_abs", _now_iso(-10), 60.0)
+    i = inv.open_investigation(repo, repo.vehicle_id, "t", "s",
+                               anchor_key="soc_abs",
+                               criteria="a fresh soc_abs observation plus two "
+                                        "more evidence rows")
+    inv.observe_key(repo, repo.vehicle_id, "soc_abs", inv_id=i.id)
+    inv.add_hypothesis(repo, i.id, "sensor drift", would_falsify="stable value")
+    inv.add_counter_evidence(repo, i.id, "no other module disagrees")
+    done = inv.finalize(repo, i.id)          # no criteria_confirmed
+    assert done.status == "insufficient-evidence"
+    assert "not confirmed as satisfied" in done.conclusion
 
 
 def test_association_is_never_certain(repo):
@@ -359,6 +380,47 @@ def test_association_is_never_certain(repo):
     ev = inv.associate_events(repo, repo.vehicle_id, ts, inv_id=i.id)
     assert ev and all(not e.certain for e in ev)
     assert any("not causation" in e.detail for e in ev)
+
+
+def test_additive_migration_adds_certain_to_an_older_evidence_table(tmp_path):
+    """CREATE TABLE IF NOT EXISTS cannot add a column to an existing table.
+
+    The real data/odb_scanner.db was created before investigation_evidence
+    gained `certain`, so the first evidence write failed with "no such column".
+    The additive ALTER must repair such a database in place, without dropping
+    rows.
+    """
+    import sqlite3
+
+    from database.repository import Repository
+
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.executescript(
+        "CREATE TABLE investigation_evidence ("
+        " id INTEGER PRIMARY KEY,"
+        " investigation_id INTEGER NOT NULL,"
+        " ts TEXT NOT NULL,"
+        " stage TEXT NOT NULL,"
+        " kind TEXT NOT NULL,"
+        " ref TEXT,"
+        " observation TEXT NOT NULL,"
+        " detail TEXT);")
+    con.execute("INSERT INTO investigation_evidence "
+                "(investigation_id, ts, stage, kind, observation) "
+                "VALUES (1, '2026-01-01T00:00:00+00:00', 'observation', "
+                "'measurement', 'kept')")
+    con.commit()
+    con.close()
+
+    with Repository(path) as repo:
+        cols = {r[1] for r in repo.conn.execute(
+            "PRAGMA table_info(investigation_evidence)")}
+        assert "certain" in cols
+        row = repo.conn.execute(
+            "SELECT observation, certain FROM investigation_evidence").fetchone()
+        assert row["observation"] == "kept"
+        assert row["certain"] == 1        # default backfills existing rows
 
 
 def test_known_invalid_observation_cannot_support_a_diagnosis(repo):

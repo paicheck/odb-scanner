@@ -834,9 +834,11 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
 
     @app.post("/investigations/{investigation_id}/finalize")
     def investigation_finalize(request: Request, investigation_id: int,
-                               summary: str = Form("")):
+                               summary: str = Form(""),
+                               criteria_confirmed: bool = Form(False)):
         from analysis import investigation as inv_mod
-        inv_mod.finalize(repo, investigation_id, summary=summary.strip())
+        inv_mod.finalize(repo, investigation_id, summary=summary.strip(),
+                         criteria_confirmed=criteria_confirmed)
         return _redirect(f"/investigations/{investigation_id}")
 
     @app.get("/api/investigations")

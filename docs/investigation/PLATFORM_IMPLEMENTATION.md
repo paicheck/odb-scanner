@@ -93,19 +93,54 @@ key anchors).
   observation, a stated mechanism and enough evidence.** Certainty is stored,
   not recomputed, so a diagnosis cannot be upgraded later by a value going
   stale.
+* **Resolution also needs an explicit operator confirmation.** `criteria_met`
+  can only check structure (criteria written, ≥3 rows, a certain observation, a
+  stated mechanism); it cannot read the prose criteria to see whether they are
+  true. So `finalize` defaults to `criteria_confirmed=False`, and the
+  Investigation page has an explicit "I confirm the written criteria are
+  satisfied" checkbox. A bare Finalise click therefore cannot turn a hypothesis
+  into a diagnosis. (This was found while recording the electric-drive
+  investigation: the structural gate returned True even though the car reports
+  no DTC, which is exactly the criterion that was written.)
 * **Association is never causation.** Timeline association rows are marked
   `certain=False` and carry the sentence "Temporal order is not causation." The
   real database has **no DTC** for the electric-drive warning, so that symptom
   is modelled as a manually recorded symptom anchored on real `eldrive` data.
+* **The DTC read was widened, not multiplied.** The single functional
+  `0x19 0x02` read now asks for status mask `0x8F` instead of `0x08`
+  (`collector.dtc_status_mask`, default `8F`). That adds the
+  warningIndicatorRequested (`0x80`), pending (`0x04`) and failed (`0x01/0x02`)
+  bits, so a fault that lights the dash before it is confirmed becomes visible.
+  It is still **one request per cycle** — a wider read, not extra polling — and
+  `0x08` reproduces the old confirmed-only behaviour. The status byte is mapped
+  to `dtcs.status` (`warning`/`active`/`pending`/`confirmed`/`stored`) and the
+  `warning-lamp` category, which the `/dtcs` page displays.
+* **A known VW code is now classified by its status byte too.** `classify_dtc`
+  used to return early for codes in the hand-maintained VW table, which meant
+  the lamp/pending bits never reached exactly the codes this car emits. That
+  early return was removed; the curated categories are still applied first.
 
 ## 3. Migration instructions
 
-Nothing to run. The additions are `CREATE TABLE IF NOT EXISTS`, so opening the
-database with this build creates the three new tables in place and leaves every
-existing table and row untouched. `SCHEMA_VERSION` is deliberately unchanged at
-1, so `data/odb_scanner.db`, the pre-purge backups and `data/real_car.db` all
-keep opening. (This is the same convention documented above `SCHEMA_VERSION` in
-`database/models.py` and asserted by `tests/test_definition_store.py`.)
+**Tables:** nothing to run. The additions are `CREATE TABLE IF NOT EXISTS`, so
+opening the database with this build creates the missing tables in place and
+leaves every existing table and row untouched. `SCHEMA_VERSION` is deliberately
+unchanged at 1, so `data/odb_scanner.db`, the pre-purge backups and
+`data/real_car.db` all keep opening. (This is the same convention documented
+above `SCHEMA_VERSION` in `database/models.py` and asserted by
+`tests/test_definition_store.py`.)
+
+**One column needed a real migration, and `CREATE TABLE IF NOT EXISTS` could
+not provide it.** The live `data/odb_scanner.db` already had an
+`investigation_evidence` table from an earlier build, without the `certain`
+column. `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so the
+first evidence write failed with `table investigation_evidence has no column
+named certain`. `Repository.__init__` now runs `_apply_additive_migrations`,
+which checks `PRAGMA table_info` and issues an idempotent `ALTER TABLE ... ADD
+COLUMN certain INTEGER NOT NULL DEFAULT 1` when the column is absent. Existing
+rows are kept and default to `certain=1`. It runs automatically on the next open;
+no manual SQL is required. A regression test builds an old-schema table, opens
+`Repository`, and asserts both the column and a preserved row.
 
 To populate the definition/evaluation store for the decoder lab:
 
@@ -115,9 +150,11 @@ python main.py quality --persist
 
 ## 4. Tests run and actual results
 
-* `python -m pytest -q` → **701 passed** in 127 s (baseline was 658; 43 new
-  platform tests added in `tests/test_platform.py`, including the CSV/JSON
-  export paths).
+* `python -m pytest -q` → **709 passed** in 128 s (baseline was 658; the
+  platform added 45 tests in `tests/test_platform.py`, the DTC-read widening
+  added 4 in `tests/test_diagnostic.py` (configurable mask, invalid-mask
+  fallback, warning-lamp/pending classification, status-label priority), and
+  the migration + finalize-confirmation fixes added 2 more platform tests.)
 * `python main.py guard-test` → **READ-ONLY guarantee verified** (all write
   services blocked).
 * `python main.py quality` (real `data/odb_scanner.db`, `meb` profile) →
@@ -129,10 +166,17 @@ python main.py quality --persist
   (the last collection was 2026-10-18 18:26 UTC; `chg` is `no-readings` here
   because this database holds no successful on-board-charger read).
 * **Real-DB hygiene check** — an early smoke test had written one throwaway
-  investigation (id 1) plus 3 evidence rows into `data/odb_scanner.db`. These
-  were deleted; `investigations`, `investigation_evidence` and `baselines` are
-  all empty again and `measurements` is unchanged at **16,461** / 318 keys, so
-  the real-car database contains no synthetic test artefacts.
+  investigation (id 1) plus 3 evidence rows into `data/odb_scanner.db`; those
+  were deleted. The only investigation now in the real DB is genuine: id 1,
+  "Electric-drive dash warning extinguished (owner report, 2026-10-19)", with
+  28 evidence rows (6 observations, 16 associations, 6 explanations) and status
+  **insufficient-evidence**. It records the absence of any DTC, the absence of a
+  lamp channel, the unknown onset/clearing time, and the fact that the running
+  collector still used the old confirmed-only mask. No synthetic artefact is
+  presented as car evidence.
+* **`main.py status` / `quality` re-run against the live DB** — measurement
+  count is no longer the pre-purge figure; collection is live and the DB grows
+  on each cycle, so freshness numbers are point-in-time.
 
 ## 5. How to launch / use the dashboard
 
@@ -151,9 +195,16 @@ insufficient).
 
 * **The electric-drive warning is a symptom, not a stored fault.** The real
   database has no DTC; the platform can anchor and investigate it but cannot
-  point at a code the car never recorded.
-* **All data in `data/odb_scanner.db` is historical** (last read 2026-10-18).
-  Nothing is fresh until collection resumes; every page says so.
+  point at a code the car never recorded. The widened `0x8F` read only helps
+  from the next collector restart onward — it cannot recover a lamp state that
+  was never requested.
+* **Collection is live again** (last read `2026-10-19T19:30` UTC at the time of
+  writing), but only while the collector process is running. Gaps remain in the
+  history (`10-06…10-11`, `10-13…10-14`), and `eldrive` only starts
+  `2026-10-16`. A warning that came and went inside a gap was never observed.
+* **Confirmed-only history.** Every DTC read before this change used mask
+  `0x08`, so the absence of an electric-drive DTC in older data does not prove
+  one was never pending or never lit the lamp.
 * **Only two keys are decoder-VERIFIED** (`hv_energy_content`, `hv_energy_max`).
   The rest are provisional/unknown, and 19 are known invalid.
 * **Plausibility ranges cover a subset of keys.** Keys without an established
@@ -172,8 +223,9 @@ insufficient).
    anomalies are computed against robust, gap-aware baselines rather than the
    legacy whole-window z-score (which is still what `analyze` calls).
 2. **A recording/continuation path** — the platform is only as good as the
-   data, and collection stopped on 2026-10-18; resuming it is the single
-   biggest lever.
+   data. Collection is live again at the time of writing, so the single biggest
+   lever is keeping it running through the events worth investigating (and
+   restarting after this DTC-mask change so the wider read takes effect).
 3. **Investigation templates** for the recurring questions ("what changed around
    time T", "is cell N drifting"), pre-filling the association window and anchor
    keys.

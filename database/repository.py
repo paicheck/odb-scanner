@@ -12,6 +12,24 @@ from .models import SCHEMA_SQL, SCHEMA_VERSION
 
 log = logging.getLogger(__name__)
 
+# Columns added to pre-existing tables after those tables first shipped.
+# CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so a database
+# created by an earlier build silently keeps the old column set -- the model and
+# the file then disagree, and the failure surfaces as "no such column" at the
+# first write. These are additive ALTERs (no data loss) and are idempotent.
+_ADDITIVE_COLUMNS = (
+    # The real data/odb_scanner.db had investigation_evidence without it.
+    ("investigation_evidence", "certain", "INTEGER NOT NULL DEFAULT 1"),
+)
+
+
+def _apply_additive_migrations(conn: sqlite3.Connection) -> None:
+    for table, column, decl in _ADDITIVE_COLUMNS:
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if cols and column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            log.info("schema: added %s.%s", table, column)
+
 # Rows whose provenance starts with this were NOT measured by this tool. The
 # canonical list lives here because the data layer owns the provenance
 # vocabulary; analysis/provenance.py imports it rather than restating it, so
@@ -94,6 +112,7 @@ class Repository:
         self._closed = False
         existing = self._stored_schema_version()
         self.conn.executescript(SCHEMA_SQL)
+        _apply_additive_migrations(self.conn)
         if check_schema and existing is not None \
                 and existing != SCHEMA_VERSION:
             # CREATE TABLE IF NOT EXISTS leaves an older database's tables
