@@ -230,9 +230,9 @@ raw bytes remain the source of truth.
 - **CI:** `.github/workflows/ci.yml` runs lint, fast tests, full suite, smoke
   test, and `guard-test` on Python 3.11–3.14.
 - **Android parity:** `android/.../spec/Decode.kt` mirrors the Python decoders and
-  `DecodeTest.kt` pins them against the same vectors. The JVM test has **not been
-  executed here** (no JDK/Android SDK on this machine) — run
-  `gradlew :app:testDebugUnitTest` on a machine with the SDK.
+  `DecodeTest.kt` pins them against the same vectors. Verified passing on this
+  machine (`gradlew :app:testDebugUnitTest` → 9 tests, 0 failures; JDK is
+  Android Studio's bundled JBR at `C:\Program Files\Android\Android Studio\jbr`).
 
 ---
 
