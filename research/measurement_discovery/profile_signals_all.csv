@@ -1,0 +1,306 @@
+base_name,variants,ecu_label,ecu_address,did,service,start_byte_id,data_length,signed,byte_order,scale,divider,offset,unit,formula,pid_type,evidence_status,role,in_registry,registry_key
+12V Battery SoC,[19.Gate] 12V Battery SoC,19.Gate,710,2AF7,22,7,1,False,big,1.0,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage
+12V Battery adapted capacity,[19.Gate] 12V Battery adapted capacity,19.Gate,710,2AF7,22,22,1,False,big,1.0,1.0,0.0,Ah,,ByteSet,VERIFIED,0,1,aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage
+12V Battery aging by capacity,[19.Gate] 12V Battery aging by capacity,19.Gate,710,2AF7,22,20,1,False,big,1.0,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage
+12V Battery aging by power,[19.Gate] 12V Battery aging by power,19.Gate,710,2AF7,22,21,1,False,big,1.0,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage
+12V Battery current,[19.Gate] 12V Battery current,19.Gate,710,2AF7,22,2,4,True,big,0.001,1.0,0.0,A,,ByteSet,VERIFIED,0,1,aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage
+12V Battery sensor temperature,[19.Gate] 12V Battery sensor temperature,19.Gate,710,2AF7,22,9,1,False,big,1.0,1.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage
+12V Battery temperature,[19.Gate] 12V Battery temperature,19.Gate,710,2AF7,22,8,1,False,big,1.0,1.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage
+12V Battery total charge,[19.Gate] 12V Battery total charge,19.Gate,710,2AF7,22,12,4,False,big,0.1,1.0,0.0,Ah,,ByteSet,VERIFIED,0,1,aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage
+12V Battery total discharge,[19.Gate] 12V Battery total discharge,19.Gate,710,2AF7,22,16,4,False,big,0.1,1.0,0.0,Ah,,ByteSet,VERIFIED,0,1,aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage
+12V Battery voltage,[19.Gate] 12V Battery voltage,19.Gate,710,2AF7,22,0,2,False,big,0.001,1.0,4.0,volts,,ByteSet,VERIFIED,0,1,aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage
+A/C compressor load,[08.HVAC] A/C compressor load,08.HVAC,746,2604,22,0,1,False,big,0.1,1.0,0.0,Nm,,ByteSet,VERIFIED,0,1,a_c_compressor_load
+A/C compressor power consumption: actual value,[08.HVAC] A/C compressor power consumption: actual value,08.HVAC,746,0800,22,5,2,False,big,1.0,1.0,0.0,W,,ByteSet,VERIFIED,0,1,a_c_compressor_power_consumption_actual_value
+A/C compressor speed,[08.HVAC] A/C compressor speed,08.HVAC,746,2603,22,0,1,False,big,100.0,1.0,0.0,rpm,,ByteSet,VERIFIED,0,1,a_c_compressor_speed
+A/C refrigerant pressure and temperature sensor 1: Interior Temperature,[08.HVAC] A/C refrigerant pressure and temperature sensor 1: Interior Temperature,08.HVAC,746,4EEF,22,4,2,False,big,10.0,100.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,a_c_refrigerant_pressure_and_temperature_sensor_1_interior_temperature;a_c_refrigerant_pressure_and_temperature_sensor_1_pressure;a_c_refrigerant_pressure_and_temperature_sensor_1_temperature
+A/C refrigerant pressure and temperature sensor 1: Pressure,[08.HVAC] A/C refrigerant pressure and temperature sensor 1: Pressure,08.HVAC,746,4EEF,22,0,2,False,big,88.0,10000.0,0.0,bar,,ByteSet,VERIFIED,0,1,a_c_refrigerant_pressure_and_temperature_sensor_1_interior_temperature;a_c_refrigerant_pressure_and_temperature_sensor_1_pressure;a_c_refrigerant_pressure_and_temperature_sensor_1_temperature
+A/C refrigerant pressure and temperature sensor 1: Temperature,[08.HVAC] A/C refrigerant pressure and temperature sensor 1: Temperature,08.HVAC,746,4EEF,22,2,2,False,big,10.0,100.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,a_c_refrigerant_pressure_and_temperature_sensor_1_interior_temperature;a_c_refrigerant_pressure_and_temperature_sensor_1_pressure;a_c_refrigerant_pressure_and_temperature_sensor_1_temperature
+Acceleration,[01.ENG] Acceleration,01.ENG,FC0076,4539,22,0,2,True,big,0.001,1.0,0.0,m_sec2,,ByteSet,VERIFIED,0,1,acceleration
+Actual mechanical torque calculated,[51.ElDrive] Actual mechanical torque calculated,51.ElDrive,FC007C,3EE9,22,0,2,False,big,1.0,10.0,1.0,Nm,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,actual_mechanical_torque_calculated
+Actual mechanical torque commanded value,[51.ElDrive] Actual mechanical torque commanded value,51.ElDrive,FC007C,58E1,22,0,2,False,big,1.0,10.0,1.0,Nm,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,actual_mechanical_torque_commanded_value
+Actual possible maximum torque,[51.ElDrive] Actual possible maximum torque,51.ElDrive,FC007C,3EEA,22,0,2,False,big,1.0,10.0,1.0,Nm,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,actual_possible_maximum_torque
+Actual possible minimum torque,[51.ElDrive] Actual possible minimum torque,51.ElDrive,FC007C,3EEB,22,0,2,False,big,1.0,10.0,1.0,Nm,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,actual_possible_minimum_torque
+"Additional high-voltage consumers, power","[01.ENG] Additional high-voltage consumers, power",01.ENG,FC0076,0364,22,0,2,True,big,0.1,1.0,0.0,kW,,ByteSet,VERIFIED,0,1,hv_aux_power
+"Additional high-voltage consumers, total current","[01.ENG] Additional high-voltage consumers, total current",01.ENG,FC0076,0360,22,0,2,True,big,0.01,1.0,0.0,A,,ByteSet,VERIFIED,0,1,additional_high_voltage_consumers_total_current
+Air polution level (0 = clean air),[08.HVAC] Air polution level (0 = clean air),08.HVAC,746,26ED,22,0,1,True,big,0.1,1.0,0.0,None,,ByteSet,VERIFIED,0,1,air_polution_level_0_clean_air
+Average battery consumption (internal value),[19.Gate] Average battery consumption (internal value),19.Gate,710,2AB4,22,9,1,False,big,1.0,1.0,0.0,A,,ByteSet,VERIFIED,0,1,average_battery_consumption_internal_value;range_internal
+Average energy consumption on roads category 0,[19.Gate] Average energy consumption on roads category 0,19.Gate,710,2AB7,22,0,2,False,big,0.1,1.0,0.0,kWh,,ByteSet,VERIFIED,0,1,road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6
+Average energy consumption on roads category 1,[19.Gate] Average energy consumption on roads category 1,19.Gate,710,2AB7,22,2,2,False,big,0.1,1.0,0.0,kWh,,ByteSet,VERIFIED,0,1,road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6
+Average energy consumption on roads category 2,[19.Gate] Average energy consumption on roads category 2,19.Gate,710,2AB7,22,4,2,False,big,0.1,1.0,0.0,kWh,,ByteSet,VERIFIED,0,1,road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6
+Average energy consumption on roads category 3,[19.Gate] Average energy consumption on roads category 3,19.Gate,710,2AB7,22,6,2,False,big,0.1,1.0,0.0,kWh,,ByteSet,VERIFIED,0,1,road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6
+Average energy consumption on roads category 4,[19.Gate] Average energy consumption on roads category 4,19.Gate,710,2AB7,22,8,2,False,big,0.1,1.0,0.0,kWh,,ByteSet,VERIFIED,0,1,road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6
+Average energy consumption on roads category 5,[19.Gate] Average energy consumption on roads category 5,19.Gate,710,2AB7,22,10,2,False,big,0.1,1.0,0.0,kWh,,ByteSet,VERIFIED,0,1,road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6
+Average energy consumption on roads category 6,[19.Gate] Average energy consumption on roads category 6,19.Gate,710,2AB7,22,12,2,False,big,0.1,1.0,0.0,kWh,,ByteSet,VERIFIED,0,1,road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6
+Battery SoC (normalized),[01.ENG] Battery SoC (normalized),01.ENG,FC0076,3DEF,22,0,2,True,big,0.01,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,battery_soc_normalized
+Battery inlet temperature,[8C.BMS] Battery inlet temperature,8C.BMS,FC007B,189D,22,2,2,True,big,1.0,64.0,0.0,celicium,,ByteSet,VERIFIED,0,1,coolant_temps
+Battery max SoC cell #,[8C.BMS] Battery max SoC cell #,8C.BMS,FC007B,1E2C,22,2,2,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,cell_soc_max
+Battery max SoC cell %,[8C.BMS] Battery max SoC cell %,8C.BMS,FC007B,1E2C,22,0,2,False,big,0.01,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,cell_soc_max
+Battery maximum temperature,[8C.BMS] Battery maximum temperature,8C.BMS,FC007B,1E0E,22,0,2,True,big,1.0,64.0,0.0,celicium,,ByteSet,VERIFIED,0,1,bat_temp_max
+Battery maximum temperature Sensor ID,[8C.BMS] Battery maximum temperature Sensor ID,8C.BMS,FC007B,1E0E,22,2,2,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,bat_temp_max
+Battery min SoC cell #,[8C.BMS] Battery min SoC cell #,8C.BMS,FC007B,1E2D,22,2,2,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,cell_soc_min
+Battery min SoC cell %,[8C.BMS] Battery min SoC cell %,8C.BMS,FC007B,1E2D,22,0,2,False,big,0.01,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,cell_soc_min
+Battery minimum temperature,[8C.BMS] Battery minimum temperature,8C.BMS,FC007B,1E0F,22,0,2,True,big,1.0,64.0,0.0,celicium,,ByteSet,VERIFIED,0,1,bat_temp_min
+Battery minimum temperature Sensor ID,[8C.BMS] Battery minimum temperature Sensor ID,8C.BMS,FC007B,1E0F,22,2,2,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,bat_temp_min
+Battery outlet temperature,[8C.BMS] Battery outlet temperature,8C.BMS,FC007B,189D,22,0,2,True,big,1.0,64.0,0.0,celicium,,ByteSet,VERIFIED,0,1,coolant_temps
+Battery temperature,[8C.BMS] Battery temperature,8C.BMS,FC007B,2A0B,22,0,1,False,big,1.0,2.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,battery_temp
+Battery temperature delta,Battery temperature delta,Battery temperature delta,,,22 (inherited),0,1,False,big,1.0,1.0,0.0,celicium,PID(12935008)-PID(12935007),Formula,VERIFIED,0,0,
+Brake booster pressure,[01.ENG] Brake booster pressure,01.ENG,FC0076,2005,22,0,2,False,big,0.001,1.0,0.0,bar,,ByteSet,VERIFIED,0,1,brake_booster_pressure
+CO2 content interior,[08.HVAC] CO2 content interior,08.HVAC,746,42DB,22,1,1,False,big,100.0,1.0,0.0,ppm,,ByteSet,VERIFIED,0,1,co2_content_interior
+Cabin humidity,[08.HVAC] Cabin humidity,08.HVAC,746,27C4,22,4,1,False,big,0.5,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,cabin_humidity;windshield_temperature
+Cabin temperature,[08.HVAC] Cabin temperature,08.HVAC,746,2613,22,0,2,False,big,1.0,5.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,inside_temp
+Car operation mode: AC charging,[8C.BMS] Car operation mode: AC charging,8C.BMS,FC007B,7448,22,0,1,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,charge_mode;op_mode
+Car operation mode: DC charging,[8C.BMS] Car operation mode: DC charging,8C.BMS,FC007B,7448,22,0,1,False,big,1.0,1.0,0.0,None,"if(GetBit(A,1)+GetBit(A,2)=2,1,0)",Formula,VERIFIED,0,1,charge_mode;op_mode
+Car operation mode: driving,[8C.BMS] Car operation mode: driving,8C.BMS,FC007B,7448,22,0,1,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,charge_mode;op_mode
+Car operation mode: standby,[8C.BMS] Car operation mode: standby,8C.BMS,FC007B,7448,22,0,1,False,big,1.0,1.0,0.0,None,"if(GetBit(A,0)=1;0;1)",Formula,VERIFIED,0,1,charge_mode;op_mode
+Cell voltage delta mV,Cell voltage delta mV,Cell voltage delta mV,,,22 (inherited),0,1,False,big,1.0,1.0,0.0,mV,(PID(12935259)-PID(12935260))*1000,Formula,VERIFIED,0,0,
+Charging: Normal charge port,[8C.BMS] Charging: Normal charge port,8C.BMS,FC007B,7448,22,0,1,False,big,1.0,1.0,0.0,None,,BitValue,VERIFIED,0,1,charge_mode;op_mode
+Charging: Rapid charge port,[8C.BMS] Charging: Rapid charge port,8C.BMS,FC007B,7448,22,0,1,False,big,1.0,1.0,0.0,None,,BitValue,VERIFIED,0,1,charge_mode;op_mode
+Coolant circulation pump duty,[01.ENG] Coolant circulation pump duty,01.ENG,FC0076,276D,22,0,2,False,big,0.01,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,coolant_circulation_pump_duty
+Cycle energy transformation,[C6.Charger] Cycle energy transformation,C6.Charger,744,103E,22,0,2,False,big,0.01,1.0,0.0,kWh,,ByteSet,VERIFIED,0,1,obc_cycle_energy
+DC Battery Current,[8C.BMS] DC Battery Current,8C.BMS,FC007B,1E3D,22,0,4,False,big,0.01,1.0,-1500.0,A,(((A*16777216+B*65536+C*256+D)-150000)/100)*-1,Formula,VERIFIED,42,1,pack_current
+DC Battery Current #2,[8C.BMS] DC Battery Current #2,8C.BMS,FC007B,1E3E,22,0,4,False,big,0.01,1.0,-1500.0,A,,ByteSet,VERIFIED,0,1,pack_current_2
+DC Battery power,"[8C.BMS] DC Battery power | [8C.BMS] DC Battery power (Macan EV, Q6 eTron)",8C.BMS,,,22 (inherited),0,2,False,big,1.0,4.0,0.0,kW,PID(12935001)*PID(12935000)/1000,Formula,VERIFIED,43,0,
+DC Battery power,[8C.BMS] DC Battery power (old),8C.BMS,FC007B,1E3B;1E3D,22,0,2,False,big,1.0,4.0,0.0,kW,(((((E*16777216+F*65536+G*256+H)-150000)/100)*-1)*((A*256+B)/4))/1000,Formula,VERIFIED,43,0,
+DC Battery summ of all cells voltage,[8C.BMS] DC Battery summ of all cells voltage,8C.BMS,FC007B,1E3C,22,0,4,True,big,244140.625,1000000000.0,0.0,volts,,ByteSet,VERIFIED,0,1,cell_voltage_sum
+DC Battery voltage,"[8C.BMS] DC Battery voltage | [8C.BMS] DC Battery voltage (Macan EV, Q6 eTron)",8C.BMS,FC007B,1E3B,22,0,2,False,big,1.0,4.0,0.0,volts,,ByteSet,VERIFIED,41,1,pack_voltage
+DC Link current,[51.ElDrive] DC Link current,51.ElDrive,FC007C,3E98,22,0,2,False,big,1.0,10.0,1.0,A,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,dc_link_current
+DC Link voltage,[51.ElDrive] DC Link voltage,51.ElDrive,FC007C,3E93,22,0,2,False,big,1.0,10.0,1.0,volts,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,dc_link_voltage
+DC Link voltage reserve,[51.ElDrive] DC Link voltage reserve,51.ElDrive,FC007C,43B9,22,0,2,False,big,1.0,10.0,1.0,volts,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,dc_link_voltage_reserve
+DC-DC converter coolant temperature Calculated,[01.ENG] DC-DC converter coolant temperature Calculated,01.ENG,FC0076,43B8,22,0,2,True,big,0.1,1.0,0.0,celicium,,ByteSet,VERIFIED,0,1,dc_dc_converter_coolant_temperature_calculated
+DC-DC converter current,[19.Gate] DC-DC converter current,19.Gate,710,2A53,22,1,2,False,big,1.0,1.0,-511.0,A,,ByteSet,VERIFIED,0,1,dc_dc_converter_reserved_current;dcdc_gw_current;dcdc_gw_voltage
+DC-DC converter low voltage,[19.Gate] DC-DC converter low voltage,19.Gate,710,2A53,22,0,1,False,big,0.1,1.0,0.0,volts,,ByteSet,VERIFIED,0,1,dc_dc_converter_reserved_current;dcdc_gw_current;dcdc_gw_voltage
+DC-DC converter reserved current,[19.Gate] DC-DC converter reserved current,19.Gate,710,2A53,22,3,2,False,big,1.0,1.0,-511.0,A,,ByteSet,VERIFIED,0,1,dc_dc_converter_reserved_current;dcdc_gw_current;dcdc_gw_voltage
+DC-DC current,[8105.DC/DC Converter] DC-DC current,8105.DC/DC Converter,FC00B9,465B,22,0,2,False,big,1.0,16.0,0.0,A,,ByteSet,VERIFIED,0,1,dcdc_current
+DC-DC voltage,[8105.DC/DC Converter] DC-DC voltage,8105.DC/DC Converter,FC00B9,465D,22,0,2,False,big,1.0,512.0,0.0,volts,,ByteSet,VERIFIED,0,1,dcdc_voltage
+DMCM stator voltage D direction actual value,[51.ElDrive] DMCM stator voltage D direction actual value,51.ElDrive,FC007C,1007,22,0,2,False,big,1.0,10.0,1.0,volts,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,dmcm_stator_voltage_d_direction_actual_value
+DMCM stator voltage D direction commanded value,[51.ElDrive] DMCM stator voltage D direction commanded value,51.ElDrive,FC007C,1009,22,0,2,False,big,1.0,10.0,1.0,volts,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,dmcm_stator_voltage_d_direction_commanded_value
+DMCM stator voltage Q direction actual value,[51.ElDrive] DMCM stator voltage Q direction actual value,51.ElDrive,FC007C,1008,22,0,2,False,big,1.0,10.0,1.0,volts,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,dmcm_stator_voltage_q_direction_actual_value
+DMCM stator voltage Q direction commanded value,[51.ElDrive] DMCM stator voltage Q direction commanded value,51.ElDrive,FC007C,100A,22,0,2,False,big,1.0,10.0,1.0,volts,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,dmcm_stator_voltage_q_direction_commanded_value
+Desired link voltage,[51.ElDrive] Desired link voltage,51.ElDrive,FC007C,3EED,22,0,2,False,big,1.0,10.0,1.0,volts,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,desired_link_voltage
+Driver requested torque,[01.ENG] Driver requested torque,01.ENG,FC0076,29D4,22,0,2,False,big,0.1,1.0,0.0,Nm,,ByteSet,VERIFIED,0,1,driver_requested_torque
+Dynamic limit for charging in ampere,[8C.BMS] Dynamic limit for charging in ampere,8C.BMS,FC007B,1E1B,22,0,2,False,big,1.0,5.0,0.0,A,,ByteSet,VERIFIED,0,1,dyn_charge_limit
+Dynamic limit for discharging in ampere,[8C.BMS] Dynamic limit for discharging in ampere,8C.BMS,FC007B,1E1C,22,0,2,False,big,1.0,5.0,0.0,A,,ByteSet,VERIFIED,0,1,dyn_discharge_limit
+ECU PCB Temperature,[8C.BMS] ECU PCB Temperature,8C.BMS,FC007B,1622,22,0,1,False,big,1.0,1.0,-50.0,celicium,,ByteSet,VERIFIED,0,1,bms_pcb_temp
+ECU PCB Temperature #1,[51.ElDrive] ECU PCB Temperature #1,51.ElDrive,FC007C,0805,22,0,2,False,big,1.0,10.0,1.0,celicium,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,ecu_pcb_temperature_1
+ECU PCB Temperature #2,[51.ElDrive] ECU PCB Temperature #2,51.ElDrive,FC007C,0806,22,0,2,False,big,1.0,10.0,1.0,celicium,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,ecu_pcb_temperature_2
+Electric drive inflow coolant temperature,[51.ElDrive] Electric drive inflow coolant temperature,51.ElDrive,FC007C,4FAE,22,0,2,False,big,1.0,10.0,1.0,celicium,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,electric_drive_inflow_coolant_temperature
+Electric drive motor speed (rad/sec),[51.ElDrive] Electric drive motor speed (rad/sec),51.ElDrive,FC007C,40C8,22,0,2,False,big,1.0,10.0,1.0,None,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,electric_drive_motor_speed_rad_sec
+Energy content Δ vs. max,Energy content Δ vs. max,Energy content Δ vs. max,,,22 (inherited),0,1,False,big,1.0,1.0,0.0,percent,(PID(12935212)/PID(12935180))*100,Formula,VERIFIED,0,0,
+Estimated electric power reserve (CAN),[19.Gate] Estimated electric power reserve (CAN),19.Gate,710,2AB5,22,4,2,False,big,1.0,1.0,0.0,km,,ByteSet,VERIFIED,0,1,range_can
+Estimated electric power reserve (displayed),[19.Gate] Estimated electric power reserve (displayed),19.Gate,710,2AB6,22,0,2,False,big,1.0,1.0,0.0,km,,ByteSet,VERIFIED,0,1,range_displayed
+Estimated electric power reserve (internal value),[19.Gate] Estimated electric power reserve (internal value),19.Gate,710,2AB4,22,2,2,False,big,1.0,1.0,0.0,km,,ByteSet,VERIFIED,0,1,average_battery_consumption_internal_value;range_internal
+Fresh air/Recirculation flap actual value %,[08.HVAC] Fresh air/Recirculation flap actual value %,08.HVAC,746,261E,22,2,1,False,big,0.5,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,fresh_air_recirculation_flap_actual_value;fresh_air_recirculation_flap_actual_value_steps
+Fresh air/Recirculation flap actual value steps,[08.HVAC] Fresh air/Recirculation flap actual value steps,08.HVAC,746,261E,22,0,2,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,fresh_air_recirculation_flap_actual_value;fresh_air_recirculation_flap_actual_value_steps
+Fresh air/Recirculation flap specified value steps,[08.HVAC] Fresh air/Recirculation flap specified value steps,08.HVAC,746,261F,22,0,2,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,fresh_air_recirculation_flap_specified_value_steps
+Fresh air/Recirculation flap stop for fresh air,[08.HVAC] Fresh air/Recirculation flap stop for fresh air,08.HVAC,746,2620,22,0,2,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,fresh_air_recirculation_flap_stop_for_fresh_air
+Fresh air/Recirculation flap stop for recirculated air,[08.HVAC] Fresh air/Recirculation flap stop for recirculated air,08.HVAC,746,2621,22,0,2,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,fresh_air_recirculation_flap_stop_for_recirculated_air
+Front drive actual torque,[01.ENG] Front drive actual torque,01.ENG,FC0076,0335,22,0,2,True,big,1.0,1.0,0.0,Nm,,ByteSet,VERIFIED,0,1,front_drive_actual_torque
+Front left deflector temperature,[08.HVAC] Front left deflector temperature,08.HVAC,746,260C,22,0,1,False,big,0.333,1.0,0.0,celicium,,ByteSet,VERIFIED,0,1,front_left_deflector_temperature
+Front left temperature flap actual value,[08.HVAC] Front left temperature flap actual value,08.HVAC,746,2622,22,2,1,False,big,0.5,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,front_left_temperature_flap_actual_value
+Front left wheel speed,[03.ABS] Front left wheel speed,03.ABS,713,1800,22,0,2,False,big,0.01,1.0,0.0,kmh,,ByteSet,VERIFIED,0,0,
+Front right deflector temperature,[08.HVAC] Front right deflector temperature,08.HVAC,746,260D,22,0,1,False,big,0.333,1.0,0.0,celicium,,ByteSet,VERIFIED,0,1,front_right_deflector_temperature
+Front right temperature flap actual value,[08.HVAC] Front right temperature flap actual value,08.HVAC,746,2626,22,2,1,False,big,0.5,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,front_right_temperature_flap_actual_value
+Front right wheel speed,[03.ABS] Front right wheel speed,03.ABS,713,1801,22,0,2,False,big,0.01,1.0,0.0,kmh,,ByteSet,VERIFIED,0,0,
+Front:Rear torque difference,[01.ENG] Front:Rear torque difference,01.ENG,FC0076,0343,22,0,2,True,big,0.5,1.0,0.0,Nm,,ByteSet,VERIFIED,0,1,front_rear_torque_difference
+HV Auxiliary consumer power,[01.ENG] HV Auxiliary consumer power,01.ENG,FC0076,0364,22,0,2,True,big,0.1,1.0,0.0,kW,,ByteSet,VERIFIED,0,1,hv_aux_power
+HV Battery After contacts voltage,[8C.BMS] HV Battery After contacts voltage,8C.BMS,FC007B,189B,22,0,2,False,big,0.5,1.0,-1000.0,volts,,ByteSet,VERIFIED,0,1,bat_v_after_contacts
+HV Battery PTC heating medium Temperature #1,[8C.BMS] HV Battery PTC heating medium Temperature #1,8C.BMS,FC007B,1623,22,0,1,False,big,1.0,1.0,-50.0,celicium,,ByteSet,VERIFIED,0,1,ptc_medium_temp_1
+HV Battery PTC heating medium Temperature #2,[8C.BMS] HV Battery PTC heating medium Temperature #2,8C.BMS,FC007B,1624,22,0,1,False,big,1.0,1.0,-50.0,celicium,,ByteSet,VERIFIED,0,1,ptc_medium_temp_2
+HV Battery PTC voltage,[8C.BMS] HV Battery PTC voltage,8C.BMS,FC007B,1621,22,0,1,False,big,0.1,1.0,0.0,volts,,ByteSet,VERIFIED,0,1,ptc_voltage
+HV Battery cell # with highest voltage,[8C.BMS] HV Battery cell # with highest voltage,8C.BMS,FC007B,1E33,22,2,2,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,cell_voltage_max
+HV Battery cell # with lowest  voltage,[8C.BMS] HV Battery cell # with lowest  voltage,8C.BMS,FC007B,1E34,22,2,2,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,cell_voltage_min
+HV Battery cell voltage #001,[8C.BMS] HV Battery cell voltage #001,8C.BMS,FC007B,1E40,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_000
+HV Battery cell voltage #002,[8C.BMS] HV Battery cell voltage #002,8C.BMS,FC007B,1E41,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_001
+HV Battery cell voltage #003,[8C.BMS] HV Battery cell voltage #003,8C.BMS,FC007B,1E42,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_002
+HV Battery cell voltage #004,[8C.BMS] HV Battery cell voltage #004,8C.BMS,FC007B,1E43,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_003
+HV Battery cell voltage #005,[8C.BMS] HV Battery cell voltage #005,8C.BMS,FC007B,1E44,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_004
+HV Battery cell voltage #006,[8C.BMS] HV Battery cell voltage #006,8C.BMS,FC007B,1E45,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_005
+HV Battery cell voltage #007,[8C.BMS] HV Battery cell voltage #007,8C.BMS,FC007B,1E46,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_006
+HV Battery cell voltage #008,[8C.BMS] HV Battery cell voltage #008,8C.BMS,FC007B,1E47,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_007
+HV Battery cell voltage #009,[8C.BMS] HV Battery cell voltage #009,8C.BMS,FC007B,1E48,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_008
+HV Battery cell voltage #010,[8C.BMS] HV Battery cell voltage #010,8C.BMS,FC007B,1E49,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_009
+HV Battery cell voltage #011,[8C.BMS] HV Battery cell voltage #011,8C.BMS,FC007B,1E4A,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_010
+HV Battery cell voltage #012,[8C.BMS] HV Battery cell voltage #012,8C.BMS,FC007B,1E4B,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_011
+HV Battery cell voltage #013,[8C.BMS] HV Battery cell voltage #013,8C.BMS,FC007B,1E4C,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_012
+HV Battery cell voltage #014,[8C.BMS] HV Battery cell voltage #014,8C.BMS,FC007B,1E4D,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_013
+HV Battery cell voltage #015,[8C.BMS] HV Battery cell voltage #015,8C.BMS,FC007B,1E4E,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_014
+HV Battery cell voltage #016,[8C.BMS] HV Battery cell voltage #016,8C.BMS,FC007B,1E4F,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_015
+HV Battery cell voltage #017,[8C.BMS] HV Battery cell voltage #017,8C.BMS,FC007B,1E50,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_016
+HV Battery cell voltage #018,[8C.BMS] HV Battery cell voltage #018,8C.BMS,FC007B,1E51,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_017
+HV Battery cell voltage #019,[8C.BMS] HV Battery cell voltage #019,8C.BMS,FC007B,1E52,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_018
+HV Battery cell voltage #020,[8C.BMS] HV Battery cell voltage #020,8C.BMS,FC007B,1E53,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_019
+HV Battery cell voltage #021,[8C.BMS] HV Battery cell voltage #021,8C.BMS,FC007B,1E54,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_020
+HV Battery cell voltage #022,[8C.BMS] HV Battery cell voltage #022,8C.BMS,FC007B,1E55,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_021
+HV Battery cell voltage #023,[8C.BMS] HV Battery cell voltage #023,8C.BMS,FC007B,1E56,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_022
+HV Battery cell voltage #024,[8C.BMS] HV Battery cell voltage #024,8C.BMS,FC007B,1E57,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_023
+HV Battery cell voltage #025,[8C.BMS] HV Battery cell voltage #025,8C.BMS,FC007B,1E58,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_024
+HV Battery cell voltage #026,[8C.BMS] HV Battery cell voltage #026,8C.BMS,FC007B,1E59,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_025
+HV Battery cell voltage #027,[8C.BMS] HV Battery cell voltage #027,8C.BMS,FC007B,1E5A,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_026
+HV Battery cell voltage #028,[8C.BMS] HV Battery cell voltage #028,8C.BMS,FC007B,1E5B,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_027
+HV Battery cell voltage #029,[8C.BMS] HV Battery cell voltage #029,8C.BMS,FC007B,1E5C,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_028
+HV Battery cell voltage #030,[8C.BMS] HV Battery cell voltage #030,8C.BMS,FC007B,1E5D,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_029
+HV Battery cell voltage #031,[8C.BMS] HV Battery cell voltage #031,8C.BMS,FC007B,1E5E,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_030
+HV Battery cell voltage #032,[8C.BMS] HV Battery cell voltage #032,8C.BMS,FC007B,1E5F,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_031
+HV Battery cell voltage #033,[8C.BMS] HV Battery cell voltage #033,8C.BMS,FC007B,1E60,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_032
+HV Battery cell voltage #034,[8C.BMS] HV Battery cell voltage #034,8C.BMS,FC007B,1E61,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_033
+HV Battery cell voltage #035,[8C.BMS] HV Battery cell voltage #035,8C.BMS,FC007B,1E62,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_034
+HV Battery cell voltage #036,[8C.BMS] HV Battery cell voltage #036,8C.BMS,FC007B,1E63,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_035
+HV Battery cell voltage #037,[8C.BMS] HV Battery cell voltage #037,8C.BMS,FC007B,1E64,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_036
+HV Battery cell voltage #038,[8C.BMS] HV Battery cell voltage #038,8C.BMS,FC007B,1E65,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_037
+HV Battery cell voltage #039,[8C.BMS] HV Battery cell voltage #039,8C.BMS,FC007B,1E66,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_038
+HV Battery cell voltage #040,[8C.BMS] HV Battery cell voltage #040,8C.BMS,FC007B,1E67,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_039
+HV Battery cell voltage #041,[8C.BMS] HV Battery cell voltage #041,8C.BMS,FC007B,1E68,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_040
+HV Battery cell voltage #042,[8C.BMS] HV Battery cell voltage #042,8C.BMS,FC007B,1E69,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_041
+HV Battery cell voltage #043,[8C.BMS] HV Battery cell voltage #043,8C.BMS,FC007B,1E6A,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_042
+HV Battery cell voltage #044,[8C.BMS] HV Battery cell voltage #044,8C.BMS,FC007B,1E6B,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_043
+HV Battery cell voltage #045,[8C.BMS] HV Battery cell voltage #045,8C.BMS,FC007B,1E6C,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_044
+HV Battery cell voltage #046,[8C.BMS] HV Battery cell voltage #046,8C.BMS,FC007B,1E6D,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_045
+HV Battery cell voltage #047,[8C.BMS] HV Battery cell voltage #047,8C.BMS,FC007B,1E6E,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_046
+HV Battery cell voltage #048,[8C.BMS] HV Battery cell voltage #048,8C.BMS,FC007B,1E6F,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_047
+HV Battery cell voltage #049,[8C.BMS] HV Battery cell voltage #049,8C.BMS,FC007B,1E70,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_048
+HV Battery cell voltage #050,[8C.BMS] HV Battery cell voltage #050,8C.BMS,FC007B,1E71,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_049
+HV Battery cell voltage #051,[8C.BMS] HV Battery cell voltage #051,8C.BMS,FC007B,1E72,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_050
+HV Battery cell voltage #052,[8C.BMS] HV Battery cell voltage #052,8C.BMS,FC007B,1E73,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_051
+HV Battery cell voltage #053,[8C.BMS] HV Battery cell voltage #053,8C.BMS,FC007B,1E74,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_052
+HV Battery cell voltage #054,[8C.BMS] HV Battery cell voltage #054,8C.BMS,FC007B,1E75,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_053
+HV Battery cell voltage #055,[8C.BMS] HV Battery cell voltage #055,8C.BMS,FC007B,1E76,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_054
+HV Battery cell voltage #056,[8C.BMS] HV Battery cell voltage #056,8C.BMS,FC007B,1E77,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_055
+HV Battery cell voltage #057,[8C.BMS] HV Battery cell voltage #057,8C.BMS,FC007B,1E78,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_056
+HV Battery cell voltage #058,[8C.BMS] HV Battery cell voltage #058,8C.BMS,FC007B,1E79,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_057
+HV Battery cell voltage #059,[8C.BMS] HV Battery cell voltage #059,8C.BMS,FC007B,1E7A,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_058
+HV Battery cell voltage #060,[8C.BMS] HV Battery cell voltage #060,8C.BMS,FC007B,1E7B,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_059
+HV Battery cell voltage #061,[8C.BMS] HV Battery cell voltage #061,8C.BMS,FC007B,1E7C,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_060
+HV Battery cell voltage #062,[8C.BMS] HV Battery cell voltage #062,8C.BMS,FC007B,1E7D,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_061
+HV Battery cell voltage #063,[8C.BMS] HV Battery cell voltage #063,8C.BMS,FC007B,1E7E,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_062
+HV Battery cell voltage #064,[8C.BMS] HV Battery cell voltage #064,8C.BMS,FC007B,1E7F,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_063
+HV Battery cell voltage #065,[8C.BMS] HV Battery cell voltage #065,8C.BMS,FC007B,1E80,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_064
+HV Battery cell voltage #066,[8C.BMS] HV Battery cell voltage #066,8C.BMS,FC007B,1E81,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_065
+HV Battery cell voltage #067,[8C.BMS] HV Battery cell voltage #067,8C.BMS,FC007B,1E82,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_066
+HV Battery cell voltage #068,[8C.BMS] HV Battery cell voltage #068,8C.BMS,FC007B,1E83,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_067
+HV Battery cell voltage #069,[8C.BMS] HV Battery cell voltage #069,8C.BMS,FC007B,1E84,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_068
+HV Battery cell voltage #070,[8C.BMS] HV Battery cell voltage #070,8C.BMS,FC007B,1E85,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_069
+HV Battery cell voltage #071,[8C.BMS] HV Battery cell voltage #071,8C.BMS,FC007B,1E86,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_070
+HV Battery cell voltage #072,[8C.BMS] HV Battery cell voltage #072,8C.BMS,FC007B,1E87,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_071
+HV Battery cell voltage #073,[8C.BMS] HV Battery cell voltage #073,8C.BMS,FC007B,1E88,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_072
+HV Battery cell voltage #074,[8C.BMS] HV Battery cell voltage #074,8C.BMS,FC007B,1E89,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_073
+HV Battery cell voltage #075,[8C.BMS] HV Battery cell voltage #075,8C.BMS,FC007B,1E8A,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_074
+HV Battery cell voltage #076,[8C.BMS] HV Battery cell voltage #076,8C.BMS,FC007B,1E8B,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_075
+HV Battery cell voltage #077,[8C.BMS] HV Battery cell voltage #077,8C.BMS,FC007B,1E8C,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_076
+HV Battery cell voltage #078,[8C.BMS] HV Battery cell voltage #078,8C.BMS,FC007B,1E8D,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_077
+HV Battery cell voltage #079,[8C.BMS] HV Battery cell voltage #079,8C.BMS,FC007B,1E8E,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_078
+HV Battery cell voltage #080,[8C.BMS] HV Battery cell voltage #080,8C.BMS,FC007B,1E8F,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_079
+HV Battery cell voltage #081,[8C.BMS] HV Battery cell voltage #081,8C.BMS,FC007B,1E90,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_080
+HV Battery cell voltage #082,[8C.BMS] HV Battery cell voltage #082,8C.BMS,FC007B,1E91,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_081
+HV Battery cell voltage #083,[8C.BMS] HV Battery cell voltage #083,8C.BMS,FC007B,1E92,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_082
+HV Battery cell voltage #084,[8C.BMS] HV Battery cell voltage #084,8C.BMS,FC007B,1E93,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_083
+HV Battery cell voltage #085,[8C.BMS] HV Battery cell voltage #085,8C.BMS,FC007B,1E94,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_084
+HV Battery cell voltage #086,[8C.BMS] HV Battery cell voltage #086,8C.BMS,FC007B,1E95,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_085
+HV Battery cell voltage #087,[8C.BMS] HV Battery cell voltage #087,8C.BMS,FC007B,1E96,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_086
+HV Battery cell voltage #088,[8C.BMS] HV Battery cell voltage #088,8C.BMS,FC007B,1E97,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_087
+HV Battery cell voltage #089,[8C.BMS] HV Battery cell voltage #089,8C.BMS,FC007B,1E98,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_088
+HV Battery cell voltage #090,[8C.BMS] HV Battery cell voltage #090,8C.BMS,FC007B,1E99,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_089
+HV Battery cell voltage #091,[8C.BMS] HV Battery cell voltage #091,8C.BMS,FC007B,1E9A,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_090
+HV Battery cell voltage #092,[8C.BMS] HV Battery cell voltage #092,8C.BMS,FC007B,1E9B,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_091
+HV Battery cell voltage #093,[8C.BMS] HV Battery cell voltage #093,8C.BMS,FC007B,1E9C,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_092
+HV Battery cell voltage #094,[8C.BMS] HV Battery cell voltage #094,8C.BMS,FC007B,1E9D,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_093
+HV Battery cell voltage #095,[8C.BMS] HV Battery cell voltage #095,8C.BMS,FC007B,1E9E,22,0,2,False,big,1.0,1000.0,1.0,volts,,ByteSet,VERIFIED,44,1,cell_v_094
+HV Battery cell voltage #096,[8C.BMS] HV Battery cell voltage #096,8C.BMS,FC007B,1E9F,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_095
+HV Battery cell voltage #097,[8C.BMS] HV Battery cell voltage #097,8C.BMS,FC007B,1EA0,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_096
+HV Battery cell voltage #098,[8C.BMS] HV Battery cell voltage #098,8C.BMS,FC007B,1EA1,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_097
+HV Battery cell voltage #099,[8C.BMS] HV Battery cell voltage #099,8C.BMS,FC007B,1EA2,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_098
+HV Battery cell voltage #100,[8C.BMS] HV Battery cell voltage #100,8C.BMS,FC007B,1EA3,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_099
+HV Battery cell voltage #101,[8C.BMS] HV Battery cell voltage #101,8C.BMS,FC007B,1EA4,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_100
+HV Battery cell voltage #102,[8C.BMS] HV Battery cell voltage #102,8C.BMS,FC007B,1EA5,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_101
+HV Battery cell voltage #103,[8C.BMS] HV Battery cell voltage #103,8C.BMS,FC007B,1EA6,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_102
+HV Battery cell voltage #104,[8C.BMS] HV Battery cell voltage #104,8C.BMS,FC007B,1EA7,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_103
+HV Battery cell voltage #105,[8C.BMS] HV Battery cell voltage #105,8C.BMS,FC007B,1EA8,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_104
+HV Battery cell voltage #106,[8C.BMS] HV Battery cell voltage #106,8C.BMS,FC007B,1EA9,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_105
+HV Battery cell voltage #107,[8C.BMS] HV Battery cell voltage #107,8C.BMS,FC007B,1EAA,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_106
+HV Battery cell voltage #108,[8C.BMS] HV Battery cell voltage #108,8C.BMS,FC007B,1EAB,22,0,2,False,big,1.0,1000.0,1.0,volts,if(A*256+B>4090;[NaN];(A*256+B)/1000+1),Formula,VERIFIED,44,1,cell_v_107
+HV Battery cell with highest voltage,[8C.BMS] HV Battery cell with highest voltage,8C.BMS,FC007B,1E33,22,0,2,False,big,2.441,10000.0,0.0,volts,,ByteSet,VERIFIED,0,1,cell_voltage_max
+HV Battery cell with lowest voltage,[8C.BMS] HV Battery cell with lowest voltage,8C.BMS,FC007B,1E34,22,0,2,False,big,2.441,10000.0,0.0,volts,,ByteSet,VERIFIED,0,1,cell_voltage_min
+HV Battery charging voltage,[8C.BMS] HV Battery charging voltage,8C.BMS,FC007B,1E39,22,0,2,True,big,0.0312499784501336,1.0,0.0,volts,,ByteSet,VERIFIED,0,1,bat_charging_voltage
+HV Battery current,[01.ENG] HV Battery current,01.ENG,FC0076,035E,22,0,2,True,big,0.1,1.0,0.0,A,,ByteSet,VERIFIED,0,1,hv_battery_current
+HV Battery energy content,[19.Gate] HV Battery energy content,19.Gate,710,2AB8,22,2,2,False,big,25.0,1.0,0.0,Wh,,ByteSet,VERIFIED,0,1,hv_energy_content
+HV Battery positive voltage after contacts,[8C.BMS] HV Battery positive voltage after contacts,8C.BMS,FC007B,1E38,22,0,2,False,big,0.0312499784501336,1.0,0.0,volts,,ByteSet,VERIFIED,0,1,bat_v_after_contacts_2
+HV Battery positive voltage before contacts,[8C.BMS] HV Battery positive voltage before contacts,8C.BMS,FC007B,1E36,22,0,2,False,big,0.0312499784501336,1.0,0.0,volts,,ByteSet,VERIFIED,0,1,bat_v_before_contacts
+HV Battery temp point 1,[8C.BMS] HV Battery temp point 1,8C.BMS,FC007B,1EAE,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_00
+HV Battery temp point 10,[8C.BMS] HV Battery temp point 10,8C.BMS,FC007B,1EB7,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_09
+HV Battery temp point 11,[8C.BMS] HV Battery temp point 11,8C.BMS,FC007B,1EB8,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_10
+HV Battery temp point 12,[8C.BMS] HV Battery temp point 12,8C.BMS,FC007B,1EB9,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_11
+HV Battery temp point 13,[8C.BMS] HV Battery temp point 13,8C.BMS,FC007B,1EBA,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_12
+HV Battery temp point 14,[8C.BMS] HV Battery temp point 14,8C.BMS,FC007B,1EBB,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_13
+HV Battery temp point 15,[8C.BMS] HV Battery temp point 15,8C.BMS,FC007B,1EBC,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_14
+HV Battery temp point 16,[8C.BMS] HV Battery temp point 16,8C.BMS,FC007B,1EBD,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_15
+HV Battery temp point 17,[8C.BMS] HV Battery temp point 17,8C.BMS,FC007B,7425,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_16
+HV Battery temp point 18,[8C.BMS] HV Battery temp point 18,8C.BMS,FC007B,7426,22,0,2,False,big,1.0,8.0,-40.0,celicium,if((A*256+B)>1020;[NaN];(A*256+B)/8-40),Formula,VERIFIED,0,1,cell_t_17
+HV Battery temp point 19,[8C.BMS] HV Battery temp point 19,8C.BMS,FC007B,7427,22,0,2,False,big,1.0,8.0,-40.0,celicium,if((A*256+B)>1020;[NaN];(A*256+B)/8-40),Formula,VERIFIED,0,1,cell_t_18
+HV Battery temp point 2,[8C.BMS] HV Battery temp point 2,8C.BMS,FC007B,1EAF,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_01
+HV Battery temp point 20,[8C.BMS] HV Battery temp point 20,8C.BMS,FC007B,7428,22,0,2,False,big,1.0,8.0,-40.0,celicium,if((A*256+B)>1020;[NaN];(A*256+B)/8-40),Formula,VERIFIED,0,1,cell_t_19
+HV Battery temp point 21,[8C.BMS] HV Battery temp point 21,8C.BMS,FC007B,7429,22,0,2,False,big,1.0,8.0,-40.0,celicium,if((A*256+B)>1020;[NaN];(A*256+B)/8-40),Formula,VERIFIED,0,1,cell_t_20
+HV Battery temp point 22,[8C.BMS] HV Battery temp point 22,8C.BMS,FC007B,742A,22,0,2,False,big,1.0,8.0,-40.0,celicium,if((A*256+B)>1020;[NaN];(A*256+B)/8-40),Formula,VERIFIED,0,1,cell_t_21
+HV Battery temp point 23,[8C.BMS] HV Battery temp point 23,8C.BMS,FC007B,742B,22,0,2,False,big,1.0,8.0,-40.0,celicium,if((A*256+B)>1020;[NaN];(A*256+B)/8-40),Formula,VERIFIED,0,1,cell_t_22
+HV Battery temp point 24,[8C.BMS] HV Battery temp point 24,8C.BMS,FC007B,742C,22,0,2,False,big,1.0,8.0,-40.0,celicium,if((A*256+B)>1020;[NaN];(A*256+B)/8-40),Formula,VERIFIED,0,1,cell_t_23
+HV Battery temp point 3,[8C.BMS] HV Battery temp point 3,8C.BMS,FC007B,1EB0,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_02
+HV Battery temp point 4,[8C.BMS] HV Battery temp point 4,8C.BMS,FC007B,1EB1,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_03
+HV Battery temp point 5,[8C.BMS] HV Battery temp point 5,8C.BMS,FC007B,1EB2,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_04
+HV Battery temp point 6,[8C.BMS] HV Battery temp point 6,8C.BMS,FC007B,1EB3,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_05
+HV Battery temp point 7,[8C.BMS] HV Battery temp point 7,8C.BMS,FC007B,1EB4,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_06
+HV Battery temp point 8,[8C.BMS] HV Battery temp point 8,8C.BMS,FC007B,1EB5,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_07
+HV Battery temp point 9,[8C.BMS] HV Battery temp point 9,8C.BMS,FC007B,1EB6,22,0,2,False,big,1.0,8.0,-40.0,celicium,,ByteSet,VERIFIED,0,1,cell_t_08
+HV Battery: circulation pump flow,[8C.BMS] HV Battery: circulation pump flow,8C.BMS,FC007B,743B,22,0,1,False,big,10.0,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,coolant_pump
+HV DC current OBC,[C6.Charger] HV DC current OBC,C6.Charger,744,103D,22,0,2,False,big,0.1,1.0,0.0,A,,ByteSet,VERIFIED,0,1,obc_dc_current
+HV-EM HV Battery energy information,[19.Gate] HV-EM HV Battery energy information,19.Gate,710,15D1,22,5,2,False,big,50.0,1.0,0.0,Wh,,ByteSet,VERIFIED,0,1,hv_em_hv_battery_energy_information;hv_em_nv_power_limitation;hv_em_power_limit;nv_energy_requirement
+HV-EM NV Power limitation,[19.Gate] HV-EM NV Power limitation,19.Gate,710,15D1,22,3,1,False,big,50.0,1.0,0.0,W,,ByteSet,VERIFIED,0,1,hv_em_hv_battery_energy_information;hv_em_nv_power_limitation;hv_em_power_limit;nv_energy_requirement
+HV-EM Power limitation,[19.Gate] HV-EM Power limitation,19.Gate,710,15D1,22,1,2,False,big,50.0,1.0,0.0,W,,ByteSet,VERIFIED,0,1,hv_em_hv_battery_energy_information;hv_em_nv_power_limitation;hv_em_power_limit;nv_energy_requirement
+High voltage Output,[C6.Charger] High voltage Output,C6.Charger,744,1DA7,22,0,2,False,big,0.1,1.0,0.0,volts,,ByteSet,VERIFIED,0,1,hv_output_voltage
+Inverter power loss phase U,[51.ElDrive] Inverter power loss phase U,51.ElDrive,FC007C,1040,22,0,4,False,big,1.0,10.0,1.0,W,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,inverter_power_loss_phase_u
+Inverter power loss phase V,[51.ElDrive] Inverter power loss phase V,51.ElDrive,FC007C,1041,22,0,4,False,big,1.0,10.0,1.0,W,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,inverter_power_loss_phase_v
+Inverter power loss phase W,[51.ElDrive] Inverter power loss phase W,51.ElDrive,FC007C,1042,22,0,4,False,big,1.0,10.0,1.0,W,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,inverter_power_loss_phase_w
+Maximum charge voltage,[8C.BMS] Maximum charge voltage,8C.BMS,FC007B,5171,22,0,2,False,big,1.0,1.0,0.0,volts,,ByteSet,VERIFIED,0,1,max_charge_voltage
+Maximum energy content of the traction battery,[19.Gate] Maximum energy content of the traction battery,19.Gate,710,2AB2,22,0,2,False,big,50.0,1.0,0.0,Wh,,ByteSet,VERIFIED,0,1,hv_energy_max
+Minimum discharge voltage,[8C.BMS] Minimum discharge voltage,8C.BMS,FC007B,5170,22,0,2,False,big,1.0,1.0,0.0,volts,,ByteSet,VERIFIED,0,1,min_discharge_voltage
+Motor RPM,[01.ENG] Motor RPM,01.ENG,FC0076,3DF8,22,0,2,True,big,0.5,1.0,0.0,rpm,,ByteSet,VERIFIED,0,1,motor_rpm_2
+Motor RPM,[8C.BMS] Motor RPM,8C.BMS,FC007B,F40C,22,0,2,False,big,1.0,4.0,0.0,rpm,,ByteSet,VERIFIED,0,1,motor_rpm
+Motor maximum current,[51.ElDrive] Motor maximum current,51.ElDrive,FC007C,3EE7,22,0,2,False,big,1.0,10.0,1.0,A,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,motor_maximum_current
+Motor minimum current,[51.ElDrive] Motor minimum current,51.ElDrive,FC007C,3EE8,22,0,2,False,big,1.0,10.0,1.0,A,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,motor_minimum_current
+NV Energy requirement,[19.Gate] NV Energy requirement,19.Gate,710,15D1,22,4,1,False,big,50.0,1.0,0.0,Wh,,ByteSet,VERIFIED,0,1,hv_em_hv_battery_energy_information;hv_em_nv_power_limitation;hv_em_power_limit;nv_energy_requirement
+Number of tracked satellites,[75.GPS] Number of tracked satellites,75.GPS,767,2431,22,1,1,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,number_of_tracked_satellites;number_of_visible_satellites
+Number of visible satellites,[75.GPS] Number of visible satellites,75.GPS,767,2431,22,0,1,False,big,1.0,1.0,0.0,None,,ByteSet,VERIFIED,0,1,number_of_tracked_satellites;number_of_visible_satellites
+Odometer,[8C.BMS] Odometer,8C.BMS,FC007B,02BD,22,1,3,False,big,1.0,1.0,0.0,km,,ByteSet,VERIFIED,0,1,odometer_bms
+Odometer,[51.ElDrive] Odometer,51.ElDrive,FC007C,086D,22,0,4,False,big,1.0,1.0,0.0,km,,ByteSet,VERIFIED,0,1,eldrive_odometer
+Odometer,[01.ENG] Odometer,01.ENG,FC0076,295A,22,0,3,False,big,1.0,1.0,0.0,km,,ByteSet,VERIFIED,0,1,odometer_km
+Odometer #2,[8C.BMS] Odometer #2,8C.BMS,FC007B,5867,22,2,2,False,big,10.0,1.0,0.0,km,,ByteSet,VERIFIED,0,1,odometer_2
+Outside temperature,[08.HVAC] Outside temperature,08.HVAC,746,2609,22,0,1,False,big,0.5,1.0,-50.0,celicium,,ByteSet,VERIFIED,0,1,outside_temp
+Outside temperature (calculated from cabin),[08.HVAC] Outside temperature (calculated from cabin),08.HVAC,746,260A,22,0,1,False,big,0.5,1.0,-50.0,celicium,,ByteSet,VERIFIED,0,1,outside_temperature_calculated_from_cabin
+PTC heater battery current,[8C.BMS] PTC heater battery current,8C.BMS,FC007B,1620,22,0,1,False,big,1.0,4.0,0.0,A,,ByteSet,VERIFIED,0,1,ptc_current
+PTC heater battery kW,PTC heater battery kW,PTC heater battery kW,,,22 (inherited),0,1,False,big,1.0,1.0,0.0,kW,(PID(12935174)*PID(12935000))/1000,Formula,VERIFIED,0,0,
+Potential energy over sea level 2000 kg car (Vehicle options: enable 'show GPS speed'),Potential energy over sea level 2000 kg car (Vehicle options: enable 'show GPS speed'),Potential energy over sea level 2000 kg car (Vehicle options: enable 'show GPS speed'),,,22 (inherited),0,1,False,big,1.0,1.0,0.0,kWh,((2000)*9.8*PID(816))/3600000,Formula,VERIFIED,0,0,
+Power electronics: voltage in traction mode,[01.ENG] Power electronics: voltage in traction mode,01.ENG,FC0076,4675,22,0,2,True,big,0.1,1.0,0.0,volts,,ByteSet,VERIFIED,0,1,power_electronics_voltage_in_traction_mode
+RES(PID_010D),[8C.BMS] RES(PID_010D) | [8C.BMS] RES(PID_010D),8C.BMS,FC007B,F40D,22,0,1,False,big,1.0,64.0,0.0,kmh,,ByteSet,VERIFIED,0,1,speed_kmh
+RES(PID_0149),[08.HVAC] RES(PID_0149),08.HVAC,746,F449,22,0,1,False,big,1.0,2.55,0.0,percent,,ByteSet,VERIFIED,0,1,res_pid_0149
+Radiator fan commanded duty,[08.HVAC] Radiator fan commanded duty,08.HVAC,746,2607,22,0,1,False,big,0.4,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,radiator_fan_commanded_duty
+Radiator fan duty,[01.ENG] Radiator fan duty,01.ENG,FC0076,2055,22,0,2,False,big,0.01,1.0,0.0,percent,,ByteSet,VERIFIED,0,1,radiator_fan_duty
+Rated torque on the front axle,[01.ENG] Rated torque on the front axle,01.ENG,FC0076,0344,22,0,2,True,big,0.5,1.0,0.0,Nm,,ByteSet,VERIFIED,0,1,rated_torque_on_the_front_axle
+Rated torque on the rear axle,[01.ENG] Rated torque on the rear axle,01.ENG,FC0076,0344,22,0,2,True,big,0.5,1.0,0.0,Nm,,ByteSet,VERIFIED,0,1,rated_torque_on_the_front_axle
+Rear deflector temperature,[08.HVAC] Rear deflector temperature,08.HVAC,746,263D,22,0,1,False,big,0.333,1.0,0.0,celicium,,ByteSet,VERIFIED,0,1,rear_deflector_temperature
+Rear drive actual torque,[01.ENG] Rear drive actual torque,01.ENG,FC0076,033B,22,0,2,True,big,1.0,1.0,0.0,Nm,,ByteSet,VERIFIED,0,1,rear_drive_actual_torque
+Rear left wheel speed,[03.ABS] Rear left wheel speed,03.ABS,713,1802,22,0,2,False,big,0.01,1.0,0.0,kmh,,ByteSet,VERIFIED,0,0,
+Rear right wheel speed,[03.ABS] Rear right wheel speed,03.ABS,713,1803,22,0,2,False,big,0.01,1.0,0.0,kmh,,ByteSet,VERIFIED,0,0,
+Refrigerant pressure,[08.HVAC] Refrigerant pressure,08.HVAC,746,2605,22,0,1,False,big,0.2,1.0,0.0,bar,,ByteSet,VERIFIED,0,1,refrigerant_pressure
+Rotor temperature model,[51.ElDrive] Rotor temperature model,51.ElDrive,FC007C,2CCC,22,0,2,False,big,1.0,10.0,1.0,celicium,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,rotor_temperature_model
+Socket A: Temperature sensor,[C6.Charger] Socket A: Temperature sensor,C6.Charger,744,1DDA,22,1,2,False,big,0.1,1.0,-55.0,celicium,,ByteSet,VERIFIED,0,1,socket_a_temp
+Socket A: Voltage Proximity,[C6.Charger] Socket A: Voltage Proximity,C6.Charger,744,1525,22,0,2,False,big,1.0,1.0,0.0,mV,,ByteSet,VERIFIED,0,1,socket_a_voltage
+State of charge BMS,[8C.BMS] State of charge BMS,8C.BMS,FC007B,028C,22,0,1,False,big,1.0,2.5,0.0,percent,,ByteSet,VERIFIED,0,1,soc_abs;soc_normal
+State of charge Display,[8C.BMS] State of charge Display,8C.BMS,FC007B,028C,22,0,1,False,big,20.4,46.0,-6.4,percent,,ByteSet,VERIFIED,0,1,soc_abs;soc_normal
+Stator electrical frequency (rad/sec),[51.ElDrive] Stator electrical frequency (rad/sec),51.ElDrive,FC007C,4657,22,0,2,False,big,1.0,10.0,1.0,None,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,stator_electrical_frequency_rad_sec
+Stator temperature,[51.ElDrive] Stator temperature,51.ElDrive,FC007C,4672,22,0,2,False,big,1.0,10.0,1.0,celicium,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,stator_temperature
+Steering wheel angle,[01.ENG] Steering wheel angle,01.ENG,FC0076,0346,22,0,2,False,big,0.1,1.0,0.0,grads,,ByteSet,VERIFIED,0,1,steering_wheel_angle
+Temperature after evaporator,[08.HVAC] Temperature after evaporator,08.HVAC,746,2612,22,0,1,True,big,0.333,1.0,0.0,celicium,,ByteSet,VERIFIED,0,1,temperature_after_evaporator
+"Torque, calculated from measured currents","[51.ElDrive] Torque, calculated from measured currents",51.ElDrive,FC007C,0308,22,0,2,False,big,1.0,10.0,0.0,Nm,"FLOAT32(A,B,C,D)",Formula,VERIFIED,0,1,torque_calculated_from_measured_currents
+Total accumulated charge (Ah),[8C.BMS] Total accumulated charge (Ah),8C.BMS,FC007B,1E32,22,0,4,True,big,0.001820444117116,1.0,0.0,Ah,,ByteSet,VERIFIED,0,1,energy_counters
+Total accumulated charge (kWh),[8C.BMS] Total accumulated charge (kWh),8C.BMS,FC007B,1E32,22,8,4,True,big,116508.398,1000000000.0,0.0,kWh,,ByteSet,VERIFIED,0,1,energy_counters
+Total accumulated discharge (Ah),[8C.BMS] Total accumulated discharge (Ah),8C.BMS,FC007B,1E32,22,4,4,True,big,0.001820444117116,1.0,0.0,Ah,,ByteSet,VERIFIED,0,1,energy_counters
+Total accumulated discharge (kWh),[8C.BMS] Total accumulated discharge (kWh),8C.BMS,FC007B,1E32,22,12,4,True,big,116508.398,1000000000.0,0.0,kWh,,ByteSet,VERIFIED,0,1,energy_counters
+Total distance travelled (Lifetime),[01.ENG] Total distance travelled (Lifetime),01.ENG,FC0076,F817,22,4,4,True,big,0.1,1.0,0.0,km,,ByteSet,VERIFIED,0,1,total_distance_travelled_lifetime
+Windshield temperature,[08.HVAC] Windshield temperature,08.HVAC,746,27C4,22,0,2,False,big,15.625,1.0,-39.5,None,,ByteSet,VERIFIED,0,1,cabin_humidity;windshield_temperature

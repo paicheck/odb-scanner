@@ -1,0 +1,306 @@
+ecu_label	did	start_byte_id	data_length	scale	divider	offset	unit	base_name	in_registry	registry_key	pid_type
+19.Gate	2AF7	7	1	1.0	1.0	0.0	percent	12V Battery SoC	1	aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage	ByteSet
+19.Gate	2AF7	22	1	1.0	1.0	0.0	Ah	12V Battery adapted capacity	1	aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage	ByteSet
+19.Gate	2AF7	20	1	1.0	1.0	0.0	percent	12V Battery aging by capacity	1	aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage	ByteSet
+19.Gate	2AF7	21	1	1.0	1.0	0.0	percent	12V Battery aging by power	1	aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage	ByteSet
+19.Gate	2AF7	2	4	0.001	1.0	0.0	A	12V Battery current	1	aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage	ByteSet
+19.Gate	2AF7	9	1	1.0	1.0	-40.0	celicium	12V Battery sensor temperature	1	aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage	ByteSet
+19.Gate	2AF7	8	1	1.0	1.0	-40.0	celicium	12V Battery temperature	1	aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage	ByteSet
+19.Gate	2AF7	12	4	0.1	1.0	0.0	Ah	12V Battery total charge	1	aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage	ByteSet
+19.Gate	2AF7	16	4	0.1	1.0	0.0	Ah	12V Battery total discharge	1	aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage	ByteSet
+19.Gate	2AF7	0	2	0.001	1.0	4.0	volts	12V Battery voltage	1	aux_12v_adapted_capacity;aux_12v_aging_capacity;aux_12v_aging_power;aux_12v_current;aux_12v_sensor_temp;aux_12v_soc;aux_12v_temp;aux_12v_total_charge;aux_12v_total_discharge;aux_12v_voltage	ByteSet
+08.HVAC	2604	0	1	0.1	1.0	0.0	Nm	A/C compressor load	1	a_c_compressor_load	ByteSet
+08.HVAC	0800	5	2	1.0	1.0	0.0	W	A/C compressor power consumption: actual value	1	a_c_compressor_power_consumption_actual_value	ByteSet
+08.HVAC	2603	0	1	100.0	1.0	0.0	rpm	A/C compressor speed	1	a_c_compressor_speed	ByteSet
+08.HVAC	4EEF	4	2	10.0	100.0	-40.0	celicium	A/C refrigerant pressure and temperature sensor 1: Interior Temperature	1	a_c_refrigerant_pressure_and_temperature_sensor_1_interior_temperature;a_c_refrigerant_pressure_and_temperature_sensor_1_pressure;a_c_refrigerant_pressure_and_temperature_sensor_1_temperature	ByteSet
+08.HVAC	4EEF	0	2	88.0	10000.0	0.0	bar	A/C refrigerant pressure and temperature sensor 1: Pressure	1	a_c_refrigerant_pressure_and_temperature_sensor_1_interior_temperature;a_c_refrigerant_pressure_and_temperature_sensor_1_pressure;a_c_refrigerant_pressure_and_temperature_sensor_1_temperature	ByteSet
+08.HVAC	4EEF	2	2	10.0	100.0	-40.0	celicium	A/C refrigerant pressure and temperature sensor 1: Temperature	1	a_c_refrigerant_pressure_and_temperature_sensor_1_interior_temperature;a_c_refrigerant_pressure_and_temperature_sensor_1_pressure;a_c_refrigerant_pressure_and_temperature_sensor_1_temperature	ByteSet
+01.ENG	4539	0	2	0.001	1.0	0.0	m_sec2	Acceleration	1	acceleration	ByteSet
+51.ElDrive	3EE9	0	2	1.0	10.0	1.0	Nm	Actual mechanical torque calculated	1	actual_mechanical_torque_calculated	Formula
+51.ElDrive	58E1	0	2	1.0	10.0	1.0	Nm	Actual mechanical torque commanded value	1	actual_mechanical_torque_commanded_value	Formula
+51.ElDrive	3EEA	0	2	1.0	10.0	1.0	Nm	Actual possible maximum torque	1	actual_possible_maximum_torque	Formula
+51.ElDrive	3EEB	0	2	1.0	10.0	1.0	Nm	Actual possible minimum torque	1	actual_possible_minimum_torque	Formula
+01.ENG	0364	0	2	0.1	1.0	0.0	kW	Additional high-voltage consumers, power	1	hv_aux_power	ByteSet
+01.ENG	0360	0	2	0.01	1.0	0.0	A	Additional high-voltage consumers, total current	1	additional_high_voltage_consumers_total_current	ByteSet
+08.HVAC	26ED	0	1	0.1	1.0	0.0	None	Air polution level (0 = clean air)	1	air_polution_level_0_clean_air	ByteSet
+19.Gate	2AB4	9	1	1.0	1.0	0.0	A	Average battery consumption (internal value)	1	average_battery_consumption_internal_value;range_internal	ByteSet
+19.Gate	2AB7	0	2	0.1	1.0	0.0	kWh	Average energy consumption on roads category 0	1	road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6	ByteSet
+19.Gate	2AB7	2	2	0.1	1.0	0.0	kWh	Average energy consumption on roads category 1	1	road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6	ByteSet
+19.Gate	2AB7	4	2	0.1	1.0	0.0	kWh	Average energy consumption on roads category 2	1	road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6	ByteSet
+19.Gate	2AB7	6	2	0.1	1.0	0.0	kWh	Average energy consumption on roads category 3	1	road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6	ByteSet
+19.Gate	2AB7	8	2	0.1	1.0	0.0	kWh	Average energy consumption on roads category 4	1	road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6	ByteSet
+19.Gate	2AB7	10	2	0.1	1.0	0.0	kWh	Average energy consumption on roads category 5	1	road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6	ByteSet
+19.Gate	2AB7	12	2	0.1	1.0	0.0	kWh	Average energy consumption on roads category 6	1	road_avg_consumption_0;road_avg_consumption_1;road_avg_consumption_2;road_avg_consumption_3;road_avg_consumption_4;road_avg_consumption_5;road_avg_consumption_6	ByteSet
+01.ENG	3DEF	0	2	0.01	1.0	0.0	percent	Battery SoC (normalized)	1	battery_soc_normalized	ByteSet
+8C.BMS	189D	2	2	1.0	64.0	0.0	celicium	Battery inlet temperature	1	coolant_temps	ByteSet
+8C.BMS	1E2C	2	2	1.0	1.0	0.0	None	Battery max SoC cell #	1	cell_soc_max	ByteSet
+8C.BMS	1E2C	0	2	0.01	1.0	0.0	percent	Battery max SoC cell %	1	cell_soc_max	ByteSet
+8C.BMS	1E0E	0	2	1.0	64.0	0.0	celicium	Battery maximum temperature	1	bat_temp_max	ByteSet
+8C.BMS	1E0E	2	2	1.0	1.0	0.0	None	Battery maximum temperature Sensor ID	1	bat_temp_max	ByteSet
+8C.BMS	1E2D	2	2	1.0	1.0	0.0	None	Battery min SoC cell #	1	cell_soc_min	ByteSet
+8C.BMS	1E2D	0	2	0.01	1.0	0.0	percent	Battery min SoC cell %	1	cell_soc_min	ByteSet
+8C.BMS	1E0F	0	2	1.0	64.0	0.0	celicium	Battery minimum temperature	1	bat_temp_min	ByteSet
+8C.BMS	1E0F	2	2	1.0	1.0	0.0	None	Battery minimum temperature Sensor ID	1	bat_temp_min	ByteSet
+8C.BMS	189D	0	2	1.0	64.0	0.0	celicium	Battery outlet temperature	1	coolant_temps	ByteSet
+8C.BMS	2A0B	0	1	1.0	2.0	-40.0	celicium	Battery temperature	1	battery_temp	ByteSet
+Battery temperature delta		0	1	1.0	1.0	0.0	celicium	Battery temperature delta	0		Formula
+01.ENG	2005	0	2	0.001	1.0	0.0	bar	Brake booster pressure	1	brake_booster_pressure	ByteSet
+08.HVAC	42DB	1	1	100.0	1.0	0.0	ppm	CO2 content interior	1	co2_content_interior	ByteSet
+08.HVAC	27C4	4	1	0.5	1.0	0.0	percent	Cabin humidity	1	cabin_humidity;windshield_temperature	ByteSet
+08.HVAC	2613	0	2	1.0	5.0	-40.0	celicium	Cabin temperature	1	inside_temp	ByteSet
+8C.BMS	7448	0	1	1.0	1.0	0.0	None	Car operation mode: AC charging	1	charge_mode;op_mode	ByteSet
+8C.BMS	7448	0	1	1.0	1.0	0.0	None	Car operation mode: DC charging	1	charge_mode;op_mode	Formula
+8C.BMS	7448	0	1	1.0	1.0	0.0	None	Car operation mode: driving	1	charge_mode;op_mode	ByteSet
+8C.BMS	7448	0	1	1.0	1.0	0.0	None	Car operation mode: standby	1	charge_mode;op_mode	Formula
+Cell voltage delta mV		0	1	1.0	1.0	0.0	mV	Cell voltage delta mV	0		Formula
+8C.BMS	7448	0	1	1.0	1.0	0.0	None	Charging: Normal charge port	1	charge_mode;op_mode	BitValue
+8C.BMS	7448	0	1	1.0	1.0	0.0	None	Charging: Rapid charge port	1	charge_mode;op_mode	BitValue
+01.ENG	276D	0	2	0.01	1.0	0.0	percent	Coolant circulation pump duty	1	coolant_circulation_pump_duty	ByteSet
+C6.Charger	103E	0	2	0.01	1.0	0.0	kWh	Cycle energy transformation	1	obc_cycle_energy	ByteSet
+8C.BMS	1E3D	0	4	0.01	1.0	-1500.0	A	DC Battery Current	1	pack_current	Formula
+8C.BMS	1E3E	0	4	0.01	1.0	-1500.0	A	DC Battery Current #2	1	pack_current_2	ByteSet
+8C.BMS		0	2	1.0	4.0	0.0	kW	DC Battery power	0		Formula
+8C.BMS	1E3B;1E3D	0	2	1.0	4.0	0.0	kW	DC Battery power	0		Formula
+8C.BMS	1E3C	0	4	244140.625	1000000000.0	0.0	volts	DC Battery summ of all cells voltage	1	cell_voltage_sum	ByteSet
+8C.BMS	1E3B	0	2	1.0	4.0	0.0	volts	DC Battery voltage	1	pack_voltage	ByteSet
+51.ElDrive	3E98	0	2	1.0	10.0	1.0	A	DC Link current	1	dc_link_current	Formula
+51.ElDrive	3E93	0	2	1.0	10.0	1.0	volts	DC Link voltage	1	dc_link_voltage	Formula
+51.ElDrive	43B9	0	2	1.0	10.0	1.0	volts	DC Link voltage reserve	1	dc_link_voltage_reserve	Formula
+01.ENG	43B8	0	2	0.1	1.0	0.0	celicium	DC-DC converter coolant temperature Calculated	1	dc_dc_converter_coolant_temperature_calculated	ByteSet
+19.Gate	2A53	1	2	1.0	1.0	-511.0	A	DC-DC converter current	1	dc_dc_converter_reserved_current;dcdc_gw_current;dcdc_gw_voltage	ByteSet
+19.Gate	2A53	0	1	0.1	1.0	0.0	volts	DC-DC converter low voltage	1	dc_dc_converter_reserved_current;dcdc_gw_current;dcdc_gw_voltage	ByteSet
+19.Gate	2A53	3	2	1.0	1.0	-511.0	A	DC-DC converter reserved current	1	dc_dc_converter_reserved_current;dcdc_gw_current;dcdc_gw_voltage	ByteSet
+8105.DC/DC Converter	465B	0	2	1.0	16.0	0.0	A	DC-DC current	1	dcdc_current	ByteSet
+8105.DC/DC Converter	465D	0	2	1.0	512.0	0.0	volts	DC-DC voltage	1	dcdc_voltage	ByteSet
+51.ElDrive	1007	0	2	1.0	10.0	1.0	volts	DMCM stator voltage D direction actual value	1	dmcm_stator_voltage_d_direction_actual_value	Formula
+51.ElDrive	1009	0	2	1.0	10.0	1.0	volts	DMCM stator voltage D direction commanded value	1	dmcm_stator_voltage_d_direction_commanded_value	Formula
+51.ElDrive	1008	0	2	1.0	10.0	1.0	volts	DMCM stator voltage Q direction actual value	1	dmcm_stator_voltage_q_direction_actual_value	Formula
+51.ElDrive	100A	0	2	1.0	10.0	1.0	volts	DMCM stator voltage Q direction commanded value	1	dmcm_stator_voltage_q_direction_commanded_value	Formula
+51.ElDrive	3EED	0	2	1.0	10.0	1.0	volts	Desired link voltage	1	desired_link_voltage	Formula
+01.ENG	29D4	0	2	0.1	1.0	0.0	Nm	Driver requested torque	1	driver_requested_torque	ByteSet
+8C.BMS	1E1B	0	2	1.0	5.0	0.0	A	Dynamic limit for charging in ampere	1	dyn_charge_limit	ByteSet
+8C.BMS	1E1C	0	2	1.0	5.0	0.0	A	Dynamic limit for discharging in ampere	1	dyn_discharge_limit	ByteSet
+8C.BMS	1622	0	1	1.0	1.0	-50.0	celicium	ECU PCB Temperature	1	bms_pcb_temp	ByteSet
+51.ElDrive	0805	0	2	1.0	10.0	1.0	celicium	ECU PCB Temperature #1	1	ecu_pcb_temperature_1	Formula
+51.ElDrive	0806	0	2	1.0	10.0	1.0	celicium	ECU PCB Temperature #2	1	ecu_pcb_temperature_2	Formula
+51.ElDrive	4FAE	0	2	1.0	10.0	1.0	celicium	Electric drive inflow coolant temperature	1	electric_drive_inflow_coolant_temperature	Formula
+51.ElDrive	40C8	0	2	1.0	10.0	1.0	None	Electric drive motor speed (rad/sec)	1	electric_drive_motor_speed_rad_sec	Formula
+Energy content Δ vs. max		0	1	1.0	1.0	0.0	percent	Energy content Δ vs. max	0		Formula
+19.Gate	2AB5	4	2	1.0	1.0	0.0	km	Estimated electric power reserve (CAN)	1	range_can	ByteSet
+19.Gate	2AB6	0	2	1.0	1.0	0.0	km	Estimated electric power reserve (displayed)	1	range_displayed	ByteSet
+19.Gate	2AB4	2	2	1.0	1.0	0.0	km	Estimated electric power reserve (internal value)	1	average_battery_consumption_internal_value;range_internal	ByteSet
+08.HVAC	261E	2	1	0.5	1.0	0.0	percent	Fresh air/Recirculation flap actual value %	1	fresh_air_recirculation_flap_actual_value;fresh_air_recirculation_flap_actual_value_steps	ByteSet
+08.HVAC	261E	0	2	1.0	1.0	0.0	None	Fresh air/Recirculation flap actual value steps	1	fresh_air_recirculation_flap_actual_value;fresh_air_recirculation_flap_actual_value_steps	ByteSet
+08.HVAC	261F	0	2	1.0	1.0	0.0	None	Fresh air/Recirculation flap specified value steps	1	fresh_air_recirculation_flap_specified_value_steps	ByteSet
+08.HVAC	2620	0	2	1.0	1.0	0.0	None	Fresh air/Recirculation flap stop for fresh air	1	fresh_air_recirculation_flap_stop_for_fresh_air	ByteSet
+08.HVAC	2621	0	2	1.0	1.0	0.0	None	Fresh air/Recirculation flap stop for recirculated air	1	fresh_air_recirculation_flap_stop_for_recirculated_air	ByteSet
+01.ENG	0335	0	2	1.0	1.0	0.0	Nm	Front drive actual torque	1	front_drive_actual_torque	ByteSet
+08.HVAC	260C	0	1	0.333	1.0	0.0	celicium	Front left deflector temperature	1	front_left_deflector_temperature	ByteSet
+08.HVAC	2622	2	1	0.5	1.0	0.0	percent	Front left temperature flap actual value	1	front_left_temperature_flap_actual_value	ByteSet
+03.ABS	1800	0	2	0.01	1.0	0.0	kmh	Front left wheel speed	0		ByteSet
+08.HVAC	260D	0	1	0.333	1.0	0.0	celicium	Front right deflector temperature	1	front_right_deflector_temperature	ByteSet
+08.HVAC	2626	2	1	0.5	1.0	0.0	percent	Front right temperature flap actual value	1	front_right_temperature_flap_actual_value	ByteSet
+03.ABS	1801	0	2	0.01	1.0	0.0	kmh	Front right wheel speed	0		ByteSet
+01.ENG	0343	0	2	0.5	1.0	0.0	Nm	Front:Rear torque difference	1	front_rear_torque_difference	ByteSet
+01.ENG	0364	0	2	0.1	1.0	0.0	kW	HV Auxiliary consumer power	1	hv_aux_power	ByteSet
+8C.BMS	189B	0	2	0.5	1.0	-1000.0	volts	HV Battery After contacts voltage	1	bat_v_after_contacts	ByteSet
+8C.BMS	1623	0	1	1.0	1.0	-50.0	celicium	HV Battery PTC heating medium Temperature #1	1	ptc_medium_temp_1	ByteSet
+8C.BMS	1624	0	1	1.0	1.0	-50.0	celicium	HV Battery PTC heating medium Temperature #2	1	ptc_medium_temp_2	ByteSet
+8C.BMS	1621	0	1	0.1	1.0	0.0	volts	HV Battery PTC voltage	1	ptc_voltage	ByteSet
+8C.BMS	1E33	2	2	1.0	1.0	0.0	None	HV Battery cell # with highest voltage	1	cell_voltage_max	ByteSet
+8C.BMS	1E34	2	2	1.0	1.0	0.0	None	HV Battery cell # with lowest  voltage	1	cell_voltage_min	ByteSet
+8C.BMS	1E40	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #001	1	cell_v_000	ByteSet
+8C.BMS	1E41	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #002	1	cell_v_001	ByteSet
+8C.BMS	1E42	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #003	1	cell_v_002	ByteSet
+8C.BMS	1E43	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #004	1	cell_v_003	ByteSet
+8C.BMS	1E44	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #005	1	cell_v_004	ByteSet
+8C.BMS	1E45	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #006	1	cell_v_005	ByteSet
+8C.BMS	1E46	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #007	1	cell_v_006	ByteSet
+8C.BMS	1E47	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #008	1	cell_v_007	ByteSet
+8C.BMS	1E48	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #009	1	cell_v_008	ByteSet
+8C.BMS	1E49	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #010	1	cell_v_009	ByteSet
+8C.BMS	1E4A	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #011	1	cell_v_010	ByteSet
+8C.BMS	1E4B	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #012	1	cell_v_011	ByteSet
+8C.BMS	1E4C	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #013	1	cell_v_012	ByteSet
+8C.BMS	1E4D	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #014	1	cell_v_013	ByteSet
+8C.BMS	1E4E	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #015	1	cell_v_014	ByteSet
+8C.BMS	1E4F	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #016	1	cell_v_015	ByteSet
+8C.BMS	1E50	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #017	1	cell_v_016	ByteSet
+8C.BMS	1E51	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #018	1	cell_v_017	ByteSet
+8C.BMS	1E52	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #019	1	cell_v_018	ByteSet
+8C.BMS	1E53	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #020	1	cell_v_019	ByteSet
+8C.BMS	1E54	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #021	1	cell_v_020	ByteSet
+8C.BMS	1E55	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #022	1	cell_v_021	ByteSet
+8C.BMS	1E56	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #023	1	cell_v_022	ByteSet
+8C.BMS	1E57	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #024	1	cell_v_023	ByteSet
+8C.BMS	1E58	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #025	1	cell_v_024	ByteSet
+8C.BMS	1E59	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #026	1	cell_v_025	ByteSet
+8C.BMS	1E5A	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #027	1	cell_v_026	ByteSet
+8C.BMS	1E5B	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #028	1	cell_v_027	ByteSet
+8C.BMS	1E5C	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #029	1	cell_v_028	ByteSet
+8C.BMS	1E5D	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #030	1	cell_v_029	ByteSet
+8C.BMS	1E5E	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #031	1	cell_v_030	ByteSet
+8C.BMS	1E5F	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #032	1	cell_v_031	ByteSet
+8C.BMS	1E60	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #033	1	cell_v_032	ByteSet
+8C.BMS	1E61	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #034	1	cell_v_033	ByteSet
+8C.BMS	1E62	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #035	1	cell_v_034	ByteSet
+8C.BMS	1E63	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #036	1	cell_v_035	ByteSet
+8C.BMS	1E64	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #037	1	cell_v_036	ByteSet
+8C.BMS	1E65	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #038	1	cell_v_037	ByteSet
+8C.BMS	1E66	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #039	1	cell_v_038	ByteSet
+8C.BMS	1E67	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #040	1	cell_v_039	ByteSet
+8C.BMS	1E68	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #041	1	cell_v_040	ByteSet
+8C.BMS	1E69	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #042	1	cell_v_041	ByteSet
+8C.BMS	1E6A	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #043	1	cell_v_042	ByteSet
+8C.BMS	1E6B	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #044	1	cell_v_043	ByteSet
+8C.BMS	1E6C	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #045	1	cell_v_044	ByteSet
+8C.BMS	1E6D	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #046	1	cell_v_045	ByteSet
+8C.BMS	1E6E	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #047	1	cell_v_046	ByteSet
+8C.BMS	1E6F	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #048	1	cell_v_047	ByteSet
+8C.BMS	1E70	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #049	1	cell_v_048	ByteSet
+8C.BMS	1E71	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #050	1	cell_v_049	ByteSet
+8C.BMS	1E72	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #051	1	cell_v_050	ByteSet
+8C.BMS	1E73	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #052	1	cell_v_051	ByteSet
+8C.BMS	1E74	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #053	1	cell_v_052	ByteSet
+8C.BMS	1E75	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #054	1	cell_v_053	ByteSet
+8C.BMS	1E76	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #055	1	cell_v_054	ByteSet
+8C.BMS	1E77	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #056	1	cell_v_055	ByteSet
+8C.BMS	1E78	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #057	1	cell_v_056	ByteSet
+8C.BMS	1E79	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #058	1	cell_v_057	ByteSet
+8C.BMS	1E7A	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #059	1	cell_v_058	ByteSet
+8C.BMS	1E7B	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #060	1	cell_v_059	ByteSet
+8C.BMS	1E7C	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #061	1	cell_v_060	ByteSet
+8C.BMS	1E7D	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #062	1	cell_v_061	ByteSet
+8C.BMS	1E7E	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #063	1	cell_v_062	ByteSet
+8C.BMS	1E7F	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #064	1	cell_v_063	ByteSet
+8C.BMS	1E80	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #065	1	cell_v_064	ByteSet
+8C.BMS	1E81	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #066	1	cell_v_065	ByteSet
+8C.BMS	1E82	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #067	1	cell_v_066	ByteSet
+8C.BMS	1E83	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #068	1	cell_v_067	ByteSet
+8C.BMS	1E84	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #069	1	cell_v_068	ByteSet
+8C.BMS	1E85	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #070	1	cell_v_069	ByteSet
+8C.BMS	1E86	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #071	1	cell_v_070	ByteSet
+8C.BMS	1E87	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #072	1	cell_v_071	ByteSet
+8C.BMS	1E88	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #073	1	cell_v_072	ByteSet
+8C.BMS	1E89	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #074	1	cell_v_073	ByteSet
+8C.BMS	1E8A	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #075	1	cell_v_074	ByteSet
+8C.BMS	1E8B	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #076	1	cell_v_075	ByteSet
+8C.BMS	1E8C	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #077	1	cell_v_076	ByteSet
+8C.BMS	1E8D	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #078	1	cell_v_077	ByteSet
+8C.BMS	1E8E	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #079	1	cell_v_078	ByteSet
+8C.BMS	1E8F	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #080	1	cell_v_079	ByteSet
+8C.BMS	1E90	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #081	1	cell_v_080	ByteSet
+8C.BMS	1E91	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #082	1	cell_v_081	ByteSet
+8C.BMS	1E92	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #083	1	cell_v_082	ByteSet
+8C.BMS	1E93	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #084	1	cell_v_083	ByteSet
+8C.BMS	1E94	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #085	1	cell_v_084	ByteSet
+8C.BMS	1E95	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #086	1	cell_v_085	ByteSet
+8C.BMS	1E96	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #087	1	cell_v_086	ByteSet
+8C.BMS	1E97	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #088	1	cell_v_087	ByteSet
+8C.BMS	1E98	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #089	1	cell_v_088	ByteSet
+8C.BMS	1E99	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #090	1	cell_v_089	ByteSet
+8C.BMS	1E9A	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #091	1	cell_v_090	ByteSet
+8C.BMS	1E9B	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #092	1	cell_v_091	ByteSet
+8C.BMS	1E9C	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #093	1	cell_v_092	ByteSet
+8C.BMS	1E9D	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #094	1	cell_v_093	ByteSet
+8C.BMS	1E9E	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #095	1	cell_v_094	ByteSet
+8C.BMS	1E9F	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #096	1	cell_v_095	Formula
+8C.BMS	1EA0	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #097	1	cell_v_096	Formula
+8C.BMS	1EA1	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #098	1	cell_v_097	Formula
+8C.BMS	1EA2	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #099	1	cell_v_098	Formula
+8C.BMS	1EA3	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #100	1	cell_v_099	Formula
+8C.BMS	1EA4	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #101	1	cell_v_100	Formula
+8C.BMS	1EA5	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #102	1	cell_v_101	Formula
+8C.BMS	1EA6	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #103	1	cell_v_102	Formula
+8C.BMS	1EA7	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #104	1	cell_v_103	Formula
+8C.BMS	1EA8	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #105	1	cell_v_104	Formula
+8C.BMS	1EA9	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #106	1	cell_v_105	Formula
+8C.BMS	1EAA	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #107	1	cell_v_106	Formula
+8C.BMS	1EAB	0	2	1.0	1000.0	1.0	volts	HV Battery cell voltage #108	1	cell_v_107	Formula
+8C.BMS	1E33	0	2	2.441	10000.0	0.0	volts	HV Battery cell with highest voltage	1	cell_voltage_max	ByteSet
+8C.BMS	1E34	0	2	2.441	10000.0	0.0	volts	HV Battery cell with lowest voltage	1	cell_voltage_min	ByteSet
+8C.BMS	1E39	0	2	0.0312499784501336	1.0	0.0	volts	HV Battery charging voltage	1	bat_charging_voltage	ByteSet
+01.ENG	035E	0	2	0.1	1.0	0.0	A	HV Battery current	1	hv_battery_current	ByteSet
+19.Gate	2AB8	2	2	25.0	1.0	0.0	Wh	HV Battery energy content	1	hv_energy_content	ByteSet
+8C.BMS	1E38	0	2	0.0312499784501336	1.0	0.0	volts	HV Battery positive voltage after contacts	1	bat_v_after_contacts_2	ByteSet
+8C.BMS	1E36	0	2	0.0312499784501336	1.0	0.0	volts	HV Battery positive voltage before contacts	1	bat_v_before_contacts	ByteSet
+8C.BMS	1EAE	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 1	1	cell_t_00	ByteSet
+8C.BMS	1EB7	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 10	1	cell_t_09	ByteSet
+8C.BMS	1EB8	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 11	1	cell_t_10	ByteSet
+8C.BMS	1EB9	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 12	1	cell_t_11	ByteSet
+8C.BMS	1EBA	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 13	1	cell_t_12	ByteSet
+8C.BMS	1EBB	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 14	1	cell_t_13	ByteSet
+8C.BMS	1EBC	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 15	1	cell_t_14	ByteSet
+8C.BMS	1EBD	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 16	1	cell_t_15	ByteSet
+8C.BMS	7425	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 17	1	cell_t_16	ByteSet
+8C.BMS	7426	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 18	1	cell_t_17	Formula
+8C.BMS	7427	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 19	1	cell_t_18	Formula
+8C.BMS	1EAF	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 2	1	cell_t_01	ByteSet
+8C.BMS	7428	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 20	1	cell_t_19	Formula
+8C.BMS	7429	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 21	1	cell_t_20	Formula
+8C.BMS	742A	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 22	1	cell_t_21	Formula
+8C.BMS	742B	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 23	1	cell_t_22	Formula
+8C.BMS	742C	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 24	1	cell_t_23	Formula
+8C.BMS	1EB0	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 3	1	cell_t_02	ByteSet
+8C.BMS	1EB1	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 4	1	cell_t_03	ByteSet
+8C.BMS	1EB2	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 5	1	cell_t_04	ByteSet
+8C.BMS	1EB3	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 6	1	cell_t_05	ByteSet
+8C.BMS	1EB4	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 7	1	cell_t_06	ByteSet
+8C.BMS	1EB5	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 8	1	cell_t_07	ByteSet
+8C.BMS	1EB6	0	2	1.0	8.0	-40.0	celicium	HV Battery temp point 9	1	cell_t_08	ByteSet
+8C.BMS	743B	0	1	10.0	1.0	0.0	percent	HV Battery: circulation pump flow	1	coolant_pump	ByteSet
+C6.Charger	103D	0	2	0.1	1.0	0.0	A	HV DC current OBC	1	obc_dc_current	ByteSet
+19.Gate	15D1	5	2	50.0	1.0	0.0	Wh	HV-EM HV Battery energy information	1	hv_em_hv_battery_energy_information;hv_em_nv_power_limitation;hv_em_power_limit;nv_energy_requirement	ByteSet
+19.Gate	15D1	3	1	50.0	1.0	0.0	W	HV-EM NV Power limitation	1	hv_em_hv_battery_energy_information;hv_em_nv_power_limitation;hv_em_power_limit;nv_energy_requirement	ByteSet
+19.Gate	15D1	1	2	50.0	1.0	0.0	W	HV-EM Power limitation	1	hv_em_hv_battery_energy_information;hv_em_nv_power_limitation;hv_em_power_limit;nv_energy_requirement	ByteSet
+C6.Charger	1DA7	0	2	0.1	1.0	0.0	volts	High voltage Output	1	hv_output_voltage	ByteSet
+51.ElDrive	1040	0	4	1.0	10.0	1.0	W	Inverter power loss phase U	1	inverter_power_loss_phase_u	Formula
+51.ElDrive	1041	0	4	1.0	10.0	1.0	W	Inverter power loss phase V	1	inverter_power_loss_phase_v	Formula
+51.ElDrive	1042	0	4	1.0	10.0	1.0	W	Inverter power loss phase W	1	inverter_power_loss_phase_w	Formula
+8C.BMS	5171	0	2	1.0	1.0	0.0	volts	Maximum charge voltage	1	max_charge_voltage	ByteSet
+19.Gate	2AB2	0	2	50.0	1.0	0.0	Wh	Maximum energy content of the traction battery	1	hv_energy_max	ByteSet
+8C.BMS	5170	0	2	1.0	1.0	0.0	volts	Minimum discharge voltage	1	min_discharge_voltage	ByteSet
+01.ENG	3DF8	0	2	0.5	1.0	0.0	rpm	Motor RPM	1	motor_rpm_2	ByteSet
+8C.BMS	F40C	0	2	1.0	4.0	0.0	rpm	Motor RPM	1	motor_rpm	ByteSet
+51.ElDrive	3EE7	0	2	1.0	10.0	1.0	A	Motor maximum current	1	motor_maximum_current	Formula
+51.ElDrive	3EE8	0	2	1.0	10.0	1.0	A	Motor minimum current	1	motor_minimum_current	Formula
+19.Gate	15D1	4	1	50.0	1.0	0.0	Wh	NV Energy requirement	1	hv_em_hv_battery_energy_information;hv_em_nv_power_limitation;hv_em_power_limit;nv_energy_requirement	ByteSet
+75.GPS	2431	1	1	1.0	1.0	0.0	None	Number of tracked satellites	1	number_of_tracked_satellites;number_of_visible_satellites	ByteSet
+75.GPS	2431	0	1	1.0	1.0	0.0	None	Number of visible satellites	1	number_of_tracked_satellites;number_of_visible_satellites	ByteSet
+8C.BMS	02BD	1	3	1.0	1.0	0.0	km	Odometer	1	odometer_bms	ByteSet
+51.ElDrive	086D	0	4	1.0	1.0	0.0	km	Odometer	1	eldrive_odometer	ByteSet
+01.ENG	295A	0	3	1.0	1.0	0.0	km	Odometer	1	odometer_km	ByteSet
+8C.BMS	5867	2	2	10.0	1.0	0.0	km	Odometer #2	1	odometer_2	ByteSet
+08.HVAC	2609	0	1	0.5	1.0	-50.0	celicium	Outside temperature	1	outside_temp	ByteSet
+08.HVAC	260A	0	1	0.5	1.0	-50.0	celicium	Outside temperature (calculated from cabin)	1	outside_temperature_calculated_from_cabin	ByteSet
+8C.BMS	1620	0	1	1.0	4.0	0.0	A	PTC heater battery current	1	ptc_current	ByteSet
+PTC heater battery kW		0	1	1.0	1.0	0.0	kW	PTC heater battery kW	0		Formula
+Potential energy over sea level 2000 kg car (Vehicle options: enable 'show GPS speed')		0	1	1.0	1.0	0.0	kWh	Potential energy over sea level 2000 kg car (Vehicle options: enable 'show GPS speed')	0		Formula
+01.ENG	4675	0	2	0.1	1.0	0.0	volts	Power electronics: voltage in traction mode	1	power_electronics_voltage_in_traction_mode	ByteSet
+8C.BMS	F40D	0	1	1.0	64.0	0.0	kmh	RES(PID_010D)	1	speed_kmh	ByteSet
+08.HVAC	F449	0	1	1.0	2.55	0.0	percent	RES(PID_0149)	1	res_pid_0149	ByteSet
+08.HVAC	2607	0	1	0.4	1.0	0.0	percent	Radiator fan commanded duty	1	radiator_fan_commanded_duty	ByteSet
+01.ENG	2055	0	2	0.01	1.0	0.0	percent	Radiator fan duty	1	radiator_fan_duty	ByteSet
+01.ENG	0344	0	2	0.5	1.0	0.0	Nm	Rated torque on the front axle	1	rated_torque_on_the_front_axle	ByteSet
+01.ENG	0344	0	2	0.5	1.0	0.0	Nm	Rated torque on the rear axle	1	rated_torque_on_the_front_axle	ByteSet
+08.HVAC	263D	0	1	0.333	1.0	0.0	celicium	Rear deflector temperature	1	rear_deflector_temperature	ByteSet
+01.ENG	033B	0	2	1.0	1.0	0.0	Nm	Rear drive actual torque	1	rear_drive_actual_torque	ByteSet
+03.ABS	1802	0	2	0.01	1.0	0.0	kmh	Rear left wheel speed	0		ByteSet
+03.ABS	1803	0	2	0.01	1.0	0.0	kmh	Rear right wheel speed	0		ByteSet
+08.HVAC	2605	0	1	0.2	1.0	0.0	bar	Refrigerant pressure	1	refrigerant_pressure	ByteSet
+51.ElDrive	2CCC	0	2	1.0	10.0	1.0	celicium	Rotor temperature model	1	rotor_temperature_model	Formula
+C6.Charger	1DDA	1	2	0.1	1.0	-55.0	celicium	Socket A: Temperature sensor	1	socket_a_temp	ByteSet
+C6.Charger	1525	0	2	1.0	1.0	0.0	mV	Socket A: Voltage Proximity	1	socket_a_voltage	ByteSet
+8C.BMS	028C	0	1	1.0	2.5	0.0	percent	State of charge BMS	1	soc_abs;soc_normal	ByteSet
+8C.BMS	028C	0	1	20.4	46.0	-6.4	percent	State of charge Display	1	soc_abs;soc_normal	ByteSet
+51.ElDrive	4657	0	2	1.0	10.0	1.0	None	Stator electrical frequency (rad/sec)	1	stator_electrical_frequency_rad_sec	Formula
+51.ElDrive	4672	0	2	1.0	10.0	1.0	celicium	Stator temperature	1	stator_temperature	Formula
+01.ENG	0346	0	2	0.1	1.0	0.0	grads	Steering wheel angle	1	steering_wheel_angle	ByteSet
+08.HVAC	2612	0	1	0.333	1.0	0.0	celicium	Temperature after evaporator	1	temperature_after_evaporator	ByteSet
+51.ElDrive	0308	0	2	1.0	10.0	0.0	Nm	Torque, calculated from measured currents	1	torque_calculated_from_measured_currents	Formula
+8C.BMS	1E32	0	4	0.001820444117116	1.0	0.0	Ah	Total accumulated charge (Ah)	1	energy_counters	ByteSet
+8C.BMS	1E32	8	4	116508.398	1000000000.0	0.0	kWh	Total accumulated charge (kWh)	1	energy_counters	ByteSet
+8C.BMS	1E32	4	4	0.001820444117116	1.0	0.0	Ah	Total accumulated discharge (Ah)	1	energy_counters	ByteSet
+8C.BMS	1E32	12	4	116508.398	1000000000.0	0.0	kWh	Total accumulated discharge (kWh)	1	energy_counters	ByteSet
+01.ENG	F817	4	4	0.1	1.0	0.0	km	Total distance travelled (Lifetime)	1	total_distance_travelled_lifetime	ByteSet
+08.HVAC	27C4	0	2	15.625	1.0	-39.5	None	Windshield temperature	1	cabin_humidity;windshield_temperature	ByteSet
