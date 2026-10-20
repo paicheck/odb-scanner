@@ -86,7 +86,8 @@ def main() -> int:
                 "profile_only_abs",
                 f"abs_wheel_speed_{suffix}",
                 "high",
-                "Profile-supported; requires 0x10 03 on 0x713; not in the Python registry.",
+                ("Profile-supported; requires 0x10 03 on 0x713; "
+                 "not in the Python registry."),
             )
 
         # 108 cell voltages.
@@ -110,27 +111,38 @@ def main() -> int:
         # Extreme cell/sensor values carry a second sub-field.
         if did in {"1E33", "1E34"}:
             if sbi == "2":
-                key = "cell_voltage_max_cell" if did == "1E33" else "cell_voltage_min_cell"
+                key = (
+                    "cell_voltage_max_cell" if did == "1E33"
+                    else "cell_voltage_min_cell"
+                )
                 return (
                     "selected_subfield_missing",
                     key,
                     "high",
-                    "1-based cell number at bytes 2-3; currently discarded by the decoder.",
+                    ("1-based cell number at bytes 2-3; "
+                     "currently discarded by the decoder."),
                 )
             key = "cell_voltage_max" if did == "1E33" else "cell_voltage_min"
             return ("selected_extreme_value", key, "high", "Extreme voltage is selected.")
 
         if did in {"1E0E", "1E0F"}:
             if sbi == "2":
-                key = "bat_temp_max_sensor" if did == "1E0E" else "bat_temp_min_sensor"
+                key = (
+                    "bat_temp_max_sensor" if did == "1E0E"
+                    else "bat_temp_min_sensor"
+                )
                 return (
                     "selected_subfield_missing",
                     key,
                     "high",
-                    "1-based sensor number at bytes 2-3; currently discarded by the decoder.",
+                    ("1-based sensor number at bytes 2-3; "
+                     "currently discarded by the decoder."),
                 )
             key = "bat_temp_max" if did == "1E0E" else "bat_temp_min"
-            return ("selected_extreme_value", key, "high", "Extreme temperature is selected.")
+            return (
+                "selected_extreme_value", key, "high",
+                "Extreme temperature is selected.",
+            )
 
         if did in {"1E2C", "1E2D"}:
             key = "cell_soc_max" if did == "1E2C" else "cell_soc_min"
@@ -155,7 +167,8 @@ def main() -> int:
                 "selected_decoder_repair",
                 key,
                 "high",
-                "Current decoder reads offsets 0/4 with the kWh divisor; see decoder_audit.md F2.",
+                ("Current decoder reads offsets 0/4 with the kWh divisor; "
+                 "see decoder_audit.md F2."),
             )
 
         if did == "7448":
@@ -173,7 +186,10 @@ def main() -> int:
                     "high",
                     "Bit 3; useful charging context, currently not exposed.",
                 )
-            return ("selected", "charge_mode;op_mode", "medium", "Operation/charge state row.")
+            return (
+                "selected", "charge_mode;op_mode", "medium",
+                "Operation/charge state row.",
+            )
 
         # Known-bad or unresolved selected rows.
         if did == "27C4" and "Windshield" in name:
@@ -195,7 +211,8 @@ def main() -> int:
                 "selected_quarantine",
                 "odometer_2",
                 "high",
-                "x10 -> 11,150 km vs ~111,020 km on three other odometers; scale unresolved.",
+                ("x10 -> 11,150 km vs ~111,020 km on three other odometers; "
+                 "scale unresolved."),
             )
         if did == "1E39":
             return (
@@ -221,18 +238,25 @@ def main() -> int:
                 "Same DID/quantity as 'Additional high-voltage consumers, power'.",
             )
         if did == "0344":
-            key = "rated_torque_on_the_front_axle" if "front" in name.lower() else "rated_torque_on_the_rear_axle"
+            key = (
+                "rated_torque_on_the_front_axle" if "front" in name.lower()
+                else "rated_torque_on_the_rear_axle"
+            )
             return (
                 "selected_alias",
                 key,
                 "medium",
-                "Front/rear labels on the same DID; the car is RWD, so the front label is misleading.",
+                ("Front/rear labels on the same DID; the car is RWD, so the "
+                 "front label is misleading."),
             )
 
         key, confidence = best_registry_key(did, name)
         if key:
             return ("selected", key, confidence, "DID/name matched to the registry.")
-        return ("profile_only_unmapped", "none", "low", "DID is in the profile but no registry key matched.")
+        return (
+            "profile_only_unmapped", "none", "low",
+            "DID is in the profile but no registry key matched.",
+        )
 
     rows = list(csv.DictReader((OUT / "profile_signals_all.csv").open(encoding="utf-8")))
     out_rows = []

@@ -337,7 +337,8 @@ CREATE TABLE IF NOT EXISTS investigations (
     anchor_ecu TEXT,
     opened_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'open',   -- open | investigating | insufficient-evidence | resolved
+    status TEXT NOT NULL DEFAULT 'open',   -- open | investigating |
+                                           -- insufficient-evidence | resolved
     criteria TEXT,                 -- what would confirm / refute it, written first
     summary TEXT,
     conclusion TEXT
@@ -348,8 +349,8 @@ CREATE TABLE IF NOT EXISTS investigation_evidence (
     investigation_id INTEGER NOT NULL REFERENCES investigations(id),
     ts TEXT NOT NULL,
     stage TEXT NOT NULL,           -- observation | association | explanation | diagnosis
-    kind TEXT NOT NULL,            -- measurement | event | dtc | baseline | counter-evidence
-    ref TEXT,                      -- e.g. "key@2026-10-12T09:00:00+00:00" or "event:104"
+    kind TEXT NOT NULL,   -- measurement | event | dtc | baseline | counter-evidence
+    ref TEXT,   -- e.g. "key@2026-10-12T09:00:00+00:00" or "event:104"
     observation TEXT NOT NULL,
     detail TEXT,
     -- Whether the value behind this row was freshly observed AND scoreable.

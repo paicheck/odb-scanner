@@ -77,8 +77,9 @@ class AnalysisService:
             return {}
         try:
             from analysis import freshness
+            from analysis.provenance import key_states
+            from analysis.provenance import summary as prov_summary
             from decoders.quality import quality_registry, summary
-            from analysis.provenance import key_states, summary as prov_summary
 
             profile = self.cfg.get("vehicle.did_profile", "eup")
             qsum = summary(profile)

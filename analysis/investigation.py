@@ -34,7 +34,6 @@ from datetime import datetime, timedelta, timezone
 
 from analysis import baseline as baseline_mod
 from analysis import freshness
-from analysis.freshness import ObservationState
 from analysis.timeline import build_timeline
 from decoders.quality import quality_for
 
@@ -159,12 +158,17 @@ def associate_events(repo, vehicle_id: int, anchor_ts: str, *,
         et = _parse(e.ts)
         if et is not None:
             delta = (et - anchor).total_seconds()
+        if delta is None:
+            timing = "at the same time"
+        elif delta < 0:
+            timing = f"{-delta:.0f} s before"
+        else:
+            timing = f"{delta:.0f} s after"
         out.append(_persist(repo, inv_id, Evidence(
             stage="association", kind=e.kind,
             observation=f"{e.title} at {e.ts}",
             ts=e.ts, ref=f"event:{e.ref_id}" if e.ref_id else e.kind,
-            detail=(f"{'%.0f s before' % -delta if delta is not None and delta < 0 else '%.0f s after' % delta if delta is not None else 'at the same time'}"
-                    f" the symptom. Temporal order is not causation."),
+            detail=f"{timing} the symptom. Temporal order is not causation.",
             certain=False)))
     return out
 

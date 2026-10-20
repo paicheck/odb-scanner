@@ -98,8 +98,7 @@ def main() -> int:
 
     # coverage vs registry
     covered_dids = set()
-    uncovered = []
-    for did, keys in sorted(reg_dids.items()):
+    for did in sorted(reg_dids):
         covered_dids.add(f"{did:04X}")
 
     profile_dids = {d for d in dids}
@@ -112,10 +111,6 @@ def main() -> int:
     summary["did_in_both"] = len(both)
     summary["did_only_profile"] = len(only_profile)
     summary["did_only_registry"] = len(only_registry)
-
-    # Which profile rows are on DIDs we do not register at all?
-    rows_uncovered = [r for r in rows if (r.get("did") or "").strip().upper()
-                      not in reg_did_hex and (r.get("did") or "").strip()]
 
     # Which registry keys have a matching profile DID but different layout?
     layout_mismatch = []

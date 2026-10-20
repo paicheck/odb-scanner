@@ -152,8 +152,8 @@ copy config.local.yaml.example config.local.yaml     :: optional, gitignored
 ```bat
 .venv\Scripts\python tools\smoke_test.py              :: end-to-end self-test
 .venv\Scripts\python -m pytest tests -q               :: 721 tests
-.venv\Scripts\python -m pytest -m "not slow"          :: fast subset (~2s)
-.venv\Scripts\python -m ruff check .                  :: lint (see §8 for caveat)
+.venv\Scripts\python -m pytest -m "not slow"          :: 707-test fast subset
+.venv\Scripts\python -m ruff check .                  :: lint (clean)
 ```
 
 ### Run a simulated stack
@@ -225,9 +225,7 @@ raw bytes remain the source of truth.
 ## 8. Test, lint, and CI status
 
 - **Tests:** 721 passing (`python -m pytest tests -q`). No car or Ollama needed.
-- **Lint:** changed files pass `ruff check`. Repo-wide `ruff check .` still reports
-  ~20 pre-existing E501 issues in `research/measurement_discovery/scripts/`
-  (research-only code, not production). Two rules are intentionally ignored in
+- **Lint:** `ruff check .` passes clean. Two rules are intentionally ignored in
   `pyproject.toml` (`E402`, `B905`).
 - **CI:** `.github/workflows/ci.yml` runs lint, fast tests, full suite, smoke
   test, and `guard-test` on Python 3.11–3.14.
