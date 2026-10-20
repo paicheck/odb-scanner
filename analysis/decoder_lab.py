@@ -33,11 +33,22 @@ shipped.
 """
 from __future__ import annotations
 
+import struct
 from dataclasses import dataclass, field
 
 from analysis.replay import EvidenceKind
-from decoders.catalogue import ByteLayout, ByteOrder, build_catalogue
-from decoders.quality import Plausibility, Verification, quality_registry
+from decoders.catalogue import (
+    ByteLayout,
+    ByteOrder,
+    Encoding,
+    build_catalogue,
+)
+from decoders.quality import (
+    DataKind,
+    Plausibility,
+    Verification,
+    quality_registry,
+)
 from decoders.registry import build_default_registry
 
 
@@ -46,7 +57,10 @@ def _apply_layout(layout: ByteLayout, record: bytes) -> float | None:
     if len(chunk) != layout.length:
         return None
     order = "big" if layout.byte_order is ByteOrder.BIG_ENDIAN else "little"
-    n = int.from_bytes(chunk, order, signed=layout.signed)
+    if layout.encoding is Encoding.FLOAT32:
+        n = struct.unpack((">" if order == "big" else "<") + "f", chunk)[0]
+    else:
+        n = int.from_bytes(chunk, order, signed=layout.signed)
     return (n * layout.scale / layout.divisor) + layout.addend
 
 
@@ -222,7 +236,11 @@ def evaluate_all(repo, vehicle_id: int, profile: str = "meb", *,
     problems without sorting. Within a verdict, keys are alphabetical.
     """
     from decoders.quality import quality_registry
-    keys = sorted(quality_registry(profile))
+    # Derived metrics have no raw DID payload to replay; they are quality
+    # records for trend/export consumers, not decoder candidates.
+    keys = sorted(
+        key for key, quality in quality_registry(profile).items()
+        if quality.data_kind is not DataKind.DERIVED)
     if limit is not None:
         keys = keys[:limit]
     out = [evaluate_key(repo, vehicle_id, k, profile) for k in keys]

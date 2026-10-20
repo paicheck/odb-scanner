@@ -7,6 +7,42 @@ phase has made **no** connection and sent **no** diagnostic request.
 The roadmap separates offline proof from vehicle tests. Most of the highest-value
 findings can be validated without touching the car.
 
+## 0a. Implemented offline (2026-10-20)
+
+Already shipped and proven against stored raw bytes, no vehicle:
+
+- **float32 family** — 25 electric-drive DIDs decode as IEEE-754 big-endian
+  `FLOAT32(A,B,C,D)`. Old u16/10+1 values (~1680 °C, ~1738 V, ~1e8 W) were a
+  decode error. Catalogue layouts, provenance and plausibility ranges added
+  (`decoders/catalogue.py`).
+- **`0x1E32` four fields** — signed charge/discharge Ah at bytes 0/4 and
+  charge/discharge kWh at bytes 8/12, replacing the two-field energy decode.
+- **1-based cell/sensor indices** — `cell_voltage_max_cell`/`min_cell`,
+  `bat_temp_max_sensor`/`min_sensor` read the u16 at bytes 2–3.
+- **Pack-current sign** — confirmed negative = discharge; arithmetic unchanged.
+- **Derived metrics** — `aux_12v_power_w`, `dcdc_power_kw`, `dcdc_gw_power_kw`,
+  `cell_soc_spread_pct`, `battery_temp_spread_c` are calculated in
+  `collector.py` and surfaced in quality, explore, dashboard and trend/export.
+- **Impact replay** — `tools/replay_decoder_impact.py` re-decoded 8,134 stored
+  rows and produced `implementation_impact.md/.csv` without rewriting the DB.
+
+The catalogue now declares confidence/provenance/plausibility for the float32
+family, the energy block, the index DIDs, the charge-port bits, the battery
+serial and the pack-current layout.
+
+## 0b. Deferred (blocked on evidence or approval)
+
+- **ABS wheel speeds** `0x1800`–`0x1803` need `0x10 03` on `0x713`, a session
+  change that is not approved. Deferred; see the ABS note in section 3.
+- **Gateway unknowns** `0x2A26` / `0x2A28` / `0x2A2F` have no payload or
+  scaling evidence and must not be blind-probed. Deferred to V1 archived
+  evidence recovery.
+- **Quarantined keys** — `co2_content_interior`, `windshield_temperature`,
+  `odometer_2`, `bat_charging_voltage`, `dc_dc_converter_reserved_current`
+  stay invalid/excluded until evidence or policy allows reopening them.
+- **Live capture** — `validation_capture_protocol.md` records the exact
+  read-only reproduction to run if and when the owner approves it.
+
 ## 0. Principles
 
 1. **Offline first.** If raw bytes already exist, prove the decoder there.

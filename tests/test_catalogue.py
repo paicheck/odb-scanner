@@ -473,3 +473,34 @@ def test_csv_escapes_newlines_in_details():
 
 _SUPERSEDED = ByteLayout(offset=0, length=4, byte_order=ByteOrder.BIG_ENDIAN,
                          signed=False, scale=1.0, divisor=1310.77)
+
+def test_float32_layout_describes_and_applies():
+    from decoders.catalogue import Encoding, _apply_layout
+    lay = ByteLayout(offset=0, length=4, byte_order=ByteOrder.BIG_ENDIAN,
+                     signed=False, encoding=Encoding.FLOAT32)
+    assert lay.describe() == "float32be[0:4]"
+    decoded = _apply_layout(lay, bytes.fromhex("43D897DE"))
+    assert decoded == pytest.approx(433.186, abs=0.001)
+    with pytest.raises(ValueError):
+        ByteLayout(offset=0, length=2, byte_order=ByteOrder.BIG_ENDIAN,
+                   signed=False, encoding=Encoding.FLOAT32)
+
+
+def test_float32_family_has_provisional_catalogue_and_ranges():
+    from decoders.catalogue import Confidence, Encoding, build_catalogue
+    cat = build_catalogue("meb")
+    for key in ("dc_link_voltage", "electric_drive_inflow_coolant_temperature",
+                "stator_temperature", "motor_maximum_current",
+                "inverter_power_loss_phase_u"):
+        d = cat[key]
+        assert d.confidence is Confidence.PROVISIONAL
+        assert d.layout is not None and d.layout.encoding is Encoding.FLOAT32
+        assert d.plausible_min is not None and d.plausible_max is not None
+
+
+def test_energy_counters_catalogue_has_fields_and_pack_current_layout():
+    from decoders.catalogue import build_catalogue
+    cat = build_catalogue("meb")
+    assert "layout_fields" in cat["energy_counters"].extras
+    pc = cat["pack_current"]
+    assert pc.layout is not None and pc.plausible_min == -600.0

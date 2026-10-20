@@ -154,6 +154,18 @@ def key_states(repo, vehicle_id: int, registry, *,
                 bucket["state"] = state
                 break
 
+    # Calculated/estimated metrics are not registry DIDs, but the dashboard and
+    # sources pages must show them next to the readings they derive from. They
+    # are labelled as calculated in their names and reported here with the same
+    # state machine, so a stale derived value is visible rather than implied.
+    from decoders.bms import COMPUTED_KEYS
+
+    latest = repo.latest_measurements(vehicle_id) if vehicle_id else {}
+    for key, (name, unit) in sorted(COMPUTED_KEYS.items()):
+        rows.append(_row_from_record(
+            key, name, unit, latest.get(key), stale_after_s, now,
+            unverified=True))
+
     core = ("soc_abs", "soc_normal", "pack_voltage", "pack_current",
             "battery_temp", "pack_power_kw")
     def sort_key(row):
@@ -168,13 +180,22 @@ def key_states(repo, vehicle_id: int, registry, *,
 def _row_for(spec, record, stale_after_s: float,
              now: datetime | None) -> dict:
     doc = str(getattr(spec.doc_status, "value", spec.doc_status) or "")
+    # A decoder that is still a reverse-engineered guess says so here
+    # regardless of how current the reading is.
+    return _row_from_record(
+        spec.key, spec.name, spec.unit, record, stale_after_s, now,
+        unverified=doc not in ("", "documented"))
+
+
+def _row_from_record(key: str, name: str, unit: str, record,
+                     stale_after_s: float, now: datetime | None,
+                     *, unverified: bool) -> dict:
+    """Build one provenance row for a named measurement (registry or computed)."""
     row = {
-        "key": spec.key,
-        "name": spec.name,
-        "unit": spec.unit,
-        # A decoder that is still a reverse-engineered guess says so here
-        # regardless of how current the reading is.
-        "unverified": doc not in ("", "documented"),
+        "key": key,
+        "name": name,
+        "unit": unit,
+        "unverified": unverified,
         "source": None, "ts": None, "age_s": None, "value": None,
         "state": "unavailable",
     }

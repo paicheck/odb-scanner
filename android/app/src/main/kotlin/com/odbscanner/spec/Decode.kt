@@ -11,7 +11,8 @@ package com.odbscanner.spec
 object Decoder {
     private const val CELL_UNUSED = 0x0FFE   // decoders/meb.py CELL_UNUSED
     private const val CELL_T_MAX = 1020       // decoders/meb.py CELL_T_MAX
-    private const val ENERGY_COUNT_WH = 8583.07123641215
+    private const val ENERGY_AH_PER_COUNT = 0.001820444117116
+    private const val ENERGY_KWH_PER_COUNT = 116508.398 / 1_000_000_000.0
 
     /** Decode a DID data record; null when there is nothing to decode. */
     fun decode(recipe: Decode?, record: ByteArray): Any? {
@@ -50,11 +51,29 @@ object Decoder {
                 if (v > CELL_T_MAX) null else v / 8.0 - 40.0
             }
             "charge_mode" -> mapOf(4 to 1, 6 to 2)[record[0].toInt() and 0xFF] ?: 0
+            "float32" -> {
+                if (record.size < 4) return null
+                val bits = u32(record, 0) ?: return null
+                val value = Float.fromBits(bits.toInt()).toDouble()
+                if (value.isFinite()) value else null
+            }
+            "ascii" ->
+                record.toString(Charsets.US_ASCII).trim('\u0000', ' ')
+            "bit2" -> ((record[0].toInt() and 0xFF) ushr 2) and 1
+            "bit3" -> ((record[0].toInt() and 0xFF) ushr 3) and 1
             "energy_counters" -> {
-                if (record.size < 8) return null
-                val charged = u32(record, 0)!! / ENERGY_COUNT_WH
-                val used = absInt32(record, 4) / ENERGY_COUNT_WH
-                mapOf("charged_kwh" to charged, "used_kwh" to used)
+                if (record.size < 16) return null
+                val chargedAh = s32(record, 0) * ENERGY_AH_PER_COUNT
+                val dischargedAh = kotlin.math.abs(s32(record, 4) * ENERGY_AH_PER_COUNT)
+                val chargedKwh = s32(record, 8) * ENERGY_KWH_PER_COUNT
+                val dischargedKwh = kotlin.math.abs(s32(record, 12) * ENERGY_KWH_PER_COUNT)
+                mapOf(
+                    "charged_ah" to chargedAh,
+                    "discharged_ah" to dischargedAh,
+                    "charged_kwh" to chargedKwh,
+                    "discharged_kwh" to dischargedKwh,
+                    "used_kwh" to dischargedKwh,
+                )
             }
             "coolant_temps" -> {
                 if (record.size < 4) return null
@@ -85,11 +104,10 @@ object Decoder {
             (b[off + 3].toLong() and 0xFF)
         else null
 
-    /** Signed 32-bit big-endian at off, as a positive magnitude. */
-    private fun absInt32(b: ByteArray, off: Int): Long {
+    /** Signed 32-bit big-endian at off. */
+    private fun s32(b: ByteArray, off: Int): Long {
         val u = u32(b, off) ?: return 0
-        val signed = if (u and 0x8000_0000L != 0L) u - 0x1_0000_0000L else u
-        return if (signed < 0) -signed else signed
+        return if (u and 0x8000_0000L != 0L) u - 0x1_0000_0000L else u
     }
 
     private fun gearCode(code: Int): String = when (code) {

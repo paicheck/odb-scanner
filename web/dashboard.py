@@ -214,6 +214,7 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
                         spec (individual cells included) for the chart picker.
           counts        provenance summary from measurement_sources().
         """
+        from decoders.bms import COMPUTED_KEYS
         from decoders.registry import build_default_registry
         from diagnostic.ecus import ECUS
 
@@ -246,12 +247,17 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
                     break
 
         def ecu_name(key):
+            if key == "computed":
+                return "Calculated metrics"
             return ECUS[key].name if key in ECUS else key
 
-        # key -> ecu for the collapsed table rows (cell rollups belong to BMS)
+        # key -> ecu for the collapsed table rows (cell rollups belong to BMS;
+        # derived metrics group under a synthetic "computed" ECU)
         key_to_ecu = {s.key: s.ecu_key for s in registry.all()}
         key_to_ecu["cell_voltages"] = "bat_mgmt"
         key_to_ecu["cell_temperatures"] = "bat_mgmt"
+        for key in COMPUTED_KEYS:
+            key_to_ecu[key] = "computed"
 
         groups: dict[str, list[dict]] = {}
         for row in rows:
@@ -272,6 +278,10 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         for spec in registry.all():
             chart.setdefault(spec.ecu_key, []).append(
                 {"key": spec.key, "name": spec.name, "unit": spec.unit}
+            )
+        for key, (name, unit) in COMPUTED_KEYS.items():
+            chart.setdefault("computed", []).append(
+                {"key": key, "name": name, "unit": unit}
             )
         chart_groups = [
             {
@@ -741,11 +751,12 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     @app.get("/status", response_class=HTMLResponse)
     def status_page(request: Request):
         from analysis import freshness
-        from analysis.provenance import key_states, summary as prov_summary
+        from analysis.provenance import key_states
+        from analysis.provenance import summary as prov_summary
         from decoders.registry import build_default_registry
 
         _, vid = vehicle_and_id()
-        modules, silence, prov, counts, sources = [], {}, {}, {}, {}
+        modules, silence, prov, sources = [], {}, {}, {}
         if vid:
             modules = freshness.module_status(repo, vid)
             silence = freshness.silence_summary(modules)
@@ -764,7 +775,7 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     @app.get("/quality", response_class=HTMLResponse)
     def quality_page(request: Request):
         from analysis import decoder_lab
-        from decoders.quality import quality_registry, summary
+        from decoders.quality import summary
 
         _, vid = vehicle_and_id()
         limit = int(request.query_params.get("limit", 80))
@@ -902,7 +913,8 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             try:
                 idx = int(key.rsplit("_", 1)[1])
             except ValueError:
-                raise HTTPException(status_code=400, detail="bad cell key")
+                raise HTTPException(status_code=400,
+                                    detail="bad cell key") from None
             rows = [dict(r) for r in repo.raw_cell_series(vid, idx, days)]
             columns = ["ts", "cell_index", "voltage_v"]
         else:

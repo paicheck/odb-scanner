@@ -193,6 +193,7 @@ _RANGES: dict[str, tuple[float, float, str]] = {
     "soc_normal": (0.0, 100.0, "% of usable capacity"),
     "pack_voltage": (200.0, 500.0, "MEB 58 kWh pack terminal voltage"),
     "pack_current": (-600.0, 600.0, "MEB pack current, charge/discharge"),
+    "pack_power_kw": (-200.0, 200.0, "MEB pack DC power, charge/discharge"),
     "cell_voltage_max": (2.0, 4.4, "Li-ion cell terminal voltage"),
     "cell_voltage_min": (2.0, 4.4, "Li-ion cell terminal voltage"),
     "battery_temp": (-30.0, 70.0, "HV pack operating temperature"),
@@ -291,6 +292,37 @@ def build_quality(profile: str = "meb",
             confidence=conf,
             notes=defn.limitations,
             falsified_by=defn.falsified_by,
+        )
+
+    # Derived/calculated metrics are not DIDs, so the catalogue does not carry
+    # them; but trend, export and explore consumers still need their ranges and
+    # kind. They are labelled DERIVED so nobody mistakes them for a reading.
+    from decoders.bms import COMPUTED_KEYS
+
+    units = {k: unit for k, (_, unit) in COMPUTED_KEYS.items()}
+    names = {k: name for k, (name, _) in COMPUTED_KEYS.items()}
+    for key in sorted(_DERIVED_KEYS):
+        if key in out:
+            continue
+        pmin, pmax, basis = _range_for(
+            key, Confidence.PROVISIONAL, None, None, "")
+        out[key] = MeasurementQuality(
+            key=key,
+            verification=(Verification.PROVISIONAL
+                          if pmin is not None else Verification.UNKNOWN),
+            data_kind=DataKind.DERIVED,
+            unit=units.get(key, ""),
+            use_in_scoring=True,
+            known_issue="",
+            plausible_min=pmin,
+            plausible_max=pmax,
+            plausible_basis=basis,
+            confidence=Confidence.PROVISIONAL,
+            notes=names.get(key, "calculated in collector.py"),
+            falsified_by=(
+                "recomputation from the stored input rows disagrees with the "
+                "stored derived value"),
+            extras={"name": names.get(key, key), "calculated": "true"},
         )
     return out
 

@@ -45,12 +45,13 @@ observation would overturn it.
 from __future__ import annotations
 
 import hashlib
+import struct
 from dataclasses import dataclass, field
 from enum import Enum
 
 from .registry import DIDRegistry, DIDSpec, build_default_registry
 
-CATALOGUE_VERSION = "2026-10-15.2"
+CATALOGUE_VERSION = "2026-10-20.1"
 
 
 class Confidence(str, Enum):
@@ -63,6 +64,13 @@ class ByteOrder(str, Enum):
     BIG_ENDIAN = "big-endian"
     LITTLE_ENDIAN = "little-endian"
     UNKNOWN = "unknown"
+
+
+class Encoding(str, Enum):
+    """How the bytes in a ByteLayout become the raw number."""
+
+    INTEGER = "integer"
+    FLOAT32 = "float32"
 
 
 class EvidenceKind(str, Enum):
@@ -86,7 +94,8 @@ class EvidenceKind(str, Enum):
 class ByteLayout:
     """How to turn the DID data record into a number.
 
-    value = raw_integer * scale / divisor + addend
+    value = raw * scale / divisor + addend, where ``raw`` is an integer by
+    default or an IEEE-754 float32 when ``encoding`` says so.
     """
 
     offset: int
@@ -96,12 +105,21 @@ class ByteLayout:
     scale: float = 1.0
     divisor: float = 1.0
     addend: float = 0.0
+    encoding: Encoding = Encoding.INTEGER
+
+    def __post_init__(self) -> None:
+        if self.encoding is Encoding.FLOAT32 and self.length != 4:
+            raise ValueError("float32 layouts must be 4 bytes wide")
 
     def describe(self) -> str:
         endian = "be" if self.byte_order is ByteOrder.BIG_ENDIAN else "le"
-        parts = [f"u{self.length * 8}{endian}",
-                 f"[{self.offset}:{self.offset + self.length}]",
-                 f"{'signed' if self.signed else 'unsigned'}"]
+        if self.encoding is Encoding.FLOAT32:
+            parts = [f"float32{endian}",
+                     f"[{self.offset}:{self.offset + self.length}]"]
+        else:
+            parts = [f"u{self.length * 8}{endian}",
+                     f"[{self.offset}:{self.offset + self.length}]",
+                     f"{'signed' if self.signed else 'unsigned'}"]
         m = f" x {self.scale:g}" if self.scale != 1.0 else ""
         dv = f" / {self.divisor:g}" if self.divisor != 1.0 else ""
         a = f" + {self.addend:g}" if self.addend else ""
@@ -186,6 +204,7 @@ class MeasurementDefinition:
             "byte_offset": self.layout.offset if self.layout else None,
             "byte_length": self.layout.length if self.layout else None,
             "byte_order": self.layout.byte_order.value if self.layout else None,
+            "encoding": self.layout.encoding.value if self.layout else None,
             "signed": self.layout.signed if self.layout else None,
             "scale": self.layout.scale if self.layout else None,
             "divisor": self.layout.divisor if self.layout else None,
@@ -216,6 +235,126 @@ class MeasurementDefinition:
 # Anything absent stays UNKNOWN. Nothing here is inferred from plausibility
 # alone; each entry names the artefact it came from.
 # ---------------------------------------------------------------------------
+
+def _eldrive_float_overlays() -> dict[str, dict]:
+    """Catalogue entries for the 25 electric-drive float32 DIDs.
+
+    The registry already decodes them; this records *why* that encoding is
+    believed and what a sane value looks like. The bounds are deliberately
+    broad screening limits: they catch a u16/10+1 re-decode (which produced
+    ~1680 degC and ~1738 V), not a control-limit violation.
+    """
+    from .meb import _FLOAT32_KEYS
+
+    groupings = (
+        (
+            {
+                "actual_mechanical_torque_calculated",
+                "actual_mechanical_torque_commanded_value",
+                "actual_possible_maximum_torque",
+                "actual_possible_minimum_torque",
+                "torque_calculated_from_measured_currents",
+            },
+            (-600.0, 600.0),
+            "MEB drive-unit torque; broad screening bound, not a control limit",
+        ),
+        (
+            {
+                "dc_link_current",
+                "motor_maximum_current",
+                "motor_minimum_current",
+            },
+            (-1000.0, 1000.0),
+            "MEB drive-unit current; broad screening bound, not a control limit",
+        ),
+        (
+            {
+                "dc_link_voltage",
+                "dc_link_voltage_reserve",
+                "desired_link_voltage",
+                "dmcm_stator_voltage_d_direction_actual_value",
+                "dmcm_stator_voltage_d_direction_commanded_value",
+                "dmcm_stator_voltage_q_direction_actual_value",
+                "dmcm_stator_voltage_q_direction_commanded_value",
+            },
+            (-600.0, 600.0),
+            "MEB 400 V-class drive-unit voltage; broad screening bound, not a "
+            "control limit",
+        ),
+        (
+            {
+                "ecu_pcb_temperature_1",
+                "ecu_pcb_temperature_2",
+                "electric_drive_inflow_coolant_temperature",
+                "rotor_temperature_model",
+                "stator_temperature",
+            },
+            (-40.0, 200.0),
+            "passenger-EV drive-unit temperature; broad screening bound, not a "
+            "control limit",
+        ),
+        (
+            {
+                "inverter_power_loss_phase_u",
+                "inverter_power_loss_phase_v",
+                "inverter_power_loss_phase_w",
+            },
+            (0.0, 10_000.0),
+            "MEB inverter loss; broad screening bound, not a control limit",
+        ),
+        (
+            {
+                "electric_drive_motor_speed_rad_sec",
+                "stator_electrical_frequency_rad_sec",
+            },
+            (-20_000.0, 20_000.0),
+            "electric-machine speed/frequency; broad screening bound, not a "
+            "control limit",
+        ),
+    )
+    ranges: dict[str, tuple[float, float, str]] = {}
+    for keys, (lo, hi), basis in groupings:
+        for key in keys:
+            ranges[key] = (lo, hi, basis)
+
+    source = (
+        "Car Scanner MEB profile #342 declares FLOAT32(A,B,C,D) for these "
+        "rows; 17 stored real-vehicle payloads per DID re-decode to finite, "
+        "physically plausible values under that encoding"
+    )
+    common = {
+        "confidence": Confidence.PROVISIONAL,
+        "evidence_kind": EvidenceKind.THIRD_PARTY_DEFINITION,
+        "evidence_source": source,
+        "evidence_artifact": (
+            "data/odb_scanner.db; "
+            "research/measurement_discovery/implementation_impact.csv"),
+        "validation_method": (
+            "offline replay of stored raw bytes plus a catalogue probe: the "
+            "declared float32 layout reproduces the live decoder exactly"),
+        "limitations": (
+            "the encoding is an explicit third-party definition plus physical "
+            "plausibility; no VW document or project-owned capture confirms "
+            "it yet. The bounds are screening limits, not control limits."),
+        "falsified_by": (
+            "a captured payload that is non-finite or outside the broad range, "
+            "or a second source that states a different encoding"),
+        "response_length_hint": 4,
+    }
+    out: dict[str, dict] = {}
+    for key in _FLOAT32_KEYS:
+        lo, hi, basis = ranges[key]
+        out[key] = {
+            **common,
+            "layout": ByteLayout(
+                offset=0, length=4, byte_order=ByteOrder.BIG_ENDIAN,
+                signed=False, encoding=Encoding.FLOAT32),
+            "plausible_min": lo,
+            "plausible_max": hi,
+            "plausible_basis": basis,
+        }
+    return out
+
 
 def _cs_layouts() -> dict[str, dict]:
     """Layouts the MEB module docstring already documents as observed bytes.
@@ -255,6 +394,177 @@ OVERLAY: dict[tuple[str, str], dict] = {
     **(  # MEB BMS DIDs whose layout the module docstring records
         {("meb", k): v for k, v in _cs_layouts().items()}
     ),
+    **(  # electric-drive float32 family
+        {("meb", k): v for k, v in _eldrive_float_overlays().items()}
+    ),
+    ("meb", "energy_counters"): {
+        "confidence": Confidence.PROVISIONAL,
+        "response_length_hint": 16,
+        "evidence_kind": EvidenceKind.THIRD_PARTY_DEFINITION,
+        "evidence_source": (
+            "Car Scanner MEB profile #342 exposes four fields at 0x1E32: "
+            "signed charge/discharge Ah at bytes 0/4 and signed charge/"
+            "discharge kWh at bytes 8/12. 28 stored real-vehicle records "
+            "re-decoded with this layout and the counters move in the "
+            "expected direction across the captured sessions."),
+        "evidence_artifact": (
+            "data/odb_scanner.db; tests/fixtures/meb_real_car_vectors.py; "
+            "research/measurement_discovery/implementation_impact.csv"),
+        "validation_method": (
+            "offline replay of all stored 16-byte records; the old two-field "
+            "energy interpretation is arithmetically refuted by the observed "
+            "~24,437/~23,460 kWh totals."),
+        "limitations": (
+            "the four-field layout is a third-party definition that reproduces "
+            "the observed totals; no VW document states whether the counters "
+            "are lifetime, trip or service-relative."),
+        "falsified_by": (
+            "a captured record shorter than 16 bytes, or counters that decrease "
+            "while the car charges/discharges"),
+        "extras": {
+            "layout_fields": (
+                "0:4 charge Ah, 4:8 discharge Ah, 8:12 charge kWh, "
+                "12:16 discharge kWh (all signed s32be)"),
+        },
+    },
+    ("meb", "pack_current"): {
+        "confidence": Confidence.PROVISIONAL,
+        "layout": ByteLayout(offset=0, length=4, byte_order=ByteOrder.BIG_ENDIAN,
+                             signed=False, scale=0.01, addend=-1500.0),
+        "response_length_hint": 4,
+        "evidence_kind": EvidenceKind.VEHICLE_RESPONSE,
+        "evidence_source": (
+            "stored 0x1E3D payload 000248FD -> -2.43 A while the independent "
+            "0x035E payload FFED -> -1.9 A and the discharge counter rose; "
+            "negative therefore means discharge"),
+        "evidence_artifact": (
+            "data/odb_scanner.db; "
+            "research/measurement_discovery/decoder_audit.md"),
+        "validation_method": (
+            "two independent DIDs agree in sign during a discharge event; raw "
+            "bytes reproduce the stored arithmetic exactly"),
+        "limitations": (
+            "the absolute scale is reverse-engineered; the sign convention is "
+            "the part confirmed on independent bytes"),
+        "falsified_by": (
+            "a parked capture where current is positive while energy leaves "
+            "the pack, or a scale that disagrees with a known load"),
+        "plausible_min": -600.0,
+        "plausible_max": 600.0,
+        "plausible_basis": "MEB pack current, charge/discharge",
+    },
+    ("meb", "cell_voltage_max_cell"): {
+        "confidence": Confidence.PROVISIONAL,
+        "layout": ByteLayout(offset=2, length=2, byte_order=ByteOrder.BIG_ENDIAN,
+                             signed=False),
+        "response_length_hint": 4,
+        "evidence_kind": EvidenceKind.THIRD_PARTY_DEFINITION,
+        "evidence_source": (
+            "Car Scanner MEB profile #342: u16be index at bytes 2-3; the "
+            "index matched the tied maximum cell in 28 of 31 offline sweeps"),
+        "evidence_artifact": "research/measurement_discovery/decoder_audit.md",
+        "validation_method": "offline comparison with the per-cell sweep",
+        "limitations": "1-based index; tie handling is still under review",
+        "falsified_by": "an index outside the populated cell count, or a sweep "
+                        "where it does not identify the maximum",
+        "plausible_min": 1.0,
+        "plausible_max": 108.0,
+        "plausible_basis": "MEB 58 kWh pack has 108 cell slots",
+    },
+    ("meb", "cell_voltage_min_cell"): {
+        "confidence": Confidence.PROVISIONAL,
+        "layout": ByteLayout(offset=2, length=2, byte_order=ByteOrder.BIG_ENDIAN,
+                             signed=False),
+        "response_length_hint": 4,
+        "evidence_kind": EvidenceKind.THIRD_PARTY_DEFINITION,
+        "evidence_source": (
+            "Car Scanner MEB profile #342: u16be index at bytes 2-3; the "
+            "index matched the tied minimum cell in 29 of 31 offline sweeps"),
+        "evidence_artifact": "research/measurement_discovery/decoder_audit.md",
+        "validation_method": "offline comparison with the per-cell sweep",
+        "limitations": "1-based index; tie handling is still under review",
+        "falsified_by": "an index outside the populated cell count, or a sweep "
+                        "where it does not identify the minimum",
+        "plausible_min": 1.0,
+        "plausible_max": 108.0,
+        "plausible_basis": "MEB 58 kWh pack has 108 cell slots",
+    },
+    ("meb", "bat_temp_max_sensor"): {
+        "confidence": Confidence.PROVISIONAL,
+        "layout": ByteLayout(offset=2, length=2, byte_order=ByteOrder.BIG_ENDIAN,
+                             signed=False),
+        "response_length_hint": 4,
+        "evidence_kind": EvidenceKind.THIRD_PARTY_DEFINITION,
+        "evidence_source": (
+            "Car Scanner MEB profile #342: u16be index at bytes 2-3; matched "
+            "the tied hottest sensor in 31 of 31 offline sweeps"),
+        "evidence_artifact": "research/measurement_discovery/decoder_audit.md",
+        "validation_method": "offline comparison with the per-sensor sweep",
+        "limitations": "1-based sensor number; tie handling is still under review",
+        "falsified_by": "an index outside the populated sensor count, or a sweep "
+                        "where it does not identify the maximum",
+        "plausible_min": 1.0,
+        "plausible_max": 255.0,
+        "plausible_basis": "u16 index narrowed to the observed sensor range",
+    },
+    ("meb", "bat_temp_min_sensor"): {
+        "confidence": Confidence.PROVISIONAL,
+        "layout": ByteLayout(offset=2, length=2, byte_order=ByteOrder.BIG_ENDIAN,
+                             signed=False),
+        "response_length_hint": 4,
+        "evidence_kind": EvidenceKind.THIRD_PARTY_DEFINITION,
+        "evidence_source": (
+            "Car Scanner MEB profile #342: u16be index at bytes 2-3; matched "
+            "the tied coldest sensor in 30 of 31 offline sweeps"),
+        "evidence_artifact": "research/measurement_discovery/decoder_audit.md",
+        "validation_method": "offline comparison with the per-sensor sweep",
+        "limitations": "1-based sensor number; tie handling is still under review",
+        "falsified_by": "an index outside the populated sensor count, or a sweep "
+                        "where it does not identify the minimum",
+        "plausible_min": 1.0,
+        "plausible_max": 255.0,
+        "plausible_basis": "u16 index narrowed to the observed sensor range",
+    },
+    ("meb", "charge_port_normal"): {
+        "confidence": Confidence.PROVISIONAL,
+        "evidence_kind": EvidenceKind.THIRD_PARTY_DEFINITION,
+        "evidence_source": "Car Scanner MEB profile #342 BitValue: byte 0 bit 2",
+        "evidence_artifact": "research/measurement_discovery/decoder_audit.md",
+        "validation_method": "offline comparison with charge-port state labels",
+        "limitations": "bit meaning is from the profile, not a VW document",
+        "falsified_by": "a capture where the bit does not track AC plug state",
+        "plausible_min": 0.0,
+        "plausible_max": 1.0,
+        "plausible_basis": "single bit",
+        "extras": {"bit": "byte 0 bit 2"},
+    },
+    ("meb", "charge_port_rapid"): {
+        "confidence": Confidence.PROVISIONAL,
+        "evidence_kind": EvidenceKind.THIRD_PARTY_DEFINITION,
+        "evidence_source": "Car Scanner MEB profile #342 BitValue: byte 0 bit 3",
+        "evidence_artifact": "research/measurement_discovery/decoder_audit.md",
+        "validation_method": "offline comparison with charge-port state labels",
+        "limitations": "bit meaning is from the profile, not a VW document",
+        "falsified_by": "a capture where the bit does not track DC plug state",
+        "plausible_min": 0.0,
+        "plausible_max": 1.0,
+        "plausible_basis": "single bit",
+        "extras": {"bit": "byte 0 bit 3"},
+    },
+    ("meb", "battery_serial"): {
+        "confidence": Confidence.PROVISIONAL,
+        "response_length_hint": 16,
+        "evidence_kind": EvidenceKind.VEHICLE_RESPONSE,
+        "evidence_source": (
+            "stored 0x0500 payload decodes as trimmed ASCII "
+            "'288 VWARMFF265' on every captured row"),
+        "evidence_artifact": "data/odb_scanner.db",
+        "validation_method": "offline replay of stored ASCII payloads",
+        "limitations": "the string is readable; its exact field boundaries are "
+                      "not documented",
+        "falsified_by": "a payload that is not valid printable ASCII",
+        "extras": {"encoding": "trimmed ASCII"},
+    },
     ("meb", "hv_energy_content"): {
         "confidence": Confidence.VERIFIED,
         "address_confidence": Confidence.VERIFIED,
@@ -362,6 +672,13 @@ OVERLAY: dict[tuple[str, str], dict] = {
 }
 
 
+def _extras(ov: dict) -> dict[str, str]:
+    """Collapse the overlay's ``extras`` sub-map plus any leftover keys."""
+    extra = dict(ov.pop("extras", {}) or {})
+    extra.update(ov)
+    return extra
+
+
 def _ecu_addressing(profile: str, ecu_key: str | None):
     """(name, tx, rx) for an ECU key, or Nones. Never guesses."""
     if not ecu_key:
@@ -401,7 +718,8 @@ def build_catalogue(
                         signed=fields.get("signed", False),
                         scale=fields.get("scale", 1.0),
                         divisor=fields.get("divisor", 1.0),
-                        addend=fields.get("addend", 0.0))
+                        addend=fields.get("addend", 0.0),
+                        encoding=Encoding(fields.get("encoding", "integer")))
                     break
         elif not isinstance(lay, ByteLayout):
             lay = ByteLayout(
@@ -410,7 +728,8 @@ def build_catalogue(
                 signed=lay.get("signed", False),
                 scale=lay.get("scale", 1.0),
                 divisor=lay.get("divisor", 1.0),
-                addend=lay.get("addend", 0.0))
+                addend=lay.get("addend", 0.0),
+                encoding=Encoding(lay.get("encoding", "integer")))
         layout = lay
         d = MeasurementDefinition(
             key=spec.key,
@@ -426,6 +745,7 @@ def build_catalogue(
             did=did,
             request_bytes=(f"{0x22:02X}{did:04X}") if did is not None else None,
             layout=layout,
+            response_length_hint=ov.pop("response_length_hint", None),
             provenance=spec.provenance.value,
             doc_status=spec.doc_status.value,
             evidence_kind=ov.pop("evidence_kind", EvidenceKind.NONE),
@@ -439,7 +759,7 @@ def build_catalogue(
             plausible_max=ov.pop("plausible_max", None),
             plausible_basis=ov.pop("plausible_basis", "not established"),
             session_required=ov.pop("session_required", "unknown"),
-            extras=ov,
+            extras=_extras(ov),
         ).ensure_version()
         out[spec.key] = d
     return out
@@ -454,7 +774,10 @@ def _apply_layout(layout: ByteLayout, record: bytes) -> float:
     if len(chunk) != layout.length:
         raise IndexError("short record")
     order = "big" if layout.byte_order is ByteOrder.BIG_ENDIAN else "little"
-    n = int.from_bytes(chunk, order, signed=layout.signed)
+    if layout.encoding is Encoding.FLOAT32:
+        n = struct.unpack((">" if order == "big" else "<") + "f", chunk)[0]
+    else:
+        n = int.from_bytes(chunk, order, signed=layout.signed)
     return (n * layout.scale / layout.divisor) + layout.addend
 
 
@@ -482,11 +805,17 @@ def validate_definition(defn: MeasurementDefinition, spec: DIDSpec) -> None:
         # marker count at that offset. The marker must fit the declared WIDTH,
         # so it is masked rather than fixed at 0x1234 -- a 1-byte layout would
         # otherwise raise OverflowError instead of testing anything.
-        marker = 0x1234 & ((1 << (8 * layout.length)) - 1)
         rec = bytearray(layout.offset + layout.length)
-        rec[layout.offset:layout.offset + layout.length] = marker.to_bytes(
-            layout.length,
-            "big" if layout.byte_order is ByteOrder.BIG_ENDIAN else "little")
+        if layout.encoding is Encoding.FLOAT32:
+            marker_bytes = struct.pack(
+                (">" if layout.byte_order is ByteOrder.BIG_ENDIAN else "<") + "f",
+                1.5)
+        else:
+            marker = 0x1234 & ((1 << (8 * layout.length)) - 1)
+            marker_bytes = marker.to_bytes(
+                layout.length,
+                "big" if layout.byte_order is ByteOrder.BIG_ENDIAN else "little")
+        rec[layout.offset:layout.offset + layout.length] = marker_bytes
         expect = _apply_layout(layout, bytes(rec))
         try:
             got = spec.decode(bytes(rec))
