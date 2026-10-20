@@ -156,6 +156,17 @@ internal Ah/kWh arithmetic is an independent consistency check.
 The current decoders expose only the first two bytes. The raw bytes were already
 logged, so no new vehicle request is needed.
 
+**Width note (2026-10-20):** across all 169 stored samples of these four DIDs,
+byte 2 is always `0x00` and the index is carried in byte 3 alone (values are
+all ≤ 61 for cells and ≤ 10 for temperature sensors). spot2000's per-DID
+`Calculation` column states this exactly — the response is `WW XX YY ZZ` and
+"ZZ is the cell # with highest/lowest voltage". The Car Scanner profile's
+`SBI=2 DL=2` is therefore a 2-byte framing of a 1-byte value whose high byte is
+a zero placeholder; `u16be[2:4]` and `raw[3]` are identical on all current
+evidence. The decoder reads `u16be[2:4]` to stay literal to the profile; a
+future nonzero byte 2 would be caught by the plausibility range (1..108 / 1..255)
+rather than silently misread.
+
 ### Offline validation
 
 `offline_crosscheck.csv` compares 31 same-timestamp observations against the

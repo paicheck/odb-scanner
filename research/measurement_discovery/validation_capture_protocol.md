@@ -60,6 +60,14 @@ registry's plausibility range (or, with `--strict`, to the supplied `expected`).
 A failure means the decoder and the capture disagree and the capture must be
 reviewed before the definition is changed.
 
+The same checker runs offline against stored rows, so the flow can be dry-run
+today without the car:
+
+```
+python tools/export_validation_capture.py --out capture.json
+python tools/validate_measurement_capture.py --in capture.json
+```
+
 ## What this capture does NOT authorise
 
 - No `0x10 03` session change (ABS wheel speeds stay deferred).

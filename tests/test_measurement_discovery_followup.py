@@ -56,3 +56,27 @@ def test_capture_checker_pass_and_fail():
     assert summary["pass"] == 3
     assert summary["fail"] == 1
     assert verdicts[-1].issue.startswith("unknown key")
+
+
+def test_capture_export_and_check_round_trip(tmp_path):
+    import sqlite3
+
+    from tools.export_validation_capture import export_captures
+    from tools.validate_measurement_capture import evaluate
+
+    db = tmp_path / "cap.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE measurements "
+        "(key TEXT, ts TEXT, raw_response TEXT, success INTEGER)")
+    con.execute(
+        "INSERT INTO measurements VALUES "
+        "('dc_link_voltage', '2026-10-20T12:00:00+00:00', '43D897DE', 1)")
+    con.commit()
+    con.close()
+
+    captures = export_captures(str(db), ("dc_link_voltage",), limit=5)
+    assert len(captures) == 1
+    assert captures[0]["raw"] == "43D897DE"
+    _, summary = evaluate(captures, "meb", strict=False)
+    assert summary == {"total": 1, "pass": 1, "fail": 0, "indeterminate": 0}
