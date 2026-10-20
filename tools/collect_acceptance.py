@@ -319,8 +319,8 @@ def evaluate(repo: Repository, state: dict, opts: Options) -> list[Result]:
         else f"offenders: {offenders[:3]}"))
 
     # 7. Informational: a BMS DID answering NRC 0x31 is the car saying "that
-    # identifier is not supported here", which is normal (e.g. hv_serial_vin on
-    # the simulator). A read that gets *silence* instead is the Track B /
+    # identifier is not supported here", which is normal (e.g. an unimplemented
+    # simulator DID). A read that gets *silence* instead is the Track B /
     # ATSP6-residue symptom and is worth a warning.
     counts = _one(
         repo,

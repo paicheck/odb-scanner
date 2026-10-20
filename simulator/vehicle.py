@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import random
 import socketserver
+import struct
 import threading
 import time
 
@@ -161,24 +162,28 @@ def _meb_did_value(req29: int, did: int) -> bytes | None:
             if did == 0x1E3D:
                 return int(pack_current() * 100 + 150000).to_bytes(4, "big")
             if did == 0x1E33:
-                return _enc_u16(max(cell_v(i) for i in range(4)) * 4096)
+                hi = max(range(4), key=cell_v)
+                return _enc_u16(cell_v(hi) * 4096) + _enc_u16(hi + 1)
             if did == 0x1E34:
-                return _enc_u16(min(cell_v(i) for i in range(4)) * 4096)
+                lo = min(range(4), key=cell_v)
+                return _enc_u16(cell_v(lo) * 4096) + _enc_u16(lo + 1)
             if did == 0x2A0B:
                 return bytes([round((battery_temp() + 40) * 2) & 0xFF])
             if did == 0x1E0E:
-                return _enc_u16((battery_temp() + 1.25) * 64)
+                return _enc_u16((battery_temp() + 1.25) * 64) + _enc_u16(1)
             if did == 0x1E0F:
-                return _enc_u16((battery_temp() - 1.25) * 64)
+                return _enc_u16((battery_temp() - 1.25) * 64) + _enc_u16(2)
             if did == 0x1E1B:
                 return _enc_u16(213 * 5)
             if did == 0x1E1C:
                 return _enc_u16(400 * 5)
             if did == 0x1E32:
-                charged = int(24422.8 * 8583.07123641215)
-                used = -int(23447.5 * 8583.07123641215)
-                return (charged.to_bytes(4, "big")
-                        + (used & 0xFFFFFFFF).to_bytes(4, "big"))
+                # Four s32 fields: charge Ah, discharge Ah, charge kWh,
+                # discharge kWh (CS MEB profile #342).
+                def s32(v: float) -> bytes:
+                    return int(v).to_bytes(4, "big", signed=True)
+                return (s32(58196.5) + s32(-57808.3) +
+                        s32(24436.98) + s32(-23459.86))
             if did == 0x7448:
                 # 0 standby / 1 driving / 4 AC charging / 6 DC charging
                 return bytes([4 if charge_mode() else 0])
@@ -239,10 +244,13 @@ def _meb_did_value(req29: int, did: int) -> bytes | None:
             return None
         if req29 == 0x17FC007C:
             if did == 0x3E93:
-                # DC link voltage, 400 V at rest. The point is that the module
-                # answers at all -- a dead 29-bit path must show up as a NULL
-                # for the whole electric-drive module, not as a plausible value.
-                return _enc_u16(4000)
+                # DC link voltage, 400 V at rest, IEEE-754 big-endian float32
+                # (FLOAT32(A,B,C,D) in the Car Scanner profile). The point is
+                # that the module answers at all -- a dead 29-bit path must show
+                # up as a NULL for the whole module, not as a plausible value.
+                return struct.pack(">f", 400.0)
+            if did == 0x4FAE:
+                return struct.pack(">f", 16.18)
             return None
         if req29 == 0x00000767:
             if did == 0x2431:

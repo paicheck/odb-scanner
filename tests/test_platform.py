@@ -42,12 +42,17 @@ def _record(repo, key, ts, value, *, success=True, raw="AB", ecu="bat_mgmt",
 def test_known_bad_keys_are_excluded_from_scoring():
     from decoders.quality import quality_for, excluded_keys, Verification
 
-    assert "dc_link_voltage" in excluded_keys("meb")
-    assert "ecu_pcb_temperature_1" in excluded_keys("meb")
-    q = quality_for("meb", "dc_link_voltage")
+    assert "windshield_temperature" in excluded_keys("meb")
+    assert "odometer_2" in excluded_keys("meb")
+    q = quality_for("meb", "windshield_temperature")
     assert q.verification is Verification.INVALID
     assert q.use_in_scoring is False
-    assert "1738" in q.known_issue or "435" in q.known_issue
+    assert "483476" in q.known_issue
+    # The electric-drive float32 fix removes these from the invalid list.
+    assert "dc_link_voltage" not in excluded_keys("meb")
+    assert "ecu_pcb_temperature_1" not in excluded_keys("meb")
+    assert quality_for("meb", "dc_link_voltage").verification is not \
+        Verification.INVALID
 
 
 def test_healthy_keys_remain_usable():
@@ -75,6 +80,63 @@ def test_data_kinds_are_classified():
     assert quality_for("meb", "gear").data_kind.value == "text"
     assert quality_for("meb", "energy_counters").data_kind.value == "json"
     assert quality_for("meb", "cell_delta_mv").data_kind.value == "derived"
+    assert quality_for("meb", "aux_12v_power_w").data_kind.value == "derived"
+
+
+def test_low_voltage_power_is_derived_from_voltage_and_current(repo):
+    """The 12 V / DC-DC power the low-voltage investigation needed is recorded
+    as a CALCULATED row, not presented as a DID reading."""
+    from collector import Collector
+    from decoders.registry import Provenance
+
+    col = Collector.__new__(Collector)
+    col.repo = repo
+    col.vehicle_id = repo.vehicle_id
+    col.simulated = False
+    ts = "2026-10-20T12:00:00+00:00"
+    snap = {
+        "aux_12v_voltage": 14.5, "aux_12v_current": -20.0,
+        "dcdc_voltage": 14.1, "dcdc_current": 100.0,
+        "dcdc_gw_voltage": 14.2, "dcdc_gw_current": 15.0,
+    }
+    col._record_lv_derived(ts, snap)
+    assert snap["aux_12v_power_w"] == pytest.approx(-290.0)
+    assert snap["dcdc_power_kw"] == pytest.approx(1.41)
+    assert snap["dcdc_gw_power_kw"] == pytest.approx(0.213)
+
+    rows = repo.conn.execute(
+        "SELECT key, value, unit, provenance FROM measurements "
+        "WHERE ts=? ORDER BY key", (ts,)).fetchall()
+    by_key = {r["key"]: r for r in rows}
+    assert set(by_key) == {
+        "aux_12v_power_w", "dcdc_power_kw", "dcdc_gw_power_kw"}
+    assert by_key["aux_12v_power_w"]["unit"] == "W"
+    assert by_key["dcdc_power_kw"]["unit"] == "kW"
+    assert by_key["dcdc_power_kw"]["provenance"] == \
+        Provenance.CALCULATED.value
+
+
+def test_cell_and_temperature_spreads_are_recorded(repo):
+    from collector import Collector
+
+    col = Collector.__new__(Collector)
+    col.repo = repo
+    col.vehicle_id = repo.vehicle_id
+    col.simulated = False
+    ts = "2026-10-20T12:05:00+00:00"
+    scalars = {"bat_temp_max": 21.0, "bat_temp_min": 20.25}
+    pairs = {"cell_soc_max": {"value": 81.7, "index": 17},
+             "cell_soc_min": {"value": 80.2, "index": 61}}
+    col._record_spreads(ts, scalars.get, pairs.get)
+
+    rows = repo.conn.execute(
+        "SELECT key, value, unit FROM measurements WHERE ts=? ORDER BY key",
+        (ts,)).fetchall()
+    by_key = {r["key"]: r for r in rows}
+    assert by_key["cell_soc_spread_pct"]["value"] == pytest.approx(1.5)
+    assert by_key["cell_soc_spread_pct"]["unit"] == "%"
+    assert by_key["battery_temp_spread_c"]["value"] == pytest.approx(0.75)
+    assert by_key["battery_temp_spread_c"]["unit"] == "degC"
 
 
 # -------------------------------------------------------------- freshness
@@ -245,9 +307,11 @@ def test_anomaly_scan_excludes_known_bad_keys(repo):
     from analysis import anomaly
 
     for i in range(20):
-        _record(repo, "dc_link_voltage", _now_iso(-i * 60), 1738.0 + i)
-    findings = anomaly.scan_robust(repo, repo.vehicle_id, "dc_link_voltage",
-                                   "dc link", 30, profile="meb")
+        _record(repo, "windshield_temperature",
+                _now_iso(-i * 60), 483476.0 + i)
+    findings = anomaly.scan_robust(repo, repo.vehicle_id,
+                                   "windshield_temperature",
+                                   "windscreen", 30, profile="meb")
     assert findings == []
     assert repo.conn.execute("SELECT COUNT(*) FROM anomalies").fetchone()[0] == 0
 
@@ -277,10 +341,10 @@ def test_scan_all_robust_dry_run_writes_nothing(repo):
         _record(repo, "gear", _now_iso(-i * 60), "P")
     report = anomaly.scan_all_robust(
         repo, repo.vehicle_id,
-        ["soc_abs", "gear", "dc_link_voltage", "made_up_key"],
+        ["soc_abs", "gear", "windshield_temperature", "made_up_key"],
         profile="meb", persist=False)
     assert report["not_numeric"] == ["gear"]
-    assert "dc_link_voltage" in report["skipped"]
+    assert "windshield_temperature" in report["skipped"]
     assert report["unknown"] == ["made_up_key"]
     assert report["scanned"] == 1
     assert repo.conn.execute("SELECT COUNT(*) FROM anomalies").fetchone()[0] == 0
@@ -291,7 +355,7 @@ def test_discovery_search_and_facets(repo):
     from analysis import discovery
 
     _record(repo, "soc_abs", _now_iso(-10), 50.0)
-    _record(repo, "dc_link_voltage", _now_iso(-10), 1738.0)
+    _record(repo, "windshield_temperature", _now_iso(-10), 483476.0)
     entries = discovery.build_entries(repo, repo.vehicle_id, "meb")
     fac = discovery.facets(entries)
     assert fac["scoring"]["excluded"] >= 1
@@ -426,11 +490,11 @@ def test_additive_migration_adds_certain_to_an_older_evidence_table(tmp_path):
 def test_known_invalid_observation_cannot_support_a_diagnosis(repo):
     from analysis import investigation as inv
 
-    _record(repo, "dc_link_voltage", _now_iso(-10), 1738.0)
+    _record(repo, "windshield_temperature", _now_iso(-10), 483476.0)
     i = inv.open_investigation(repo, repo.vehicle_id, "t", "s",
-                               anchor_key="dc_link_voltage",
+                               anchor_key="windshield_temperature",
                                criteria="a fresh scoreable observation")
-    inv.observe_key(repo, repo.vehicle_id, "dc_link_voltage", inv_id=i.id)
+    inv.observe_key(repo, repo.vehicle_id, "windshield_temperature", inv_id=i.id)
     inv.add_hypothesis(repo, i.id, "h", would_falsify="x")
     inv.add_counter_evidence(repo, i.id, "c")
     done = inv.finalize(repo, i.id)
@@ -441,8 +505,9 @@ def test_known_invalid_observation_cannot_support_a_diagnosis(repo):
 def test_decoder_lab_flags_known_invalid(repo):
     from analysis import decoder_lab
 
-    _record(repo, "dc_link_voltage", _now_iso(-10), 1738.0)
-    ev = decoder_lab.evaluate_key(repo, repo.vehicle_id, "dc_link_voltage", "meb")
+    _record(repo, "windshield_temperature", _now_iso(-10), 483476.0)
+    ev = decoder_lab.evaluate_key(repo, repo.vehicle_id,
+                                  "windshield_temperature", "meb")
     assert ev.verdict == "FAIL"
     assert ev.verification == "invalid"
 

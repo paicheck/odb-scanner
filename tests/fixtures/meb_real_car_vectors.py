@@ -32,10 +32,26 @@ VECTORS: list[tuple[str, bytes, object, str, str]] = [
     ("soc_abs", b"\xCB", 81.2, "CS log raw 203", "captured"),
     # 1725 decimal, not 0x06CD. See the note on HEX_CORRECTION below.
     ("pack_voltage", b"\x06\xBD", 431.25, "CS log raw 1725", "captured"),
-    ("pack_current", b"\x00\x02\x4A\xB6", 1.98,
-     "CS log raw 150198", "captured"),
+    # Discharge is NEGATIVE on the DID. 000248FD = 149,757 -> -2.43 A while
+    # the accumulated-discharge counter was rising. The old vector used the
+    # +1.98 A sample and described it as discharge; that was the sign error.
+    ("pack_current", b"\x00\x02\x48\xFD", -2.43,
+     "CS log raw 149757; discharge counter rising", "captured"),
     ("cell_voltage_max", b"\x3F\xF9", 3.99829,
      "CS log raw 16377", "captured"),
+    # The same 4-byte DIDs carry a 1-based cell number at bytes 2-3. The
+    # leading value bytes are the captured ones above; the index is the
+    # profile/offline cross-check value, not a second captured payload.
+    ("cell_voltage_max_cell", b"\x3F\xF9\x00\x1C", 28,
+     "CS profile #342 u16be[2:4]; offline cross-check 28/31 sweeps", "derived"),
+    ("cell_voltage_min_cell", b"\x3F\xF9\x00\x1D", 29,
+     "CS profile #342 u16be[2:4]; offline cross-check 29/31 sweeps", "derived"),
+    ("bat_temp_max_sensor", b"\x05\x38\x00\x1F", 31,
+     "CS profile #342 u16be[2:4]; offline cross-check 31/31 sweeps", "derived"),
+    ("bat_temp_min_sensor", b"\x04\xE8\x00\x1E", 30,
+     "CS profile #342 u16be[2:4]; offline cross-check 30/31 sweeps", "derived"),
+    ("battery_serial", b"288 WARMF F265 ", "288 WARMF F265",
+     "CS log ASCII payload", "captured"),
     ("battery_temp", b"\x78", 20.0, "CS log raw 120", "captured"),
     ("bat_temp_max", b"\x05\x38", 20.875, "CS log raw 1336", "captured"),
     ("bat_temp_min", b"\x04\xE8", 19.625, "CS log raw 1256", "captured"),
@@ -60,11 +76,15 @@ VECTORS: list[tuple[str, bytes, object, str, str]] = [
     ("coolant_temps", b"\x05\x80\x05\x80",
      {"outlet_c": 22.0, "inlet_c": 22.0},
      "CS log 05800580 -> 22/22", "captured"),
+    # 16 bytes = four s32 fields: charge Ah, discharge Ah, charge kWh,
+    # discharge kWh. The old 8-byte vector read the Ah counters with the
+    # kWh divisor and produced ~3,724/3,700 kWh instead of these values.
     ("energy_counters",
-     int(24422.819524984352 * 8583.07123641215).to_bytes(4, "big")
-     + int(23447.33770012921 * 8583.07123641215).to_bytes(4, "big"),
-     {"charged_kwh": 24422.8195, "used_kwh": 23447.3377},
-     "CS log counters 24422.8195 / -23447.3377", "captured"),
+     bytes.fromhex("01E7CC17FE1B74E70C8071E0F3FF868C"),
+     {"charged_ah": 58196.4654, "discharged_ah": 57808.2630,
+      "charged_kwh": 24436.9784, "discharged_kwh": 23459.8612,
+      "used_kwh": 23459.8612},
+     "CS log raw 01E7CC17 FE1B74E7 0C8071E0 F3FF868C", "captured"),
     # SYNTHETIC: u16be[2:4] x 25 -> 41200 Wh from raw 1648 (0x0670). The two
     # leading bytes are there because SBI=2 means they must be skipped.
     ("hv_energy_content", b"\x00\x00\x06\x70",
@@ -93,6 +113,20 @@ VECTORS: list[tuple[str, bytes, object, str, str]] = [
     ("hv_aux_power", b"\x01\xC2", 45.0,
      "spot2000 (XX*2^8+YY)/10", "derived"),
     ("dyn_discharge_limit", b"\x07\xD0", 400.0, "spot2000 /5", "derived"),
+
+    # -- electric drive: FLOAT32(A,B,C,D), not u16/10+1 ----------------------
+    # Raw payloads are from data/odb_scanner.db (2021 ID.3, 17 successful
+    # reads). The profile states FLOAT32(A,B,C,D) for all of these; the old
+    # u16 layout produced 1682 degC / 1738 V / 1744 A from the same bytes.
+    ("electric_drive_inflow_coolant_temperature", bytes.fromhex("41816D8E"),
+     16.1784935, "raw 0x4FAE 41816D8E; CS profile FLOAT32(A,B,C,D)",
+     "captured"),
+    ("dc_link_voltage", bytes.fromhex("43D897DE"), 433.1864624,
+     "raw 0x3E93 43D897DE; CS profile FLOAT32(A,B,C,D)", "captured"),
+    ("motor_maximum_current", bytes.fromhex("44164000"), 601.0,
+     "raw 0x3EE7 44164000; CS profile FLOAT32(A,B,C,D)", "captured"),
+    ("motor_minimum_current", bytes.fromhex("C3260000"), -166.0,
+     "raw 0x3EE8 C3260000; CS profile FLOAT32(A,B,C,D)", "captured"),
 ]
 
 # A transcription error the validator caught in decoders/meb.py, recorded here
@@ -109,17 +143,12 @@ HEX_CORRECTION = {
 
 # Decoders where the sources genuinely disagree and we have not settled it.
 # Kept separate so the validator flags them rather than quietly picking one.
+#
+# pack_current was removed on 2026-10-20: raw 0x1E3D 000248FD (-2.43 A) and
+# independent 0x035E FFED (-1.9 A) both read negative while the accumulated
+# discharge counter rose. Negative = discharge is now settled on bytes, not on
+# Car Scanner's display sign. See research/measurement_discovery/decoder_audit.md.
 CONTESTED = {
-    "pack_current": (
-        "evDash and this project: positive = discharge. ABRP (negates) and "
-        "spot2000 ('Negative value is out from battery'): negative = "
-        "discharge. 2 against 1 against us. Our reasoning from the car's own "
-        "counters establishes Car Scanner's sign, not the DID's. STILL UNPROVEN: "
-        "no raw capture during charge and discharge has been made, so the "
-        "DID's own convention is untested. If wrong, pack_current is inverted "
-        "and charging detection, pack-power sign and regen history all invert "
-        "with it."
-    ),
     "hv_energy_content": (
         "The OLD u32/1310.77 layout is refuted, not merely doubted. The only "
         "real-world values for this DID are 41,325 and 41,200 Wh (Car Scanner "

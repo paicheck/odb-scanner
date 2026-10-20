@@ -51,6 +51,24 @@ def test_check_detects_a_wrong_decoder():
     assert "pack_voltage" in problems[0]
 
 
+def test_the_electric_drive_float32_family_is_complete():
+    """25 of 26 eldrive rows use FLOAT32(A,B,C,D); the odometer is the exception.
+
+    This guards the repair itself: a future edit that drops one key back to the
+    old u16 decoder would leave a plausible but ~4x/42x-wrong value, which no
+    single captured vector would necessarily catch.
+    """
+    from decoders.meb import _FLOAT32_KEYS, _f32be
+    from decoders.registry import build_default_registry
+
+    reg = build_default_registry("meb")
+    assert len(_FLOAT32_KEYS) == 25
+    for key in _FLOAT32_KEYS:
+        spec = reg.get(key)
+        assert spec.decode is _f32be, key
+    assert reg.get("eldrive_odometer").decode is not _f32be
+
+
 def test_check_detects_a_key_missing_from_the_registry():
     """A vector naming an undefined key validates nothing and must say so.
 

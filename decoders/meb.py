@@ -34,37 +34,36 @@ Provenance of the scale factors:
               - battery temp raw 120 -> 20.0 C (u8/2 - 40)
             Disagreements would have shown up as visibly wrong values; none did.
 
-            The same export settles the CURRENT SIGN, which the sources
-            contradict -- and the contradiction is now 2 against 1. evDash
-            does not negate, so it reads positive on discharge, and this log
-            follows it. spot2000 states in prose that "Negative value is out
-            from battery (consumption) and positive value is into battery", and
-            ABRP's equation negates for the same reason. Car Scanner reported
-            +0.93 to +1.98 A while the car sat parked, and over the same ~16 min
-            window the accumulated-*charge* counter was frozen at 24422.8195 kWh
-            while accumulated-*discharge* grew by 0.143 kWh, with HV energy
-            content falling 41325 -> 41200 Wh. Energy left the pack while
-            current read positive, so positive = discharge.
-
-            That reasoning is sound about CAR SCANNER's sign, which is what
-            matters for matching it, but it does not establish the DID's own
-            convention. If it is wrong then pack_current is inverted, and that
-            inverts charging detection, pack-power sign and the regen history.
-            Settle it with a raw capture during charge and discharge; do not
-            settle it on paper. See docs/MEB_DIAGNOSTIC_REFERENCE.md 2.7.
+            CURRENT SIGN is settled on raw bytes, not on Car Scanner's display:
+            parked, 0x1E3D sample 000248FD decodes to -2.43 A, and the
+            independent 0x035E sample FFED decodes to -1.9 A, while the
+            accumulated-discharge counter rose. Energy was leaving the pack, so
+            NEGATIVE = discharging. Car Scanner and ABRP negate this for
+            display; evDash does not. The decoder arithmetic was already
+            correct -- only the old "positive = discharging" docstring and the
+            Car Scanner comparison were wrong. Do NOT invert it. See
+            research/measurement_discovery/decoder_audit.md (F3).
 
             Independently confirmed: spot2000's per-DID `Calculation` column
-            agrees with this module on all sixteen equations it documents
-            (028C, 1E3B, 1E3D, 2A0B, 1E32, 1E0E/1E0F, 189D, 1E1B, F40D, 295A,
-            1E40+, 465B, 465D, 0364, 2609, 2613). So the EXPERIMENTAL flags
-            below record where the knowledge came from -- reverse engineering,
-            not a VW document -- not a doubt about the arithmetic.
+            agrees with this module on the equations it documents
+            (028C, 1E3B, 1E3D, 2A0B, 1E0E/1E0F, 189D, 1E1B, F40D, 295A,
+            1E40+, 465B, 465D, 0364, 2609, 2613). The deliberate exception is
+            1E32: Car Scanner's MEB profile exposes four fields there (Ah at
+            0/4, kWh at 8/12), while evDash/spot2000 describe only the first
+            two as energy. The four-field layout reproduces the observed
+            ~24,437/23,460 kWh values; the old two-field kWh interpretation
+            produced ~3,724/3,700 kWh. So the EXPERIMENTAL flags below record
+            where the knowledge came from -- reverse engineering, not a VW
+            document -- not a doubt about the arithmetic.
 
 Raw bytes are always preserved by the collector, so a wrong guess here costs
 nothing but a re-decode later.
 """
 
 from __future__ import annotations
+
+import math
+import struct
 
 from .registry import (
     DIDRegistry,
@@ -103,8 +102,17 @@ CELL_T_DIDS = list(range(0x1EAE, 0x1EBE)) + list(range(0x7425, 0x742D))
 # range, so it is applied to every point.
 CELL_T_MAX = 1020
 
-# evDash: energy counters are u32 counts at 8583.07123641215 Wh per count.
-ENERGY_COUNT_WH = 8583.07123641215
+# evDash's old 0x1E32 divisor (8583.07123641215 Wh/count) is NOT used. That
+# layout read the Ah fields at 0/4 as if they were kWh and is superseded by the
+# four-field Car Scanner layout below.
+#
+# Car Scanner MEB profile #342, DID 0x1E32 (all four fields signed s32):
+#   Total accumulated charge    (Ah)  SBI=0  DL=4  MUL=0.001820444117116
+#   Total accumulated discharge (Ah)  SBI=4  DL=4  MUL=0.001820444117116
+#   Total accumulated charge    (kWh) SBI=8  DL=4  MUL=116508.398 / 1e9
+#   Total accumulated discharge (kWh) SBI=12 DL=4  MUL=116508.398 / 1e9
+ENERGY_AH_PER_COUNT = 0.001820444117116
+ENERGY_KWH_PER_COUNT = 116508.398 / 1_000_000_000.0
 # evDash CarMEB: "max energy content" u32 at 1310.77 Wh per count.
 #
 # REFUTED as a decoder for the values it was cited as validating. It is kept
@@ -217,11 +225,19 @@ def _pack_voltage(raw: bytes) -> float:
 
 
 def _pack_current(raw: bytes) -> float:
-    """Pack current in A; positive = discharging.
+    """Pack current in A; NEGATIVE = discharging (power leaves the pack).
 
-    Settled from the car's own log, not from convention: parked with
-    +0.93..+1.98 A reported, the charge counter froze while the discharge
-    counter grew. See the module docstring.
+    This is the DID's own sign, not Car Scanner's display sign. Parked, the
+    raw 0x1E3D sample 000248FD decodes to -2.43 A while the accumulated
+    discharge counter rose; the independent 0x035E sample FFED decodes to
+    -1.9 A at the same time. Car Scanner and ABRP negate this for display, so
+    a positive Car Scanner reading is not evidence that the DID is positive.
+
+    Do NOT invert the arithmetic: previous releases described this as
+    "positive = discharging" while returning negative on discharge. The
+    arithmetic was already consistent with the raw data; only that wording and
+    the Car Scanner comparison were wrong. See the module docstring and
+    research/measurement_discovery/decoder_audit.md.
     """
     return (u32be(raw) - 150000) / 100.0
 
@@ -259,15 +275,40 @@ def _cell_temp(raw: bytes):
 
 
 def _energy_counters(raw: bytes) -> dict:
-    # Both halves are required. A slice short of 8 bytes used to leave
-    # raw[4:8] empty, and int.from_bytes(b"") is 0 -- so a truncated answer
-    # recorded lifetime energy discharged as exactly 0.0 kWh rather than as a
-    # failed read. u32be now refuses the first half; this guards the second.
-    if len(raw) < 8:
-        raise IndexError(f"energy counters need 8 bytes, got {len(raw)}")
-    charged = u32be(raw, 0) / ENERGY_COUNT_WH
-    used = abs(int.from_bytes(raw[4:8], "big", signed=True)) / ENERGY_COUNT_WH
-    return {"charged_kwh": charged, "used_kwh": used}
+    """Four lifetime counters from 0x1E32, in the profile's own layout.
+
+    The old decoder read offsets 0/4 as *kWh* with evDash's 8583.071 Wh per
+    count divisor. Those offsets are actually Ah counters; the kWh counters
+    live at offsets 8/12, and the profile supplies a different scale. The old
+    output was therefore not merely scaled differently -- it described the
+    wrong physical quantity and reported ~3,724/3,700 kWh instead of the
+    ~24,437/23,460 kWh in the same bytes.
+
+    All four fields are signed in the profile. Charge is positive; discharge
+    is the magnitude of the signed field, matching the historical
+    ``used_kwh`` key. ``charged_kwh``/``used_kwh`` are retained because the
+    collector and database columns already use them.
+    """
+    # A truncated answer must be a failed read, not a plausible number. This is
+    # the same failure mode that u32be was hardened against above.
+    if len(raw) < 16:
+        raise IndexError(f"energy counters need 16 bytes, got {len(raw)}")
+
+    def s32(off: int) -> int:
+        return int.from_bytes(raw[off : off + 4], "big", signed=True)
+
+    charged_ah = s32(0) * ENERGY_AH_PER_COUNT
+    discharged_ah = abs(s32(4)) * ENERGY_AH_PER_COUNT
+    charged_kwh = s32(8) * ENERGY_KWH_PER_COUNT
+    discharged_kwh = abs(s32(12)) * ENERGY_KWH_PER_COUNT
+    return {
+        "charged_ah": charged_ah,
+        "discharged_ah": discharged_ah,
+        "charged_kwh": charged_kwh,
+        "discharged_kwh": discharged_kwh,
+        # Backwards-compatible aliases for the existing collector/snapshot.
+        "used_kwh": discharged_kwh,
+    }
 
 
 def _u16_over(raw: bytes, div: float) -> float:
@@ -377,6 +418,44 @@ def _cs_field_decoder(
         return val * mul / div + ofs
 
     return decode
+
+
+def _f32be(raw: bytes, off: int = 0) -> float | None:
+    """IEEE-754 big-endian float32 at ``off`` (electric-drive family).
+
+    The Car Scanner profile states FLOAT32(A,B,C,D) for 25 of the 26
+    electric-drive rows. The old registry treated them as u16/10+1, which
+    turned 433.19 V into 1,737.8 V and 16.18 degC into ~1,682 degC. A short
+    payload raises, and a non-finite value returns None, so neither can become
+    a plausible-looking reading.
+    """
+    chunk = raw[off : off + 4]
+    if len(chunk) != 4:
+        raise IndexError(
+            f"float32 needs 4 bytes at offset {off}, got {max(0, len(raw) - off)}"
+        )
+    value = struct.unpack(">f", chunk)[0]
+    return value if math.isfinite(value) else None
+
+
+def _index_u16(raw: bytes) -> int:
+    """1-based cell/sensor number carried at bytes 2-3 of an extreme DID."""
+    if len(raw) < 4:
+        raise IndexError(f"index needs 4 bytes, got {len(raw)}")
+    return u16be(raw, 2)
+
+
+def _ascii(raw: bytes) -> str:
+    """Trimmed ASCII payload used by the battery serial DID."""
+    return raw.decode("ascii", errors="replace").strip("\x00 ")
+
+
+def _bit2(raw: bytes) -> int:
+    return (raw[0] >> 2) & 1
+
+
+def _bit3(raw: bytes) -> int:
+    return (raw[0] >> 3) & 1
 
 
 def _cs_pair_decoder(*, dl: int, first_mul: float, first_div: float, first_ofs: float):
@@ -615,6 +694,7 @@ _CS_FIELDS: tuple[tuple, ...] = (
         0.01,
         1.0,
         -1500.0,
+        # Same sign convention as 0x1E3D: negative = discharging.
     ),
     (
         "min_discharge_voltage",
@@ -779,9 +859,9 @@ def _register_bms(reg: DIDRegistry) -> None:
             "A",
             decode=_pack_current,
             doc_status=_EXP,
-            notes="(u32-150000)/100, + = discharge [evDash; CS log: 150198 -> "
-            "1.98 A, corroborated by the discharge counter rising while "
-            "the car was parked]",
+            notes="(u32-150000)/100; NEGATIVE = discharge. Raw 000248FD -> "
+            "-2.43 A while the discharge counter rose; Car Scanner/ABRP "
+            "negate for display. Do not invert the arithmetic.",
         )
     )
     reg.register(
@@ -793,7 +873,8 @@ def _register_bms(reg: DIDRegistry) -> None:
             "V",
             decode=_cell_voltage_scaled,
             doc_status=_EXP,
-            notes="u16 / 4096 [evDash; CS log: 16377 -> 3.9984 V]",
+            notes="u16 / 4096 [evDash; CS log: 16377 -> 3.9984 V]; "
+            "the 1-based cell number is bytes 2-3 (cell_voltage_max_cell)",
         )
     )
     reg.register(
@@ -805,7 +886,39 @@ def _register_bms(reg: DIDRegistry) -> None:
             "V",
             decode=_cell_voltage_scaled,
             doc_status=_EXP,
-            notes="u16 / 4096 [evDash]",
+            notes="u16 / 4096 [evDash]; the 1-based cell number is bytes 2-3 "
+            "(cell_voltage_min_cell)",
+        )
+    )
+    # Car Scanner exposes the same 4-byte DID as a second row: bytes 2-3 are the
+    # 1-based cell number. The old decoder discarded them, which is why the
+    # catalogue could show the extreme value but not which cell produced it.
+    reg.register(
+        DIDSpec(
+            "cell_voltage_max_cell",
+            ECU_BAT,
+            0x1E33,
+            "Cell number with max voltage",
+            "",
+            decode=_index_u16,
+            doc_status=_EXP,
+            slow=True,
+            notes="u16be[2:4], 1-based cell number [CS profile #342; "
+            "offline cross-check 28/31 sweeps]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "cell_voltage_min_cell",
+            ECU_BAT,
+            0x1E34,
+            "Cell number with min voltage",
+            "",
+            decode=_index_u16,
+            doc_status=_EXP,
+            slow=True,
+            notes="u16be[2:4], 1-based cell number [CS profile #342; "
+            "offline cross-check 29/31 sweeps]",
         )
     )
     reg.register(
@@ -829,7 +942,8 @@ def _register_bms(reg: DIDRegistry) -> None:
             "degC",
             decode=_temp_scaled,
             doc_status=_EXP,
-            notes="u16 / 64 [evDash; CS log: 20.875 C]",
+            notes="u16 / 64 [evDash; CS log: 20.875 C]; the 1-based sensor "
+            "number is bytes 2-3 (bat_temp_max_sensor)",
         )
     )
     reg.register(
@@ -841,7 +955,36 @@ def _register_bms(reg: DIDRegistry) -> None:
             "degC",
             decode=_temp_scaled,
             doc_status=_EXP,
-            notes="u16 / 64 [evDash; CS log: 19.625 C]",
+            notes="u16 / 64 [evDash; CS log: 19.625 C]; the 1-based sensor "
+            "number is bytes 2-3 (bat_temp_min_sensor)",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "bat_temp_max_sensor",
+            ECU_BAT,
+            0x1E0E,
+            "Temperature sensor with max reading",
+            "",
+            decode=_index_u16,
+            doc_status=_EXP,
+            slow=True,
+            notes="u16be[2:4], 1-based sensor number [CS profile #342; "
+            "offline cross-check 31/31 sweeps]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "bat_temp_min_sensor",
+            ECU_BAT,
+            0x1E0F,
+            "Temperature sensor with min reading",
+            "",
+            decode=_index_u16,
+            doc_status=_EXP,
+            slow=True,
+            notes="u16be[2:4], 1-based sensor number [CS profile #342; "
+            "offline cross-check 30/31 sweeps]",
         )
     )
     reg.register(
@@ -854,7 +997,10 @@ def _register_bms(reg: DIDRegistry) -> None:
             decode=_energy_counters,
             doc_status=_EXP,
             slow=True,
-            notes="u32 charge @0, s32 discharge @4, /8583.07123641215 Wh [evDash]",
+            notes="FOUR signed s32 fields from CS MEB#342: charge Ah @0, "
+            "discharge Ah @4, charge kWh @8, discharge kWh @12; "
+            "Ah x 0.001820444117116, kWh x 116508.398/1e9. The old "
+            "@0/@4 + /8583.071 layout read Ah counts as kWh.",
         )
     )
     reg.register(
@@ -905,6 +1051,32 @@ def _register_bms(reg: DIDRegistry) -> None:
             decode=_op_mode,
             doc_status=_EXP,
             notes="byte0; 0=standby, 1=driving, 4=AC, 6=DC [evDash]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "charge_port_normal",
+            ECU_BAT,
+            0x7448,
+            "Normal (AC) charge port connected",
+            "",
+            decode=_bit2,
+            doc_status=_EXP,
+            slow=True,
+            notes="byte0 bit 2, 0/1 [CS profile #342 BitValue]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "charge_port_rapid",
+            ECU_BAT,
+            0x7448,
+            "Rapid (DC) charge port connected",
+            "",
+            decode=_bit3,
+            doc_status=_EXP,
+            slow=True,
+            notes="byte0 bit 3, 0/1 [CS profile #342 BitValue]",
         )
     )
     reg.register(
@@ -963,23 +1135,15 @@ def _register_bms(reg: DIDRegistry) -> None:
             0x0500,
             "HV battery serial",
             "",
+            decode=_ascii,
             doc_status=_EXP,
             slow=True,
-            notes="raw ASCII; length per ECU",
+            notes="raw ASCII, trimmed; observed '288 WARMF F265' [CS log]",
         )
     )
-    reg.register(
-        DIDSpec(
-            "hv_serial_vin",
-            ECU_BAT,
-            0xF802,
-            "BMS VIN (part)",
-            "",
-            doc_status=_EXP,
-            slow=True,
-            notes="raw; MEB VinDataSpec layout",
-        )
-    )
+    # 0xF802 on the BMS returns NRC 0x31 on this car. The usable VIN is the
+    # veh_info 0xF802 entry registered as "vin"; keeping a second, always-failing
+    # request here only added one refused read per slow phase.
 
 
 def _register_cells(reg: DIDRegistry) -> None:
@@ -1381,6 +1545,39 @@ def _register_modules(reg: DIDRegistry) -> None:
                 notes=f"u16be[{cat * 2}:{cat * 2 + 2}] x 0.1 [{CS_SRC}]",
             )
         )
+
+
+# 25 of the 26 electric-drive rows declare FLOAT32(A,B,C,D) in Car Scanner MEB
+# profile #342. The exception is `eldrive_odometer` (a 4-byte integer ByteSet).
+# The profile's DL field is 2 for most of these rows even though the formula
+# consumes four bytes, so the float decoder always reads four bytes at offset 0.
+_FLOAT32_KEYS = frozenset({
+    "actual_mechanical_torque_calculated",
+    "actual_mechanical_torque_commanded_value",
+    "actual_possible_maximum_torque",
+    "actual_possible_minimum_torque",
+    "dc_link_current",
+    "dc_link_voltage",
+    "dc_link_voltage_reserve",
+    "dmcm_stator_voltage_d_direction_actual_value",
+    "dmcm_stator_voltage_d_direction_commanded_value",
+    "dmcm_stator_voltage_q_direction_actual_value",
+    "dmcm_stator_voltage_q_direction_commanded_value",
+    "desired_link_voltage",
+    "ecu_pcb_temperature_1",
+    "ecu_pcb_temperature_2",
+    "electric_drive_inflow_coolant_temperature",
+    "electric_drive_motor_speed_rad_sec",
+    "inverter_power_loss_phase_u",
+    "inverter_power_loss_phase_v",
+    "inverter_power_loss_phase_w",
+    "motor_maximum_current",
+    "motor_minimum_current",
+    "rotor_temperature_model",
+    "stator_electrical_frequency_rad_sec",
+    "stator_temperature",
+    "torque_calculated_from_measured_currents",
+})
 
 
 def _register_profile_extras(reg: DIDRegistry) -> None:
@@ -2336,7 +2533,7 @@ def _register_profile_extras(reg: DIDRegistry) -> None:
             "res_pid_0149",
             ECU_CLIMATE,
             0xF449,
-            "RES(PID_0149)",
+            "Accelerator pedal position",
             "%",
             0,
             1,
@@ -2446,6 +2643,24 @@ def _register_profile_extras(reg: DIDRegistry) -> None:
         ),
     )
     for key, ecu, did, name, unit, sbi, dl, mul, div, ofs, sig, slow in table:
+        if key in _FLOAT32_KEYS:
+            # The profile's DL=2 here describes the displayed field width, not
+            # the bytes consumed by FLOAT32(A,B,C,D). Always read four.
+            reg.register(
+                DIDSpec(
+                    key,
+                    ecu,
+                    did,
+                    name,
+                    unit,
+                    decode=_f32be,
+                    doc_status=_EXP,
+                    slow=slow,
+                    notes="FLOAT32(A,B,C,D), IEEE-754 big-endian at offset 0 "
+                    "[CS profile #342]; replaces the former u16/10 decode",
+                )
+            )
+            continue
         reg.register(
             DIDSpec(
                 key,

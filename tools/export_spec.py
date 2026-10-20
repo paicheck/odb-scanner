@@ -169,6 +169,7 @@ _FUNCTION_RECIPES = {
     "_energy_max_wh": (0, 2, False, 50.0, 1.0, 0.0),    # u16be[0:2] x 50 Wh
     "_energy_content_wh": (2, 2, False, 25.0, 1.0, 0.0),  # u16be[2:4] x 25 Wh
     "_odometer_km": (0, 3, False, 1.0, 1.0, 0.0),       # u24be
+    "_index_u16": (2, 2, False, 1.0, 1.0, 0.0),         # 1-based cell/sensor #
 }
 
 # Module-level decoders that need client logic, keyed by __name__ -> (name, formula).
@@ -176,11 +177,17 @@ _SPECIAL_DECODERS = {
     "_cell_voltage": ("cell_voltage", "u16be/1000+1; 0x0FFE = sensor absent"),
     "_cell_temp": ("cell_temp", "u16be/8-40; >1020 = sensor absent"),
     "_energy_counters": ("energy_counters",
-                         "u32 charge @0, s32 discharge @4, /8583.07 Wh"),
+                         "four s32 fields: charge Ah @0, discharge Ah @4, "
+                         "charge kWh @8, discharge kWh @12; Ah x "
+                         "0.001820444117116, kWh x 116508.398/1e9"),
     "_charge_mode": ("charge_mode", "byte0: {4:1, 6:2}.get(raw[0], 0)"),
     "_coolant_temps": ("coolant_temps", "outlet u16[0:2]/64, inlet u16[2:4]/64"),
     "_gear": ("gear", "gear code from data byte 1"),
     "_vin": ("vin", "ASCII"),
+    "_ascii": ("ascii", "trimmed ASCII"),
+    "_f32be": ("float32", "IEEE-754 big-endian float32 at offset 0"),
+    "_bit2": ("bit2", "bit 2 of data byte 0"),
+    "_bit3": ("bit3", "bit 3 of data byte 0"),
 }
 
 # Lambdas (u16be/div and u8/div) keyed by DID key -> (offset, length, signed,

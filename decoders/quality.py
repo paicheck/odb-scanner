@@ -80,37 +80,10 @@ class Plausibility(str, Enum):
 # docs/DATA_CATALOGUE.md and the real database.
 # ---------------------------------------------------------------------------
 
-_ELDRIVE_BAD = (
-    "eldrive decoders return ~1679-1685 where a 15-40 °C range is expected; "
-    "the scale factor is wrong")
-_VOLTAGE_BAD = (
-    "reads ~1738 V while the pack is ~435 V; the scale factor is wrong")
-_TORQUE_BAD = (
-    "reads 1528-4945 Nm; a passenger EV drive unit is tens to low hundreds Nm")
-
-
 _KNOWN_BAD: dict[str, str] = {
-    # eldrive — temperatures ~42x too high
-    "ecu_pcb_temperature_1": _ELDRIVE_BAD,
-    "ecu_pcb_temperature_2": _ELDRIVE_BAD,
-    "stator_temperature": _ELDRIVE_BAD,
-    "rotor_temperature_model": _ELDRIVE_BAD,
-    "electric_drive_inflow_coolant_temperature": _ELDRIVE_BAD,
-    # eldrive — voltages ~4x too high
-    "dc_link_voltage": _VOLTAGE_BAD,
-    "dc_link_voltage_reserve": _VOLTAGE_BAD,
-    "dmcm_stator_voltage_d_direction_actual_value": _VOLTAGE_BAD,
-    "dmcm_stator_voltage_q_direction_actual_value": _VOLTAGE_BAD,
-    "dmcm_stator_voltage_d_direction_commanded_value": _VOLTAGE_BAD,
-    "dmcm_stator_voltage_q_direction_commanded_value": _VOLTAGE_BAD,
-    # eldrive — torque / power loss
-    "actual_mechanical_torque_calculated": _TORQUE_BAD,
-    "inverter_power_loss_phase_u": (
-        "reads ~1e8 W; inverter losses are hundreds to low thousands of W"),
-    "inverter_power_loss_phase_v": (
-        "reads ~1e8 W; inverter losses are hundreds to low thousands of W"),
-    "inverter_power_loss_phase_w": (
-        "reads ~1e8 W; inverter losses are hundreds to low thousands of W"),
+    # The 25-row electric-drive float32 family is no longer listed here: the
+    # registry now decodes FLOAT32(A,B,C,D) instead of u16/10+1. The old ~1682
+    # degC / ~1738 V / ~1e8 W values were the u16 mis-decode, not the sensor.
     # climate — temperatures / concentrations far out of range
     "windshield_temperature": (
         "reads ~483476 where a cabin-surface temperature is expected"),
@@ -119,8 +92,16 @@ _KNOWN_BAD: dict[str, str] = {
     # bat_mgmt — charging voltage beyond the pack's own maximum
     "bat_charging_voltage": (
         "reaches 2048; a MEB pack charges to well under 500 V"),
-    "dc_link_current": (
-        "shares the eldrive voltage/current layout that is known wrong"),
+    # BMS odometer copy — three other odometers agree on ~111,020 km, this one
+    # decodes to ~11,150 km at x10 and ~111,500 km at x100. Do not use it for
+    # distance/SoH until the byte width is settled.
+    "odometer_2": (
+        "x10 gives ~11,150 km while three other odometers read ~111,020 km; "
+        "the scale/field is unresolved"),
+    # Gateway 0x2A53 offsets 1 and 3 both decode to 15 A on the captured log,
+    # so the 'reserved' field carries no independent current information.
+    "dc_dc_converter_reserved_current": (
+        "same 15 A value as the DC-DC current field; no independent meaning"),
 }
 
 
@@ -128,14 +109,16 @@ _KNOWN_BAD: dict[str, str] = {
 # Data-kind fixes: keys whose value does not live where a naive reader looks.
 # ---------------------------------------------------------------------------
 
-_TEXT_KEYS = {"gear", "vin", "battery_serial", "hv_serial_vin"}
+_TEXT_KEYS = {"gear", "vin", "battery_serial"}
 
 _JSON_KEYS = {
     "cell_soc_max", "cell_soc_min", "energy_counters", "coolant_temps",
 }
 
-_DERIVED_KEYS = {"cell_delta_mv", "pack_power_kw", "soh_pct",
-                 "cell_voltage_sum", "cells_voltage_sum"}
+_DERIVED_KEYS = {"cell_delta_mv", "cell_soc_spread_pct",
+                 "battery_temp_spread_c", "pack_power_kw", "soh_pct",
+                 "cell_voltage_sum", "cells_voltage_sum",
+                 "aux_12v_power_w", "dcdc_power_kw", "dcdc_gw_power_kw"}
 
 
 @dataclass(frozen=True)
@@ -225,7 +208,12 @@ _RANGES: dict[str, tuple[float, float, str]] = {
     "hv_energy_content": (0.0, 70_000.0, "MEB pack energy content (Wh)"),
     "hv_energy_max": (0.0, 70_000.0, "MEB pack energy content (Wh)"),
     "cell_delta_mv": (0.0, 500.0, "healthy pack cell spread (mV)"),
+    "cell_soc_spread_pct": (0.0, 100.0, "cell SoC spread (%)"),
+    "battery_temp_spread_c": (0.0, 30.0, "battery sensor spread (degC)"),
     "soh_pct": (0.0, 150.0, "state-of-health percentage"),
+    "aux_12v_power_w": (-1000.0, 1000.0, "12 V battery terminal power"),
+    "dcdc_power_kw": (0.0, 3.0, "MEB DC-DC converter output"),
+    "dcdc_gw_power_kw": (0.0, 3.0, "MEB DC-DC converter output"),
 }
 
 # `cell_v_NNN` all share the per-cell range.

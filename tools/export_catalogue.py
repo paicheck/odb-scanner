@@ -58,12 +58,14 @@ CAVEATS = """\
 - Every decoder is `doc_status = experimentally determined` unless a row below says
   otherwise: the layout was reverse-engineered by observing the car, NOT taken from a
   VW document. Treat every scale factor as unproven until a second source confirms it.
-- Known BAD scalings - do not trust these values: eldrive `ecu_pcb_temperature_1`,
-  `ecu_pcb_temperature_2`, `stator_temperature`, `rotor_temperature_model`,
-  `electric_drive_inflow_coolant_temperature` (all read ~1680 degC instead of ~15-40),
-  `dc_link_voltage` / `dc_link_voltage_reserve` (~1738 V when the pack is ~435 V),
-  `inverter_power_loss_phase_u/v/w` (~1e8 W), and climate `windshield_temperature`
-  (~483476). Several other keys look implausible for the same reason.
+- Known BAD scalings - do not trust these values: climate `windshield_temperature`
+  (~483476; five-byte payload, field/scale unresolved), `co2_content_interior`
+  (25,400 ppm under the old byte1 x100 decode), `bat_charging_voltage`
+  (0/0xFFFF sentinels), `odometer_2` (~11,150 km at x10 while three other
+  odometers read ~111,020 km), and `dc_dc_converter_reserved_current` (not an
+  independent current; it repeats the 15 A field).
+- The 25-row electric-drive family is now decoded as IEEE-754 float32, not
+  u16/10+1. Its old ~1680 degC / ~1738 V / ~1e8 W values were a decode error.
 - The adapter intermittently fails to reach the 29-bit modules (bat_mgmt, eldrive,
   veh_info, dcdc) for a whole rotation. During such spells values are carried forward
   for up to 900 s, so a present value is not necessarily a fresh reading. Prefer the
@@ -72,8 +74,9 @@ CAVEATS = """\
 - `cell_soc_max`, `cell_soc_min`, `energy_counters`, `coolant_temps`, `battery_serial`
   and similar return structured data: the numeric column is NULL and the JSON is in
   `text_value`.
-- `cell_delta_mv`, `pack_power_kw` and `soh_pct` are DERIVED (calculated/estimated),
-  not read from the car.
+- `cell_delta_mv`, `cell_soc_spread_pct`, `battery_temp_spread_c`,
+  `pack_power_kw`, `aux_12v_power_w`, `dcdc_power_kw`, `dcdc_gw_power_kw` and
+  `soh_pct` are DERIVED (calculated/estimated), not read from the car.
 - Where a key appears in several modules (odometer, motor rpm, HV current) the copies
   are independent readings of the same quantity and may disagree slightly.
 - Rows are keyed by VIN, and the collector also writes `provenance`, which is the

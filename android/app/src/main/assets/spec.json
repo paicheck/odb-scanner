@@ -226,7 +226,7 @@
       "tx29": "0x767"
     }
   ],
-  "generated_at": "2026-10-17T17:35:52+00:00",
+  "generated_at": "2026-10-20T20:28:29+00:00",
   "profiles": {
     "eup": {
       "cell_voltages": null,
@@ -2232,7 +2232,7 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "formula": "u32 charge @0, s32 discharge @4, /8583.07 Wh",
+            "formula": "four s32 fields: charge Ah @0, discharge Ah @4, charge kWh @8, discharge kWh @12; Ah x 0.001820444117116, kWh x 116508.398/1e9",
             "kind": "special",
             "name": "energy_counters"
           },
@@ -2585,15 +2585,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x3EE9",
           "doc_status": "experimentally determined",
@@ -2609,15 +2603,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x58E1",
           "doc_status": "experimentally determined",
@@ -2633,15 +2621,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x3EEA",
           "doc_status": "experimentally determined",
@@ -2657,15 +2639,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x3EEB",
           "doc_status": "experimentally determined",
@@ -3044,6 +3020,30 @@
             "addend": 0.0,
             "byte_order": "big-endian",
             "divisor": 1.0,
+            "formula": "u16be[2:4] unsigned x 1",
+            "kind": "scalar",
+            "length": 2,
+            "offset": 2,
+            "scale": 1.0,
+            "signed": false
+          },
+          "did": "0x1E0E",
+          "doc_status": "experimentally determined",
+          "ecu_key": "bat_mgmt",
+          "key": "bat_temp_max_sensor",
+          "name": "Temperature sensor with max reading",
+          "provenance": "reported",
+          "request_bytes": "221E0E",
+          "service": "0x22",
+          "slow": true,
+          "unit": ""
+        },
+        {
+          "confidence": "UNKNOWN",
+          "decode": {
+            "addend": 0.0,
+            "byte_order": "big-endian",
+            "divisor": 1.0,
             "formula": "u16be[0:2] unsigned x 0.015625",
             "kind": "scalar",
             "length": 2,
@@ -3061,6 +3061,30 @@
           "service": "0x22",
           "slow": false,
           "unit": "degC"
+        },
+        {
+          "confidence": "UNKNOWN",
+          "decode": {
+            "addend": 0.0,
+            "byte_order": "big-endian",
+            "divisor": 1.0,
+            "formula": "u16be[2:4] unsigned x 1",
+            "kind": "scalar",
+            "length": 2,
+            "offset": 2,
+            "scale": 1.0,
+            "signed": false
+          },
+          "did": "0x1E0F",
+          "doc_status": "experimentally determined",
+          "ecu_key": "bat_mgmt",
+          "key": "bat_temp_min_sensor",
+          "name": "Temperature sensor with min reading",
+          "provenance": "reported",
+          "request_bytes": "221E0F",
+          "service": "0x22",
+          "slow": true,
+          "unit": ""
         },
         {
           "confidence": "UNKNOWN",
@@ -3136,7 +3160,11 @@
         },
         {
           "confidence": "UNKNOWN",
-          "decode": null,
+          "decode": {
+            "formula": "trimmed ASCII",
+            "kind": "special",
+            "name": "ascii"
+          },
           "did": "0x0500",
           "doc_status": "experimentally determined",
           "ecu_key": "bat_mgmt",
@@ -5705,6 +5733,30 @@
           "unit": "V"
         },
         {
+          "confidence": "UNKNOWN",
+          "decode": {
+            "addend": 0.0,
+            "byte_order": "big-endian",
+            "divisor": 1.0,
+            "formula": "u16be[2:4] unsigned x 1",
+            "kind": "scalar",
+            "length": 2,
+            "offset": 2,
+            "scale": 1.0,
+            "signed": false
+          },
+          "did": "0x1E33",
+          "doc_status": "experimentally determined",
+          "ecu_key": "bat_mgmt",
+          "key": "cell_voltage_max_cell",
+          "name": "Cell number with max voltage",
+          "provenance": "reported",
+          "request_bytes": "221E33",
+          "service": "0x22",
+          "slow": true,
+          "unit": ""
+        },
+        {
           "confidence": "PROVISIONAL",
           "decode": {
             "addend": 0.0,
@@ -5727,6 +5779,30 @@
           "service": "0x22",
           "slow": false,
           "unit": "V"
+        },
+        {
+          "confidence": "UNKNOWN",
+          "decode": {
+            "addend": 0.0,
+            "byte_order": "big-endian",
+            "divisor": 1.0,
+            "formula": "u16be[2:4] unsigned x 1",
+            "kind": "scalar",
+            "length": 2,
+            "offset": 2,
+            "scale": 1.0,
+            "signed": false
+          },
+          "did": "0x1E34",
+          "doc_status": "experimentally determined",
+          "ecu_key": "bat_mgmt",
+          "key": "cell_voltage_min_cell",
+          "name": "Cell number with min voltage",
+          "provenance": "reported",
+          "request_bytes": "221E34",
+          "service": "0x22",
+          "slow": true,
+          "unit": ""
         },
         {
           "confidence": "UNKNOWN",
@@ -5769,6 +5845,42 @@
           "service": "0x22",
           "slow": false,
           "unit": "code"
+        },
+        {
+          "confidence": "UNKNOWN",
+          "decode": {
+            "formula": "bit 2 of data byte 0",
+            "kind": "special",
+            "name": "bit2"
+          },
+          "did": "0x7448",
+          "doc_status": "experimentally determined",
+          "ecu_key": "bat_mgmt",
+          "key": "charge_port_normal",
+          "name": "Normal (AC) charge port connected",
+          "provenance": "reported",
+          "request_bytes": "227448",
+          "service": "0x22",
+          "slow": true,
+          "unit": ""
+        },
+        {
+          "confidence": "UNKNOWN",
+          "decode": {
+            "formula": "bit 3 of data byte 0",
+            "kind": "special",
+            "name": "bit3"
+          },
+          "did": "0x7448",
+          "doc_status": "experimentally determined",
+          "ecu_key": "bat_mgmt",
+          "key": "charge_port_rapid",
+          "name": "Rapid (DC) charge port connected",
+          "provenance": "reported",
+          "request_bytes": "227448",
+          "service": "0x22",
+          "slow": true,
+          "unit": ""
         },
         {
           "confidence": "UNKNOWN",
@@ -5911,15 +6023,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x3E98",
           "doc_status": "experimentally determined",
@@ -5935,15 +6041,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x3E93",
           "doc_status": "experimentally determined",
@@ -5959,15 +6059,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x43B9",
           "doc_status": "experimentally determined",
@@ -6079,15 +6173,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x3EED",
           "doc_status": "experimentally determined",
@@ -6103,15 +6191,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x1007",
           "doc_status": "experimentally determined",
@@ -6127,15 +6209,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x1009",
           "doc_status": "experimentally determined",
@@ -6151,15 +6227,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x1008",
           "doc_status": "experimentally determined",
@@ -6175,15 +6245,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x100A",
           "doc_status": "experimentally determined",
@@ -6271,15 +6335,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x0805",
           "doc_status": "experimentally determined",
@@ -6295,15 +6353,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x0806",
           "doc_status": "experimentally determined",
@@ -6343,15 +6395,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x4FAE",
           "doc_status": "experimentally determined",
@@ -6367,15 +6413,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x40C8",
           "doc_status": "experimentally determined",
@@ -6391,7 +6431,7 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "formula": "u32 charge @0, s32 discharge @4, /8583.07 Wh",
+            "formula": "four s32 fields: charge Ah @0, discharge Ah @4, charge kWh @8, discharge kWh @12; Ah x 0.001820444117116, kWh x 116508.398/1e9",
             "kind": "special",
             "name": "energy_counters"
           },
@@ -6882,20 +6922,6 @@
         },
         {
           "confidence": "UNKNOWN",
-          "decode": null,
-          "did": "0xF802",
-          "doc_status": "experimentally determined",
-          "ecu_key": "bat_mgmt",
-          "key": "hv_serial_vin",
-          "name": "BMS VIN (part)",
-          "provenance": "reported",
-          "request_bytes": "22F802",
-          "service": "0x22",
-          "slow": true,
-          "unit": ""
-        },
-        {
-          "confidence": "UNKNOWN",
           "decode": {
             "addend": -40.0,
             "byte_order": "big-endian",
@@ -6921,15 +6947,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u32be[0:4] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 4,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x1040",
           "doc_status": "experimentally determined",
@@ -6945,15 +6965,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u32be[0:4] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 4,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x1041",
           "doc_status": "experimentally determined",
@@ -6969,15 +6983,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u32be[0:4] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 4,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x1042",
           "doc_status": "experimentally determined",
@@ -7041,15 +7049,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x3EE7",
           "doc_status": "experimentally determined",
@@ -7065,15 +7067,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x3EE8",
           "doc_status": "experimentally determined",
@@ -7823,7 +7819,7 @@
           "doc_status": "experimentally determined",
           "ecu_key": "climate",
           "key": "res_pid_0149",
-          "name": "RES(PID_0149)",
+          "name": "Accelerator pedal position",
           "provenance": "reported",
           "request_bytes": "22F449",
           "service": "0x22",
@@ -8001,15 +7997,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x2CCC",
           "doc_status": "experimentally determined",
@@ -8145,15 +8135,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x4657",
           "doc_status": "experimentally determined",
@@ -8169,15 +8153,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 1,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10 + 1",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x4672",
           "doc_status": "experimentally determined",
@@ -8241,15 +8219,9 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "addend": 0,
-            "byte_order": "big-endian",
-            "divisor": 10,
-            "formula": "u16be[0:2] unsigned x 1 / 10",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 1,
-            "signed": false
+            "formula": "IEEE-754 big-endian float32 at offset 0",
+            "kind": "special",
+            "name": "float32"
           },
           "did": "0x0308",
           "doc_status": "experimentally determined",

@@ -765,8 +765,20 @@ def test_meb_decoders_match_car_scanner_values():
     assert val("soc_abs", "CB") == pytest.approx(81.2)       # BMS 81.2 %
     assert val("soc_normal", "CB") == pytest.approx(83.63, abs=0.01)  # dash 83.63 %
     assert val("pack_voltage", "06BD") == pytest.approx(431.25)  # raw 1725
-    assert val("pack_current", "00024AB6") == pytest.approx(1.98)
+    # Electric-drive family is IEEE-754 float32, not u16/10+1.
+    assert val("dc_link_voltage", "43D897DE") == pytest.approx(433.1864624)
+    assert val("electric_drive_inflow_coolant_temperature", "41816D8E") == \
+        pytest.approx(16.1784935)
+    assert val("motor_maximum_current", "44164000") == pytest.approx(601.0)
+    assert val("motor_minimum_current", "C3260000") == pytest.approx(-166.0)
+    # NEGATIVE = discharge. 000248FD = 149,757 -> -2.43 A; the old vector
+    # used the +1.98 A sample and called it discharge, which was the sign error.
+    assert val("pack_current", "000248FD") == pytest.approx(-2.43)
     assert val("cell_voltage_max", "3FF9") == pytest.approx(3.99829)
+    assert val("cell_voltage_max_cell", "3FF9001C") == 28
+    assert val("cell_voltage_min_cell", "3FF9001D") == 29
+    assert val("bat_temp_max_sensor", "0538001F") == 31
+    assert val("bat_temp_min_sensor", "04E8001E") == 30
     assert val("cell_v_000", "0BB5") == pytest.approx(3.997)   # u16/1000 + 1
     assert val("battery_temp", "78") == pytest.approx(20.0)
     assert val("bat_temp_max", "0538") == pytest.approx(20.875)
@@ -778,19 +790,25 @@ def test_meb_decoders_match_car_scanner_values():
     assert val("charge_mode", "04") == 1 and val("charge_mode", "06") == 2
     assert val("charge_mode", "00") == 0 and val("op_mode", "01") == 1
     assert val("gear", "0008") == "P"
+    assert val("battery_serial", b"288 WARMF F265 ") == "288 WARMF F265"
     assert val("odometer_km", "0BBF7F") == 769919.0  # 3-byte big-endian
     # Unpopulated cell slots decode to None, never a phantom voltage.
     assert val("cell_v_106", "0FFE") is None
     assert val("cell_v_107", "0FFE") is None
     # 53,200 Wh rated energy (the SoH reference) round-trips through u32.
     assert val("hv_energy_max", "04280A64") == pytest.approx(53200.0)
-    # Lifetime counters from the log: 24,422.82 kWh in, 23,447.48 kWh out.
-    charged_raw = int(24422.82 * 8583.07123641215)
-    used_raw = -int(23447.48 * 8583.07123641215)
-    counters = val("energy_counters", charged_raw.to_bytes(4, "big")
-                   + (used_raw & 0xFFFFFFFF).to_bytes(4, "big"))
-    assert counters["charged_kwh"] == pytest.approx(24422.82, rel=1e-6)
-    assert counters["used_kwh"] == pytest.approx(23447.48, rel=1e-6)
+    # 0x1E32 is four s32 fields: charge Ah, discharge Ah, charge kWh,
+    # discharge kWh. The old decoder read the Ah fields with the kWh divisor.
+    counters = val("energy_counters",
+                   "01E7CC17FE1B74E70C8071E0F3FF868C")
+    assert counters["charged_ah"] == pytest.approx(58196.4654, rel=1e-7)
+    assert counters["discharged_ah"] == pytest.approx(57808.2630, rel=1e-7)
+    assert counters["charged_kwh"] == pytest.approx(24436.9784, rel=1e-7)
+    assert counters["used_kwh"] == pytest.approx(23459.8612, rel=1e-7)
+    assert counters["discharged_kwh"] == counters["used_kwh"]
+    # A short payload is a failed read, never a plausible zero. DIDSpec turns
+    # the decoder's IndexError into None and preserves the raw bytes.
+    assert val("energy_counters", "01E7CC17FE1B74E7") is None
     # Coolant: the log showed 22 C inlet and 22 C outlet parked.
     assert val("coolant_temps", "05800580") == \
         {"outlet_c": pytest.approx(22.0), "inlet_c": pytest.approx(22.0)}
@@ -1204,7 +1222,9 @@ def test_short_payloads_fail_closed_in_every_width():
     """
     import pytest as _pytest
 
-    from decoders.meb import _energy_counters, _odometer_km, _pack_current
+    from decoders.meb import (
+        _energy_counters, _f32be, _odometer_km, _pack_current,
+    )
     from decoders.registry import u16be, u32be
 
     # The widths the real DIDs use, each one byte short of what it needs.
@@ -1213,9 +1233,13 @@ def test_short_payloads_fail_closed_in_every_width():
                       (u32be, b"\x04\x28\x0A"),
                       (_pack_current, b"\x06\xBD"),
                       (_odometer_km, b"\x0B\xBF"),
-                      (_energy_counters, b"\x00\x02\x4A\xB6")):
+                      (_f32be, b"\x43\xD8\x97"),
+                      (_energy_counters, b"\x00" * 15)):
         with _pytest.raises(IndexError):
             fn(short)
+
+    # A float payload that is not finite is a failed read, not a reading.
+    assert _f32be(bytes.fromhex("7FC00000")) is None  # quiet NaN
 
     # ...and the full-width values still decode exactly as before.
     assert u32be(b"\x00\x02\x4A\xB6") == 150198

@@ -544,6 +544,7 @@ class Collector:
                 self._sweep_cells(ts)
             self._slow_pass(ts, snapshot)
             self._end_silence_phase(ts)
+        self._record_lv_derived(ts, snapshot)
         self._battery_snapshot(ts, snapshot)
         self._charging_tracking(ts, snapshot)
         return snapshot
@@ -580,12 +581,75 @@ class Collector:
                                 f"Cell sweep recorded {snapshot_note}")
 
     def _slow_pass(self, ts: str, snapshot: dict) -> None:
-        """Poll the non-cell slow DIDs. Per-cell DIDs are excluded here
-        because _sweep_cells() already reads them in the same slow phase."""
+        """Poll the non-cell slow DIDs; put their scalar values in the snapshot.
+
+        Per-cell DIDs are excluded here because _sweep_cells() already reads
+        them in the same slow phase. Decoding the returned raw bytes again is
+        cheap and lets later derived values (12 V power, DC-DC power) use the
+        same rotation instead of waiting for the next fast pass.
+        """
         for spec in self.registry.slow():
             if spec.key.startswith("cell_v_"):
                 continue
-            self.poll_did(spec, ts)
+            raw = self.poll_did(spec, ts)
+            if raw is not None and spec.decode:
+                v = spec.decode_value(raw)
+                if not isinstance(v, dict):
+                    snapshot[spec.key] = v
+
+    def _record_lv_derived(self, ts: str, snapshot: dict) -> None:
+        """Record low-voltage power from voltage x current, when both exist.
+
+        These are the measurements the low-voltage investigation kept asking
+        for but that no DID reports: 12 V terminal power, the DC/DC module's
+        output power, and the gateway's DC-DC estimate. They are labelled
+        CALCULATED and kept out of the battery snapshot; the raw current and
+        voltage rows remain the source of truth.
+        """
+        for key, vkey, ikey, unit, ecu, scale, formula in (
+            ("aux_12v_power_w", "aux_12v_voltage", "aux_12v_current",
+             "W", "bat_mgmt", 1.0, "12V voltage * current"),
+            ("dcdc_power_kw", "dcdc_voltage", "dcdc_current",
+             "kW", "dcdc", 0.001, "DC/DC voltage * current / 1000"),
+            ("dcdc_gw_power_kw", "dcdc_gw_voltage", "dcdc_gw_current",
+             "kW", "energy", 0.001, "gateway DC-DC voltage * current / 1000"),
+        ):
+            voltage, current = snapshot.get(vkey), snapshot.get(ikey)
+            if voltage is None or current is None:
+                continue
+            value = round(voltage * current * scale, 3)
+            snapshot[key] = value
+            self.repo.record_measurement(
+                self.vehicle_id, ts, key, ecu, "calc", "-", unit,
+                self._prov(Provenance.CALCULATED), formula, "calculated",
+                "", value,
+            )
+
+    def _record_spreads(self, ts: str, val, val_json) -> None:
+        """Record cell-SoC and battery-temperature spreads from extreme DIDs.
+
+        The cheapest health signals we can derive, and they need no second
+        read: the extreme values arrive with the same payload as their 1-based
+        cell/sensor numbers. ``val``/``val_json`` are the snapshot closures from
+        _battery_snapshot so this uses the same freshness ceiling.
+        """
+        soc_max = val_json("cell_soc_max").get("value")
+        soc_min = val_json("cell_soc_min").get("value")
+        if soc_max is not None and soc_min is not None:
+            self.repo.record_measurement(
+                self.vehicle_id, ts, "cell_soc_spread_pct", "bat_mgmt",
+                "calc", "-", "%", self._prov(Provenance.CALCULATED),
+                "max cell SoC - min cell SoC", "calculated", "",
+                round(soc_max - soc_min, 3),
+            )
+        temp_max, temp_min = val("bat_temp_max"), val("bat_temp_min")
+        if temp_max is not None and temp_min is not None:
+            self.repo.record_measurement(
+                self.vehicle_id, ts, "battery_temp_spread_c", "bat_mgmt",
+                "calc", "-", "degC", self._prov(Provenance.CALCULATED),
+                "max sensor temperature - min sensor temperature",
+                "calculated", "", round(temp_max - temp_min, 3),
+            )
 
     def _battery_snapshot(self, ts: str, snap: dict) -> None:
         # Bound how old a carried-forward value may be. Without this the
@@ -636,6 +700,7 @@ class Collector:
                 self._prov(Provenance.ESTIMATED), soh_basis,
                 "estimated", "", soh,
             )
+        self._record_spreads(ts, val, val_json)
         mode = val("charge_mode")
         from decoders.charging import CHARGE_MODE_CODES
         self.repo.record_battery_snapshot(

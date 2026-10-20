@@ -10,7 +10,14 @@ from __future__ import annotations
 COMPUTED_KEYS = {
     "pack_power_kw": ("DC power (calculated U x I)", "kW"),
     "cell_delta_mv": ("Cell voltage delta (max - min, calculated)", "mV"),
+    "cell_soc_spread_pct": ("Cell SoC spread (max - min, calculated)", "%"),
+    "battery_temp_spread_c": (
+        "Battery temperature spread (max - min, calculated)", "degC"),
     "soh_pct": ("State of health (estimated)", "%"),
+    # Low-voltage investigation aids: no DID reports these directly.
+    "aux_12v_power_w": ("12 V battery power (calculated U x I)", "W"),
+    "dcdc_power_kw": ("DC/DC output power (calculated U x I)", "kW"),
+    "dcdc_gw_power_kw": ("Gateway DC-DC power (calculated U x I)", "kW"),
 }
 
 # Nominal usable capacity of the 58 kWh pack (Ah), used ONLY for the

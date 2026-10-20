@@ -66,13 +66,13 @@ real `eldrive` readings, never a code the car emitted.
 13 ECUs with readings. Known-bad scalings present in the real DB and **excluded
 from scoring** by the brief (see `docs/DATA_CATALOGUE.md` for the full list):
 
-`dc_link_voltage`/`dc_link_voltage_reserve` ≈1738 V (pack ≈435 V),
-`ecu_pcb_temperature_1/2` ≈1681–1685 °C, `stator_temperature`,
-`electric_drive_inflow_coolant_temperature` ≈1679–1680 °C,
-`rotor_temperature_model`, `dmcm_stator_voltage_*` ≈1348–4918 V,
-`actual_mechanical_torque_calculated` 1528–4945 Nm,
-`inverter_power_loss_phase_u/v/w`, `windshield_temperature`, `dc_link_current`,
-`co2_content_interior`=25400, `bat_charging_voltage` max 2048.
+This baseline list included the electric-drive family (`dc_link_voltage`,
+`ecu_pcb_temperature_*`, `stator_temperature`, `dmcm_stator_voltage_*`,
+`actual_mechanical_torque_calculated`, `inverter_power_loss_phase_*`,
+`dc_link_current`). It was not the sensors: those 25 rows are float32 and are
+now decoded as such, so they are no longer excluded. Still excluded:
+`windshield_temperature`, `co2_content_interior`=25400, `bat_charging_voltage`
+max 2048, `odometer_2`, and `dc_dc_converter_reserved_current`.
 
 Healthy signals: `cell_v_*` 3.883–4.055 V, `soc_*`, `pack_voltage`, 12 V system.
 

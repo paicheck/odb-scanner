@@ -84,7 +84,8 @@ def test_the_maintained_findings_are_not_dropped(repo):
     """A generator cannot rediscover that a decoder is mis-scaled."""
     text = _report(repo)
     assert "Known BAD scalings" in text
-    assert "dc_link_voltage" in text
+    assert "windshield_temperature" in text
+    assert "float32" in text
     assert "900 s" in text          # the stale carry-forward window
 
 

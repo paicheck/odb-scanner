@@ -150,12 +150,12 @@ Three things we do not do at all:
 
 Also note ABRP negates current (`*-1`) and uses a different SoC fit
 (`1.12*A/2.5-7.16`) than evDash (`byte/2.5` and `raw*0.4425-6.1947`). Our
-`decoders/meb.py` follows evDash. This is a real, documented divergence between
-sources and is exactly the kind of thing that must be settled against the car,
-not on paper. Our own note records that the car's own counters settle the
-*sign*: parked, current read positive, charge counter frozen, discharge counter
-growing, energy content falling ⇒ **positive = discharge**. ABRP's `*-1` agrees
-with that.
+`decoders/meb.py` follows evDash's addressing and scale, but not its display
+sign. The raw 0x1E3D sample `000248FD` decodes to **-2.43 A**, and the
+independent 0x035E sample `FFED` decodes to **-1.9 A**, while the accumulated
+discharge counter rose. Energy left the pack while the DID read negative:
+**negative = discharge**, matching ABRP and spot2000. Car Scanner negates the
+DID for display; evDash does not.
 
 ### 2.3 spot2000 — `Volkswagen-MEB-EV-CAN-parameters` (the one ecus.py calls authoritative)
 
@@ -195,10 +195,11 @@ means `ecus.py` is not exhaustive.
 reference sends. The correct value per module is the response id in the table
 above. Still to be decided whether to change it — see 5.1.
 
-### 2.4 Every decoder scale is confirmed by a second independent source
+### 2.4 Decoder scales and their second source
 
-spot2000's `Calculation` column agrees with `decoders/meb.py` on all sixteen
-DIDs it documents:
+spot2000's `Calculation` column agrees with `decoders/meb.py` on the BMS DIDs
+it documents, with one deliberate exception: 0x1E32 follows the Car Scanner
+MEB profile's four-field layout, not evDash/spot2000's two-field layout.
 
 | DID | spot2000 | ours | |
 |---|---|---|---|
@@ -206,7 +207,7 @@ DIDs it documents:
 | `1E3B` | `(XX*2^8+YY)/4` | `u16/4` | ✓ |
 | `1E3D` | `(WW*2^32+…+ZZ-150000)/100` | `(u32-150000)/100` | ✓ |
 | `2A0B` | `XX/2-40` | `u8/2-40` | ✓ |
-| `1E32` | `/8583,07123641215`, `signed()` on discharge | same, s32 | ✓ |
+| `1E32` | `/8583,07123641215`, `signed()` on discharge | four s32 fields: Ah @0/4, kWh @8/12; profile scales | differs (profile wins) |
 | `1E0E` / `1E0F` | `(WW*2^8+XX)/64` | `u16/64` | ✓ |
 | `189D` | outlet `[0:2]/64`, inlet `[2:4]/64` | same | ✓ |
 | `1E1B` | `(XX*2^8+YY)/5` | `u16/5` | ✓ |
@@ -267,35 +268,25 @@ reproduce the imported Car Scanner values exactly (14.52 V, 0.65 A, 95 % SoC,
 evDash's `u16/1024 + 4.26` to the profile's `u16 x 0.001 + 4.0`; the raw
 multi-frame payload is preserved throughout, so this stays re-decodable.
 
-### 2.7 Current sign: a genuine 2-against-1 conflict, unresolved
+### 2.7 Current sign: settled on raw bytes — negative = discharge
 
 spot2000's `info` column for `0x1E3D` states: *"Negative value is out from
 battery (consumption) and positive value is into battery (charging or regen)."*
-ABRP agrees, via the `)*-1` on its equation. evDash does not negate, and we
-follow evDash.
+ABRP agrees via the `)*-1` on its equation. The raw captures now settle it:
 
 | source | discharge reads as |
 |---|---|
-| evDash, and this project | positive |
-| ABRP | negative (`*-1`) |
+| 0x1E3D raw `000248FD` / 0x035E raw `FFED` | negative (-2.43 A / -1.9 A) |
+| ABRP | negative (`*-1` around the DID) |
 | spot2000 | negative (stated) |
+| Car Scanner display | positive (it negates the DID) |
 
-Our `decoders/meb.py` argues the sign from the car's own counters: parked,
-Car Scanner showed +0.93…+1.98 A, the charge counter froze, the discharge
-counter grew, and energy content fell 41325 → 41200 Wh. Energy left the pack
-while current read positive, hence positive = discharge.
-
-That reasoning is sound *about Car Scanner's sign*, which is what matters for
-matching Car Scanner — but it does not establish the DID's own convention, and
-two of three sources say the opposite. Car Scanner also reports two currents,
-`DC Battery Current` (+0.56…+1.98 A) and `DC Battery Current #2`
-(−0.95…−1.99 A), opposite in sign and similar in magnitude, which suggests a
-bipolar pair rather than one sensor read two ways.
-
-If this is wrong, `pack_current` is inverted, and that inverts charging
-detection, pack-power sign, and the regen-vs-discharge history. **Must be settled
-with a raw capture during charge and discharge, not on paper.** Flagged rather
-than changed.
+The earlier "positive = discharge" conclusion came from Car Scanner's *display*
+sign, not the DID. Parked, Car Scanner showed +0.93…+1.98 A while the charge
+counter froze and the discharge counter grew; the underlying raw value was
+negative. `decoders/meb.py` keeps the DID arithmetic
+`(u32-150000)/100` and documents **negative = discharge**. Do not invert the
+arithmetic. Car Scanner's display sign is not evidence about the DID.
 
 ### 2.8 OVMS — read, but it is the wrong car
 
@@ -767,11 +758,10 @@ baseline was silent.
    session, the fix is a policy decision, not a code change — which is why it is
    recorded rather than acted on. Counter-evidence to weigh: evDash and ABRP
    reach these DIDs with no session change at all.
-3. **Current sign, positive or negative on discharge** (2.7). evDash and this
-   project say positive; ABRP and spot2000 say negative. Settle with a raw
-   capture during charge and discharge. Until then `pack_current`'s sign is
-   carried from evDash on the strength of Car Scanner's own counters, and is the
-   project's single most consequential unverified assumption.
+3. **Current sign** (2.7) — RESOLVED. Raw 0x1E3D / 0x1E3E and independent
+   0x035E all read negative while the pack discharged. `pack_current` keeps the
+   DID's sign (negative = discharge); Car Scanner's positive display was the
+   negated value, not the DID.
 4. Why does the car report two opposite-signed currents (`DC Battery Current`
    and `DC Battery Current #2`)? A bipolar pair, or one sensor read two ways?
    Affects whether we need a second current DID.
