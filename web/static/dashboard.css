@@ -1,0 +1,114 @@
+/* Dashboard chart layout.
+ *
+ * Kept in an external file so the Content-Security-Policy can stay strict
+ * (script-src 'self'); the inline <style> block in base.html still covers the
+ * generic page chrome.
+ */
+
+.chart-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 12px 14px 10px;
+  margin: 14px 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+}
+
+.chart-card h3 {
+  margin: 0 0 2px;
+  font-size: 13px;
+  color: #556;
+  font-weight: 600;
+}
+
+.chart-card .chart-sub {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #777;
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 14px;
+}
+
+.chart-grid > .chart-card { margin: 0; }
+
+.chart-wrap {
+  position: relative;
+  width: 100%;
+  height: 240px;
+}
+
+.chart-wrap.small { height: 200px; }
+
+.chart-wrap canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.chart-empty {
+  display: none;
+  padding: 26px 10px;
+  text-align: center;
+  color: #777;
+  font-size: 13px;
+  background: #f7f9fa;
+  border-radius: 6px;
+}
+
+.chart-empty.show { display: block; }
+
+.chart-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 8px 0 2px;
+  font-size: 12px;
+  color: #556;
+}
+
+.chart-summary strong { color: #222; }
+
+/* Text / state signals: bands instead of a numeric line. */
+.state-strip { margin: 6px 0 2px; }
+
+.state-band-row {
+  display: flex;
+  height: 34px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: #eef2f5;
+}
+
+.state-band {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 2px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #fff;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 0;
+}
+
+.state-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #777;
+  margin-top: 4px;
+}
+
+.state-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #556;
+}
+
+.state-list li { margin: 1px 0; }

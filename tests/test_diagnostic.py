@@ -3161,6 +3161,89 @@ def test_measurements_page_lists_and_charts_series(tmp_path):
     assert r.json()["value"] == []
 
 
+def test_charts_are_local_and_executable_under_the_csp(tmp_path):
+    """The dashboard's own CSP must permit the scripts that draw its charts.
+
+    The policy allowed the Chart.js CDN but not inline scripts
+    (``script-src 'self' https://cdn.jsdelivr.net`` and no nonce/hash), so the
+    browser loaded the library and then refused every template's
+    ``new Chart(...)`` block. The server looked healthy and no chart ever drew.
+    Scripts are now served from this origin and page data is non-executable
+    JSON.
+    """
+    import re
+
+    import web.dashboard as dash
+    from fastapi.testclient import TestClient
+    from database.repository import Repository
+    from datetime import datetime, timezone, timedelta
+
+    (tmp_path / "c.yaml").write_text(
+        f"database:\n  path: {tmp_path / 'd.db'}\n"
+        f"vehicle:\n  did_profile: meb\n"
+        f"web:\n  host: \"127.0.0.1\"\n  port: 8000\n", encoding="utf-8")
+    cfg = load_config(tmp_path / "c.yaml", tmp_path / "local.yaml")
+
+    repo = Repository(str(tmp_path / "d.db"))
+    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    base = datetime.now(timezone.utc)
+    for i in range(10):
+        ts = (base - timedelta(minutes=9 - i)).isoformat(timespec="seconds")
+        repo.record_measurement(vid, ts, "pack_voltage", "bat_mgmt", "UDS-0x22",
+                                "0x1E3B", "V", "reported", "builtin",
+                                "documented", "AABB", 350.0 + i)
+    for i, gear in enumerate(("P", "D", "P")):
+        ts = (base - timedelta(minutes=6 - i)).isoformat(timespec="seconds")
+        repo.record_measurement(vid, ts, "gear", "gateway", "UDS-0x22",
+                                "0x1234", "", "reported", "builtin",
+                                "documented", "50", gear)
+    repo.close()
+
+    client = TestClient(dash.create_app(cfg, bind_host="127.0.0.1"),
+                        raise_server_exceptions=False)
+
+    page = client.get("/measurements")
+    assert page.status_code == 200
+    body = page.text
+    assert "/static/vendor/chart.umd.min.js" in body
+    assert "/static/dashboard.js" in body
+    assert "cdn.jsdelivr" not in body
+
+    csp = page.headers["Content-Security-Policy"]
+    assert "script-src 'self'" in csp
+    assert "jsdelivr" not in csp
+
+    # No executable inline scripts; JSON payload blocks are data, not code.
+    inline = re.findall(
+        r"<script(?![^>]*\bsrc=)(?![^>]*application/json)[^>]*>", body)
+    assert inline == [], f"inline script would be blocked by CSP: {inline}"
+
+    asset = client.get("/static/vendor/chart.umd.min.js")
+    assert asset.status_code == 200
+    assert "javascript" in asset.headers.get("content-type", "")
+
+    payload = client.get("/api/measurements/pack_voltage?max_points=4").json()
+    assert payload["raw_points"] == 10
+    assert payload["returned_points"] < payload["raw_points"]
+    assert payload["downsampled"] is True
+    assert payload["unit"] == "V"
+    assert payload["data_kind"] == "numeric"
+    assert payload["name"]  # a human name, not only the key
+
+    # Text signals take the other path: only changes are returned, and the
+    # browser draws them as a state timeline rather than on a numeric axis.
+    gear = client.get("/api/measurements/gear?days=30").json()
+    assert gear["data_kind"] == "text"
+    assert gear["method"] == "transitions"
+    assert gear["value"] == ["P", "D", "P"]
+
+    # A hand-edited URL must not turn a chart into a 500.
+    bad = client.get(
+        "/api/measurements/pack_voltage?days=nope&max_points=x&method=evil")
+    assert bad.status_code == 200
+    assert bad.json()["method"] in ("min_max", "none")
+
+
 def test_the_401_page_never_contains_the_token(tmp_path, monkeypatch):
     """The refusal page is served TO unauthenticated callers.
 
@@ -3340,7 +3423,13 @@ def test_security_headers_are_present(tmp_path, monkeypatch):
     assert h["X-Frame-Options"] == "DENY"
     assert h["Referrer-Policy"] == "no-referrer"
     assert "no-store" in h["Cache-Control"]
-    assert "frame-ancestors 'none'" in h["Content-Security-Policy"]
+    csp = h["Content-Security-Policy"]
+    assert "frame-ancestors 'none'" in csp
+    # Scripts are same-origin only. The old policy allowed a CDN for Chart.js
+    # while refusing the inline script that initialised it -- charts loaded the
+    # library and drew nothing.
+    assert "script-src 'self'" in csp
+    assert "jsdelivr" not in csp
 
 
 def test_generated_token_is_written_to_the_config_that_was_loaded(tmp_path):

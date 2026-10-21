@@ -40,8 +40,14 @@
     </div>
   </div>
 
-  <div class="chartbox">
+  <div class="chart-card">
     <h3>ECU answer rates (last {{ (p.window_s / 60) | round | int }} min)</h3>
+    <p class="chart-sub">successful vs failed reads per module</p>
+    <div class="chart-wrap small"><canvas id="ecuChart"></canvas></div>
+    <div id="ecuChart-empty" class="chart-empty">No reads in this window.</div>
+  </div>
+
+  <div class="chartbox">
     <table>
       <thead><tr><th>ECU</th><th>Discovery</th><th>OK</th><th>Failed</th><th>Last read</th></tr></thead>
       <tbody>
@@ -59,6 +65,8 @@
       </tbody>
     </table>
   </div>
+
+  <script type="application/json" id="progress-data">{{ {"ecus": p.ecus} | tojson }}</script>
 
   <div class="chartbox">
     <h3>Recent events</h3>

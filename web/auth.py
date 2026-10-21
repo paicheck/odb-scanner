@@ -248,8 +248,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault(
             "Content-Security-Policy",
-            # Chart.js is loaded from a CDN and inlines its own styles.
-            "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
+            # All scripts are served from this origin. There is no CDN and no
+            # inline script: the previous policy allowed the Chart.js CDN but
+            # not inline scripts, so the chart initialisation in every template
+            # was silently refused and no chart ever drew.
+            "default-src 'self'; script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
             "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         # Vehicle history is not something an intermediary should keep.

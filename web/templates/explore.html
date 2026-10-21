@@ -83,7 +83,7 @@
 </div>
 
 {% if entries %}
-<div class="card chartbox">
+<div class="chart-card">
   <h3>{{ key }} <span class="muted">{{ chart.raw_points }} raw points</span></h3>
   <div class="muted" style="margin:4px 0 8px;">
     export raw rows (all columns, failures kept):
@@ -101,8 +101,9 @@
     {% if o.reason %} &mdash; {{ o.reason }}{% endif %}
   </p>
   {% endfor %}
-  <canvas id="chart" height="80"></canvas>
-  <div id="empty" class="warn" style="display:none;">No numeric readings in this window.</div>
+  <div class="chart-wrap"><canvas id="chart"></canvas></div>
+  <div id="chart-state" class="state-strip" style="display:none;"></div>
+  <div id="empty" class="chart-empty">No readings in this window.</div>
   {% if markers %}
   <details style="margin-top:8px;">
     <summary class="marker-note">{{ markers|length }} events in this window (not causes &mdash; just when things happened)</summary>
@@ -111,6 +112,7 @@
     </ul>
   </details>
   {% endif %}
+  <script type="application/json" id="explore-data">{{ {"chart": chart, "markers": markers, "gap_s": gap_s} | tojson }}</script>
 </div>
 
 <table class="disc">
@@ -135,33 +137,6 @@
   {% endfor %}
   </tbody>
 </table>
-
-<script>
-  const CHART = {{ chart|tojson }};
-  const MARKERS = {{ markers|tojson }};
-  (function () {
-    const n = (CHART.value || []).length;
-    document.getElementById('empty').style.display = n ? 'none' : 'block';
-    if (!n) return;
-    const ctx = document.getElementById('chart').getContext('2d');
-    new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: CHART.ts.map(t => t.slice(5, 16).replace('T', ' ')),
-        datasets: [{
-          label: CHART.key, data: CHART.value,
-          borderColor: '#0b2340', backgroundColor: 'rgba(11,35,64,0.08)',
-          borderWidth: 1.5, pointRadius: 0, tension: 0.12,
-        }]
-      },
-      options: {
-        plugins: { legend: { display: false } },
-        scales: { x: { ticks: { maxTicksLimit: 12, font: { size: 10 } } } },
-        animation: false,
-      }
-    });
-  })();
-</script>
 
 {% else %}
 <div class="warn">No keys match those filters.</div>

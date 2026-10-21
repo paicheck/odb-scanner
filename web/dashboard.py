@@ -18,6 +18,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ai.ollama import OllamaError
@@ -39,6 +40,7 @@ from web.auth import (
 log = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 _templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
@@ -153,6 +155,16 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     # ignored analysis.trend_window_days.
     trend_days = int(cfg.get("analysis.trend_window_days", 30))
     charging_days = int(cfg.get("analysis.charging_window_days", 90))
+    # A gap wider than the "value is still fresh" window is a hole in the data,
+    # not a straight line between two samples. Charts pass this to the browser
+    # so a three-day outage is drawn as a three-day outage.
+    chart_gap_s = float(cfg.get("collector.max_value_age_s", 900.0))
+
+    # Static assets are served from this origin. Chart.js used to come from a
+    # CDN while the CSP forbade inline scripts, so every chart was silently
+    # blocked. Local assets let the CSP stay at `script-src 'self'` and keep the
+    # dashboard usable offline.
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     def vehicle_and_id():
         row = repo.first_vehicle()
@@ -339,6 +351,10 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             chart_groups=chart_groups,
             counts=counts,
             days=trend_days,
+            windows=sorted({1, 7, 14, 30, 90, 365, trend_days}),
+            max_points=1500,
+            method="min_max",
+            gap_s=chart_gap_s,
         )
 
     @app.get("/progress", response_class=HTMLResponse)
@@ -355,6 +371,16 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             charging_analysis.session_comparison(repo, vid, charging_days) if vid else {}
         )
         anomalies = [dict(a) for a in repo.anomalies(vid, days)] if vid else []
+        history = repo.battery_history(days, vid) if vid else []
+        overview_chart = {
+            "ts": [r["ts"] for r in history],
+            "soc": [
+                r["soc_normal_pct"] if r["soc_normal_pct"] is not None
+                else r["soc_abs_pct"]
+                for r in history
+            ],
+            "pack_v": [r["pack_voltage_v"] for r in history],
+        }
         latest = repo.latest_measurements(vid, max_age_s=86400) if vid else {}
         lv = latest.get("lv_voltage_obd") or {}
         speed = latest.get("vehicle_speed") or {}
@@ -372,6 +398,8 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             anomalies=anomalies,
             days=days,
             live=live,
+            overview_chart=overview_chart,
+            gap_s=chart_gap_s,
             bms_refusal=bms_refusal(),
         )
 
@@ -405,6 +433,7 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             trend=trend,
             days=trend_days,
             lv_chart=lv_chart,
+            gap_s=chart_gap_s,
             bms_refusal=bms_refusal(),
         )
 
@@ -498,26 +527,27 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         }
 
     @app.get("/api/measurements/{key}")
-    def api_measurement(key: str):
-        """Time series for one measurement key (successful reads, oldest first).
+    def api_measurement(key: str, request: Request):
+        """Time series for one measurement key, server-side downsampled.
 
         Cell voltages live in their own table; a `cell_v_NNN` key reads that
-        instead of `measurements`.
+        instead of `measurements`. The payload carries the unit and data kind so
+        the browser can label the axis and choose a line or a state strip.
         """
-        _, vid = vehicle_and_id()
-        if vid and key.startswith("cell_v_"):
-            try:
-                idx = int(key.rsplit("_", 1)[1])
-            except ValueError:
-                idx = -1
-            rows = repo.cell_voltage_series(vid, idx, trend_days) if idx >= 0 else []
-        else:
-            rows = repo.measurement_series(vid, key, trend_days) if vid else []
-        return {
-            "key": key,
-            "ts": [r["ts"] for r in rows],
-            "value": [r["value"] for r in rows],
-        }
+        try:
+            days = int(request.query_params.get("days", trend_days))
+        except (TypeError, ValueError):
+            days = trend_days
+        days = max(1, min(days, 3650))
+        try:
+            max_points = int(request.query_params.get("max_points", 1500))
+        except (TypeError, ValueError):
+            max_points = 1500
+        max_points = max(1, min(max_points, 20000))
+        method = request.query_params.get("method", "min_max")
+        if method not in ("min_max", "lttb"):
+            method = "min_max"
+        return series_for(key, days, max_points, method)
 
     def progress_data():
         """Live collection progress: last activity, recent reads, per-ECU
@@ -617,28 +647,87 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     def _fresh_window():
         return float(cfg.get("collector.max_value_age_s", 900.0))
 
+    # Built lazily and reused across chart requests. Building the full MEB map
+    # on every keystroke in the measurement picker would be wasted work.
+    _meta_registry = None
+    _meta_registry_profile = None
+
+    def _registry_for_meta():
+        nonlocal _meta_registry, _meta_registry_profile
+        profile = _profile()
+        if _meta_registry is None or _meta_registry_profile != profile:
+            from decoders.registry import build_default_registry
+            _meta_registry = build_default_registry(profile)
+            _meta_registry_profile = profile
+        return _meta_registry
+
+    def key_meta(key: str) -> dict:
+        """Display metadata for one measurement key.
+
+        The chart needs the unit and a human name; without them a y-axis is a
+        row of bare numbers and a tooltip says "pack_voltage: 401.5" instead of
+        "Pack voltage: 401.5 V". Per-cell keys are not in the DID registry, so
+        they are described here.
+        """
+        from decoders.quality import quality_for
+
+        if key.startswith("cell_v_"):
+            try:
+                idx = int(key.rsplit("_", 1)[1])
+                name = f"Cell {idx} voltage"
+            except ValueError:
+                name = "Cell voltage"
+            return {"name": name, "unit": "V", "data_kind": "numeric"}
+
+        name, unit, kind = key, "", "numeric"
+        try:
+            spec = _registry_for_meta().get(key)
+            name, unit = spec.name, spec.unit or ""
+        except KeyError:
+            pass
+        try:
+            kind = quality_for(_profile(), key).data_kind.value
+        except Exception:  # pragma: no cover - metadata must never break a chart
+            kind = "numeric"
+        return {"name": name, "unit": unit, "data_kind": kind}
+
     def series_for(key: str, days: int, max_points: int, method: str) -> dict:
         """Chart payload for one key, server-side downsampled.
 
         Text/code keys become a step series (only changes are returned), numeric
         keys go through the sampler. Raw rows are never discarded: the export
-        endpoints below serve them untouched.
+        endpoints below serve them untouched. Per-cell keys read the
+        `cell_voltages` table instead of `measurements`.
         """
         from analysis import series as series_mod
-        from decoders.quality import quality_registry
 
+        meta = key_meta(key)
         _, vid = vehicle_and_id()
         if not vid:
-            return {"key": key, "ts": [], "value": [], "raw_points": 0,
+            return {"key": key, **meta, "ts": [], "value": [], "raw_points": 0,
                     "returned_points": 0, "downsampled": False, "method": "none"}
-        rows = repo.measurement_series(vid, key, days)
+
+        rows = []
+        if vid and key.startswith("cell_v_"):
+            try:
+                idx = int(key.rsplit("_", 1)[1])
+            except ValueError:
+                idx = -1
+            if idx >= 0:
+                rows = repo.cell_voltage_series(vid, idx, days)
+        else:
+            rows = repo.measurement_series(vid, key, days)
+
         ts_list = [r["ts"] for r in rows]
         values = [r["value"] for r in rows]
-        q = quality_registry(_profile()).get(key)
-        if q is not None and q.data_kind.value in ("text", "json"):
-            return series_mod.transitions(ts_list, values)
-        return series_mod.numeric_payload(ts_list, values, max_points=max_points,
-                                          method=method)
+        if meta["data_kind"] in ("text", "json"):
+            payload = series_mod.transitions(ts_list, values)
+        else:
+            payload = series_mod.numeric_payload(
+                ts_list, values, max_points=max_points, method=method)
+        payload.update(meta)
+        payload["key"] = key
+        return payload
 
     def observation_states(keys: list[str]) -> list[dict]:
         from analysis.freshness import observe_key
@@ -700,7 +789,7 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             query=query, verification=verification, kind=kind, state=state,
             ecu=ecu, scoring=scoring, key=key, chart=chart, observations=obs,
             markers=timeline_events, days=days, max_points=max_points,
-            method=method,
+            method=method, gap_s=chart_gap_s,
         )
 
     @app.get("/api/discover")

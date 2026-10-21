@@ -31,6 +31,16 @@
     <div class="big">{{ charging.get('count', 0) }} sessions</div></div>
 </div>
 
+{% if vehicle %}
+<div class="chart-card">
+  <h3>Battery trend ({{ days }} days)</h3>
+  <p class="chart-sub">state of charge and pack voltage &middot; gaps are periods with no snapshot</p>
+  <div class="chart-wrap"><canvas id="overviewChart"></canvas></div>
+  <div id="overviewChart-empty" class="chart-empty">No battery snapshots in this window.</div>
+  <script type="application/json" id="overview-data">{{ {"chart": overview_chart, "gap_s": gap_s} | tojson }}</script>
+</div>
+{% endif %}
+
 <h3>Recent anomalies (z-score based)</h3>
 {% if anomalies %}
 <table><tr><th>Timestamp</th><th>Metric</th><th>Value</th><th>z</th><th>Description</th></tr>

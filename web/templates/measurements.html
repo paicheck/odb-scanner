@@ -26,11 +26,11 @@
 {% if not groups %}
   <div class="warn">No vehicle data yet. Start the collector (<code>python main.py collect</code>) to begin logging.</div>
 {% else %}
-<div class="card chartbox">
+<div class="chart-card">
   <h3>History</h3>
   <div class="picker">
     <label for="meas">Measurement:</label>
-    <select id="meas" onchange="loadSeries(this.value)">
+    <select id="meas">
       {% for g in chart_groups %}
       <optgroup label="{{ g.name }}">
         {% for s in g.specs %}
@@ -39,11 +39,20 @@
       </optgroup>
       {% endfor %}
     </select>
+    <label for="meas-days">Window:</label>
+    <select id="meas-days">
+      {% for d in windows %}
+      <option value="{{ d }}" {% if d == days %}selected{% endif %}>{{ d }} d</option>
+      {% endfor %}
+    </select>
     <span id="series-meta" class="muted"></span>
   </div>
-  <canvas id="chart" height="90"></canvas>
-  <div id="series-empty" class="warn" style="display:none;">No successful readings in the last {{ days }} days.</div>
+  <div id="series-summary" class="chart-summary"></div>
+  <div class="chart-wrap"><canvas id="chart"></canvas></div>
+  <div id="chart-state" class="state-strip" style="display:none;"></div>
+  <div id="series-empty" class="chart-empty">No successful readings in the last {{ days }} days.</div>
 </div>
+<script type="application/json" id="measurements-data">{{ {"days": days, "max_points": max_points, "method": method, "gap_s": gap_s} | tojson }}</script>
 
 {% for g in groups %}
 <div class="ecu-block">
@@ -64,69 +73,5 @@
   </table>
 </div>
 {% endfor %}
-{% endif %}
-
-{% if groups %}
-<script>
-  let chart = null;
-  const DAYS = {{ days }};
-
-  function fmt(ts) {
-    // "2026-08-02T21:58:22+00:00" -> "08-02 21:58"
-    return ts ? ts.slice(5, 16).replace('T', ' ') : '';
-  }
-
-  async function loadSeries(key) {
-    const meta = document.getElementById('series-meta');
-    const empty = document.getElementById('series-empty');
-    const sel = document.getElementById('meas');
-    const opt = sel.options[sel.selectedIndex];
-    meta.textContent = opt ? opt.textContent : '';
-
-    let data;
-    try {
-      const r = await fetch('/api/measurements/' + encodeURIComponent(key));
-      data = await r.json();
-    } catch (e) {
-      empty.style.display = 'block';
-      return;
-    }
-
-    const n = (data.value || []).length;
-    empty.style.display = n ? 'none' : 'block';
-
-    if (chart) { chart.destroy(); }
-    const ctx = document.getElementById('chart').getContext('2d');
-    chart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: (data.ts || []).map(fmt),
-        datasets: [{
-          label: key,
-          data: data.value || [],
-          borderColor: '#0b2340',
-          backgroundColor: 'rgba(11,35,64,0.08)',
-          borderWidth: 1.5,
-          pointRadius: 0,
-          tension: 0.15,
-        }]
-      },
-      options: {
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { maxTicksLimit: 10, font: { size: 10 } } },
-          y: { beginAtZero: false }
-        },
-        animation: false,
-      }
-    });
-  }
-
-  // default: first option (or pack voltage if present)
-  const sel = document.getElementById('meas');
-  const pv = Array.from(sel.options).find(o => o.value === 'pack_voltage');
-  sel.value = pv ? pv.value : sel.options[0].value;
-  loadSeries(sel.value);
-</script>
 {% endif %}
 {% endblock %}

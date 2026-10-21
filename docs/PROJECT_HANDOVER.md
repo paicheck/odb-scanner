@@ -95,7 +95,7 @@ step is a single approved read-only capture on the real car.
 | `android/` | Kotlin/Compose client + its own `Decode.kt` (mirrors `decoders/meb.py`) |
 | `cloud/` | Optional MySQL ingest API |
 | `spec/odb_scanner.json` | Generated shared spec consumed by the Android client (source of truth for DID addresses/scales) |
-| `tests/` | 721 tests (no car, no Ollama required) |
+| `tests/` | 728 tests (no car, no Ollama required) |
 | `tools/` | Scripts: `smoke_test.py`, `doctor` helpers, `replay_decoder_impact.py`, `validate_measurement_capture.py`, `export_validation_capture.py`, `export_spec.py`, `export_catalogue.py`, … |
 | `research/measurement_discovery/` | The evidence package for the recent decoder work (see §7) |
 | `docs/investigation/` | Historical investigation notes, replay reports, gateway-energy passive-capture writeups |
@@ -151,8 +151,8 @@ copy config.local.yaml.example config.local.yaml     :: optional, gitignored
 
 ```bat
 .venv\Scripts\python tools\smoke_test.py              :: end-to-end self-test
-.venv\Scripts\python -m pytest tests -q               :: 721 tests
-.venv\Scripts\python -m pytest -m "not slow"          :: 707-test fast subset
+.venv\Scripts\python -m pytest tests -q               :: 728 tests
+.venv\Scripts\python -m pytest -m "not slow"          :: 714-test fast subset
 .venv\Scripts\python -m ruff check .                  :: lint (clean)
 ```
 
@@ -220,11 +220,24 @@ real-vehicle rows and produced `research/measurement_discovery/implementation_im
 (453 changed, 17 newly decoded, 0 now-failing). The DB was **not** rewritten —
 raw bytes remain the source of truth.
 
+**Dashboard charts (2026-10-21, not a decoder change):**
+
+- The CSP allowed the Chart.js CDN but not inline scripts, so every template's
+  `new Chart(...)` block was refused by the browser: the server looked healthy
+  and no chart ever drew. All chart JS now lives in `web/static/`, and Chart.js
+  is vendored there (4.5.1, MIT, SHA-256 in `web/static/vendor/README.md`). The
+  policy is `script-src 'self'` with no CDN.
+- Charts use a real time axis, break the line when samples are further apart
+  than `collector.max_value_age_s` (a gap is drawn as a gap), label units, and
+  show an explicit "no readings" state. Text/code signals render as a state
+  timeline. Measurements gained a window selector; Overview, Battery, and
+  Progress gained charts.
+
 ---
 
 ## 8. Test, lint, and CI status
 
-- **Tests:** 721 passing (`python -m pytest tests -q`). No car or Ollama needed.
+- **Tests:** 728 passing (`python -m pytest tests -q`). No car or Ollama needed.
 - **Lint:** `ruff check .` passes clean. Two rules are intentionally ignored in
   `pyproject.toml` (`E402`, `B905`).
 - **CI:** `.github/workflows/ci.yml` runs lint, fast tests, full suite, smoke
@@ -296,7 +309,7 @@ pass.
 
 ## 12. Handoff checklist
 
-- [ ] Run `python -m pytest tests -q` — expect 721 passed.
+- [ ] Run `python -m pytest tests -q` — expect 728 passed.
 - [ ] Run `python main.py guard-test` — confirms the read-only guard.
 - [ ] Run `python tools/smoke_test.py` — confirms the whole pipeline without a car.
 - [ ] Read `diagnostic/uds.py` header (safety) and `research/measurement_discovery/validation_roadmap.md` (what's blocked).

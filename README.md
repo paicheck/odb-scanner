@@ -263,11 +263,11 @@ gap check.
 .venv\Scripts\python -m pytest tests -v
 ```
 
-721 tests, no car and no Ollama required. A few drive a fake adapter over a
+728 tests, no car and no Ollama required. A few drive a fake adapter over a
 real socket and are marked `slow`, so the quick inner loop is:
 
 ```bat
-.venv\Scripts\python -m pytest -m "not slow"   :: 707 tests
+.venv\Scripts\python -m pytest -m "not slow"   :: 714 tests
 .venv\Scripts\python -m pytest -m slow         :: the 14 that open sockets
 ```
 
@@ -293,7 +293,7 @@ and safety regressions that the unit tests would not.
 ### Dependency pinning
 
 `requirements.txt` holds the accepted version ranges. `requirements-lock.txt`
-pins the exact versions verified working (the 721 tests and the smoke test
+pins the exact versions verified working (the 728 tests and the smoke test
 above) if you want a reproducible environment instead of the newest allowed.
 Only direct dependencies are pinned, so the same file is valid on Windows and
 on Linux/macOS, where the compiled wheels differ.

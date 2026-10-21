@@ -30,7 +30,11 @@
     button { background: #0b2340; color: #fff; border: 0; padding: 8px 18px; border-radius: 4px; cursor: pointer; }
     .chartbox { background: #fff; padding: 14px; border-radius: 8px; margin: 14px 0; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <!-- Local assets, not a CDN: the dashboard must work offline in a garage,
+       and loading from 'self' lets the CSP stay at script-src 'self'. -->
+  <script src="/static/vendor/chart.umd.min.js" defer></script>
+  <script src="/static/dashboard.js" defer></script>
 </head>
 <body>
 <header>

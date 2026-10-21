@@ -22,41 +22,40 @@ requires a CAN-EV tap (e.g. the preheat-harness hardware) — see events log.
   <div class="note">needs {{ trend.min_span_days }} d of samples, have {{ trend.span_text }}</div>
   {% endif %}</div>
 </div>
-<div class="chartbox"><canvas id="deltaChart" height="90"></canvas></div>
-<div class="chartbox"><canvas id="socChart" height="90"></canvas></div>
+<div class="chart-grid">
+  <div class="chart-card">
+    <h3>State of charge</h3>
+    <p class="chart-sub">absolute / normalised SoC as recorded</p>
+    <div class="chart-wrap small"><canvas id="socChart"></canvas></div>
+    <div id="socChart-empty" class="chart-empty">No SoC samples in the last {{ days }} days.</div>
+  </div>
+  <div class="chart-card">
+    <h3>Pack voltage</h3>
+    <p class="chart-sub">reported pack voltage</p>
+    <div class="chart-wrap small"><canvas id="packChart"></canvas></div>
+    <div id="packChart-empty" class="chart-empty">No pack-voltage samples in the last {{ days }} days.</div>
+  </div>
+  <div class="chart-card">
+    <h3>Cell delta</h3>
+    <p class="chart-sub">max − min cell voltage (calculated)</p>
+    <div class="chart-wrap small"><canvas id="deltaChart"></canvas></div>
+    <div id="deltaChart-empty" class="chart-empty">No cell-delta samples in the last {{ days }} days.</div>
+  </div>
+  <div class="chart-card">
+    <h3>Battery temperature</h3>
+    <p class="chart-sub">reported pack temperature</p>
+    <div class="chart-wrap small"><canvas id="tempChart"></canvas></div>
+    <div id="tempChart-empty" class="chart-empty">No temperature samples in the last {{ days }} days.</div>
+  </div>
+</div>
 {% if lv_chart.ts %}
-<div class="chartbox"><canvas id="lvChart" height="70"></canvas></div>
+<div class="chart-card">
+  <h3>12 V system</h3>
+  <p class="chart-sub">OBD-II PID 0x42</p>
+  <div class="chart-wrap small"><canvas id="lvChart"></canvas></div>
+  <div id="lvChart-empty" class="chart-empty">No 12 V samples in the last {{ days }} days.</div>
+</div>
 {% endif %}
 <p class="note">Cell delta is CALCULATED (max − min cell voltage). SOH is ESTIMATED. All values labelled in the database.</p>
-<script>
-const chart = {{ chart | tojson }};
-const ts = chart.ts.map(t => t.replace('T', ' ').slice(0, 16));
-new Chart(document.getElementById('deltaChart'), {
-  type: 'line',
-  data: { labels: ts, datasets: [
-    { label: 'Cell delta (mV)', data: chart.delta_mv, borderColor: '#c0392b', tension: .2, pointRadius: 1 },
-    { label: 'Pack voltage (V)', data: chart.pack_v, borderColor: '#2471a3', tension: .2, pointRadius: 1, yAxisID: 'y2' }
-  ]},
-  options: { scales: { y2: { position: 'right', grid: { drawOnChartArea: false } } } }
-});
-new Chart(document.getElementById('socChart'), {
-  type: 'line',
-  data: { labels: ts, datasets: [
-    { label: 'SOC (%)', data: chart.soc, borderColor: '#1e8449', tension: .2, pointRadius: 1 },
-    { label: 'Battery temp (°C)', data: chart.temp, borderColor: '#e67e22', tension: .2, pointRadius: 1, yAxisID: 'y2' }
-  ]},
-  options: { scales: { y2: { position: 'right', grid: { drawOnChartArea: false } } } }
-});
-const lv = {{ lv_chart | tojson }};
-if (lv.ts && lv.ts.length) {
-  const lvts = lv.ts.map(t => t.replace('T', ' ').slice(0, 16));
-  new Chart(document.getElementById('lvChart'), {
-    type: 'line',
-    data: { labels: lvts, datasets: [
-      { label: '12 V system (V)', data: lv.v, borderColor: '#8e44ad', tension: .2, pointRadius: 1 }
-    ]},
-    options: { scales: { y: { suggestedMin: 11.5, suggestedMax: 15 } } }
-  });
-}
-</script>
+<script type="application/json" id="battery-data">{{ {"chart": chart, "lv": lv_chart, "gap_s": gap_s} | tojson }}</script>
 {% endblock %}
