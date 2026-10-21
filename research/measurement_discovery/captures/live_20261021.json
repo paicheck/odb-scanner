@@ -1,0 +1,177 @@
+[
+  {
+    "key": "dc_link_voltage",
+    "raw": "43D75481",
+    "ts": "2026-10-21T20:49:29+00:00"
+  },
+  {
+    "key": "dc_link_voltage",
+    "raw": "43D7550E",
+    "ts": "2026-10-21T20:45:37+00:00"
+  },
+  {
+    "key": "dc_link_voltage",
+    "raw": "43D897DE",
+    "ts": "2026-10-19T19:32:25+00:00"
+  },
+  {
+    "key": "dc_link_voltage",
+    "raw": "43D89A0A",
+    "ts": "2026-10-19T19:28:42+00:00"
+  },
+  {
+    "key": "dc_link_voltage",
+    "raw": "43D8A679",
+    "ts": "2026-10-19T19:24:59+00:00"
+  },
+  {
+    "key": "electric_drive_inflow_coolant_temperature",
+    "raw": "4147E7B3",
+    "ts": "2026-10-21T20:49:29+00:00"
+  },
+  {
+    "key": "electric_drive_inflow_coolant_temperature",
+    "raw": "41458D98",
+    "ts": "2026-10-21T20:45:37+00:00"
+  },
+  {
+    "key": "electric_drive_inflow_coolant_temperature",
+    "raw": "41816D8E",
+    "ts": "2026-10-19T19:32:25+00:00"
+  },
+  {
+    "key": "electric_drive_inflow_coolant_temperature",
+    "raw": "41805EA7",
+    "ts": "2026-10-19T19:28:42+00:00"
+  },
+  {
+    "key": "electric_drive_inflow_coolant_temperature",
+    "raw": "417C8928",
+    "ts": "2026-10-19T19:24:59+00:00"
+  },
+  {
+    "key": "stator_temperature",
+    "raw": "41239DA6",
+    "ts": "2026-10-21T20:49:29+00:00"
+  },
+  {
+    "key": "stator_temperature",
+    "raw": "41200000",
+    "ts": "2026-10-21T20:45:37+00:00"
+  },
+  {
+    "key": "stator_temperature",
+    "raw": "415C90A2",
+    "ts": "2026-10-19T19:32:25+00:00"
+  },
+  {
+    "key": "stator_temperature",
+    "raw": "415AC1CF",
+    "ts": "2026-10-19T19:28:42+00:00"
+  },
+  {
+    "key": "stator_temperature",
+    "raw": "4156B074",
+    "ts": "2026-10-19T19:24:59+00:00"
+  },
+  {
+    "key": "motor_maximum_current",
+    "raw": "4411A000",
+    "ts": "2026-10-21T20:49:29+00:00"
+  },
+  {
+    "key": "motor_maximum_current",
+    "raw": "44116000",
+    "ts": "2026-10-21T20:45:37+00:00"
+  },
+  {
+    "key": "motor_maximum_current",
+    "raw": "44164000",
+    "ts": "2026-10-19T19:32:25+00:00"
+  },
+  {
+    "key": "motor_maximum_current",
+    "raw": "44164000",
+    "ts": "2026-10-19T19:28:42+00:00"
+  },
+  {
+    "key": "motor_maximum_current",
+    "raw": "4415E000",
+    "ts": "2026-10-19T19:24:59+00:00"
+  },
+  {
+    "key": "motor_minimum_current",
+    "raw": "C3278000",
+    "ts": "2026-10-21T20:49:29+00:00"
+  },
+  {
+    "key": "motor_minimum_current",
+    "raw": "C3270000",
+    "ts": "2026-10-21T20:45:37+00:00"
+  },
+  {
+    "key": "motor_minimum_current",
+    "raw": "C3260000",
+    "ts": "2026-10-19T19:32:25+00:00"
+  },
+  {
+    "key": "motor_minimum_current",
+    "raw": "C3260000",
+    "ts": "2026-10-19T19:28:42+00:00"
+  },
+  {
+    "key": "motor_minimum_current",
+    "raw": "C3250000",
+    "ts": "2026-10-19T19:24:59+00:00"
+  },
+  {
+    "key": "energy_counters",
+    "raw": "01E7CC17FE1B6F680C8071E1F3FF618E",
+    "ts": "2026-10-21T20:49:29+00:00"
+  },
+  {
+    "key": "energy_counters",
+    "raw": "01E7CC17FE1B6FD70C8071E1F3FF6473",
+    "ts": "2026-10-21T20:45:37+00:00"
+  },
+  {
+    "key": "energy_counters",
+    "raw": "01E7CC17FE1B74E70C8071E0F3FF868C",
+    "ts": "2026-10-19T19:32:25+00:00"
+  },
+  {
+    "key": "energy_counters",
+    "raw": "01E7CC17FE1B75190C8071E0F3FF87DE",
+    "ts": "2026-10-19T19:28:42+00:00"
+  },
+  {
+    "key": "energy_counters",
+    "raw": "01E7CC17FE1B75560C8071E0F3FF8975",
+    "ts": "2026-10-19T19:24:59+00:00"
+  },
+  {
+    "key": "pack_current",
+    "raw": "000248B332",
+    "ts": "2026-10-21T20:49:29+00:00"
+  },
+  {
+    "key": "pack_current",
+    "raw": "0002480732",
+    "ts": "2026-10-21T20:45:37+00:00"
+  },
+  {
+    "key": "pack_current",
+    "raw": "0002492635",
+    "ts": "2026-10-19T19:32:25+00:00"
+  },
+  {
+    "key": "pack_current",
+    "raw": "0002491934",
+    "ts": "2026-10-19T19:28:42+00:00"
+  },
+  {
+    "key": "pack_current",
+    "raw": "0002493D34",
+    "ts": "2026-10-19T19:24:59+00:00"
+  }
+]

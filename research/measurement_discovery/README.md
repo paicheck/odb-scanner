@@ -5,6 +5,14 @@ no write/coding/adaptation/security access/routine/actuator test, no fault
 clearing. No production decoder, registry, catalogue, database, profile, log or
 test was modified. Everything here is additive.
 
+> **2026-10-22 update:** the safe fixes identified by
+> `payload_research_20261021.md` are now implemented in commit `b8b1c70`:
+> signed/sentinel handling for `0x1E39`, raw-only `0x2A53[3:5]`, relabelled
+> `0x5867` (10 km/LSB counter), the `accelerator_pedal_pct` alias for `0xF449`,
+> and a read-only `tools/audit_payload_findings.py`. The 2026-10-20 package
+> below remains the original evidence snapshot; later status is in
+> `validation_roadmap.md` and `decoder_audit.md`.
+
 **Start with:** `final_report.md` (executive summary and deliverables A–G), then
 `candidate_measurements.csv` (ranked catalogue).
 
@@ -51,8 +59,10 @@ test was modified. Everything here is additive.
 | `profile_signals_all.csv` | Deduplicated profile signal table |
 | `profile_signals_readable.tsv` | Readable profile signal table |
 | `evidence_report.md` | Evidence hierarchy, source assessment, contradictions |
-| `decoder_audit.md` | Decoder findings, raw examples, proposed fixes |
+| `decoder_audit.md` | Decoder findings, raw examples, proposed fixes, resolution log |
 | `validation_roadmap.md` | Offline + future read-only tests, gates, abort criteria |
+| `payload_research_20261021.md` | Unknown-payload dossier, raw vectors, proposed known-state tests, implementation status |
+| `captures/` | 2026-10-21 offline validation archive (35/35 pass) and reports |
 | `car_scanner_recommendations.md` | What to select/add/avoid in Car Scanner |
 | `python_integration.md` | Code/schema/test recommendations |
 | `offline_crosscheck.csv` | 31-timestamp cell/temp index comparison |

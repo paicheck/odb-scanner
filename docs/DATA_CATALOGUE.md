@@ -51,7 +51,7 @@ Measurements 2026-10-05T18:03:02+00:00 -> 2026-10-19T19:32:25+00:00 (UTC)
 - `pack_current_2` - HV pack current (2nd) (A) - 40 rows
 - `min_discharge_voltage` - Minimum discharge voltage (V) - 40 rows
 - `max_charge_voltage` - Maximum charge voltage (V) - 40 rows
-- `odometer_2` - Odometer (BMS copy 2) (km) - 40 rows
+- `odometer_2` - Secondary distance counter (10 km/LSB; not the odometer) (km) - 40 rows
 - `motor_rpm` - Motor speed (rpm) - 40 rows
 - `cell_soc_max` - Cell with the highest SoC (%) - 40 rows
 - `cell_soc_min` - Cell with the lowest SoC (%) - 40 rows
@@ -85,7 +85,7 @@ Measurements 2026-10-05T18:03:02+00:00 -> 2026-10-19T19:32:25+00:00 (UTC)
 - `hv_em_nv_power_limitation` - HV-EM NV Power limitation (W) - 56 rows
 - `nv_energy_requirement` - NV Energy requirement (Wh) - 56 rows
 - `hv_em_hv_battery_energy_information` - HV-EM HV Battery energy information (Wh) - 56 rows
-- `dc_dc_converter_reserved_current` - DC-DC converter reserved current (A) - 56 rows
+- `dc_dc_converter_reserved_current` - DC-DC current complement (not an independent current) - 56 rows
 - `average_battery_consumption_internal_value` - Average battery consumption (internal value) (A) - 56 rows
 
 ### dcdc - DC/DC converter (HV->12V) (2 of 2 read)
@@ -240,12 +240,19 @@ Measurements 2026-10-05T18:03:02+00:00 -> 2026-10-19T19:32:25+00:00 (UTC)
 - Every decoder is `doc_status = experimentally determined` unless a row below says
   otherwise: the layout was reverse-engineered by observing the car, NOT taken from a
   VW document. Treat every scale factor as unproven until a second source confirms it.
-- Known BAD scalings - do not trust these values: climate `windshield_temperature`
-  (~483476; five-byte payload, field/scale unresolved), `co2_content_interior`
-  (25,400 ppm under the old byte1 x100 decode), `bat_charging_voltage`
-  (0/0xFFFF sentinels), `odometer_2` (~11,150 km at x10 while three other
-  odometers read ~111,020 km), and `dc_dc_converter_reserved_current` (not an
-  independent current; it repeats the 15 A field).
+- Known BAD scalings - these keys are quarantined and excluded from scoring:
+  `windshield_temperature` (the current u16 decode reads ~483,476; byte 0 × 0.1
+  is a candidate pending a cold-soak/defroster test), `co2_content_interior`
+  (40/40 responses are `03FE`: 25,400 ppm as byte1×100 vs 1,022 ppm as a whole
+  u16, and `03FE` is also the unpopulated-cell sentinel), `bat_charging_voltage`
+  (the profile declares signed; `0xFFFF`/`0xFFFE` now decode to `None` instead of
+  2,047.97 V, while historical rows remain), `odometer_2` (a 10 km/LSB secondary
+  distance counter, not the odometer; x10 matched a ~10.5 km drive and x100 is
+  refuted), and `dc_dc_converter_reserved_current` (bytes 3-4 are the complement
+  of the real current in bytes 1-2, sum ~0x0508; raw-only, use `dcdc_gw_current`).
+- `res_pid_0149` is the accelerator pedal position (`raw / 2.55` %). The
+  readable alias `accelerator_pedal_pct` resolves to the same stored key; it does
+  not create a second series.
 - The 25-row electric-drive family is now decoded as IEEE-754 float32, not
   u16/10+1. Its old ~1680 degC / ~1738 V / ~1e8 W values were a decode error.
 - The adapter intermittently fails to reach the 29-bit modules (bat_mgmt, eldrive,

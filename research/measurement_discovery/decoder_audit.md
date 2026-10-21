@@ -24,6 +24,25 @@ profile, 308 rows / 255 DIDs), `decoders/meb.py`, `decoders/registry.py`,
 | F9 | Battery serial ASCII is not decoded | `battery_serial` | Raw bytes logged, value/text null | High | Decode ASCII; low diagnostic value |
 | F10 | Several lower-priority anomalies | `bat_charging_voltage`, `dc_dc_converter_reserved_current`, `cell_soc_max/min` | Sentinel values or JSON-only output | Medium | Separate backlog; do not conflate with the drive/LV investigation |
 
+## Resolution log (2026-10-22, commit `b8b1c70`)
+
+| Finding | Status | Evidence / action |
+|---|---|---|
+| F1 float32 | Resolved earlier | 25 electric-drive rows now use IEEE-754 big-endian; pinned by vectors |
+| F2 energy block | Resolved earlier | Four fields at Ah 0/4 and kWh 8/12; raw bytes preserved |
+| F3 cell/temp index | Resolved earlier | 1-based indices exposed; tie handling tested |
+| F4 pack current | Resolved earlier | Arithmetic unchanged; documentation states negative = discharge |
+| F5 CO2 | **Still unresolved** | 40/40 responses are `03FE`; 25,400 ppm (byte1×100) and 1,022 ppm (whole u16) are both pinned; `03FE` is also the not-fitted sentinel. Decoder unchanged. |
+| F6 windshield | **Still unresolved** | Current u16 decode is refuted; byte 0 × 0.1 is a candidate (1.17 °C MAE vs outside). Cold-soak/defroster test still needed. |
+| F7 `0x5867` | **Resolved as a counter** | A 10 km/LSB secondary counter, not the total odometer. The x10 delta matched a ~10.5 km drive; x100 is refuted. Key relabelled; still excluded from scoring because its absolute zero/meaning is unknown. |
+| F8 BMS VIN | Resolved earlier | BMS `0xF802` request removed; `veh_info` path returns the VIN. |
+| F9 battery serial | Resolved earlier | ASCII decoded into `value`/`text_value`; JSON cell SoC pairs are not undecoded. |
+| F10 sentinels | **Partially resolved** | `0x1E39` `FFFF`/`FFFE` now return `None`; `0x2A53` reserved current is raw-only (complement, not a current); `cell_soc_max/min` are JSON by design. |
+
+Regression tests: `tests/test_payload_research.py` and
+`tests/test_payload_audit_tool.py`. The read-only replay is
+`tools/audit_payload_findings.py`.
+
 ## Method
 
 1. Extracted every profile row and grouped it by DID and sub-field.

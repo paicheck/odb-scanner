@@ -72,10 +72,10 @@ serial and the pack-current layout.
 | V0.4 Energy short | First 8 bytes only | Explicit failure, not 0 kWh | No silent 0 |
 | V0.5 Cell/temp index | `offline_crosscheck.csv` | 1-based index; tie-aware match | 28/31 max, 29/31 min; 31/31 + 30/31 temp (already reproduced) |
 | V0.6 Pack current | `000248FD`, `FFED` | -2.43 A and -1.9 A | Same sign; no final negation |
-| V0.7 CO2 | `03FE` | Report both byte1 and u16 hypotheses | Test framework records both; no unilateral choice |
-| V0.8 Windshield | `7A2321C07D` | Current decode flagged invalid; five bytes retained | No production use of ~488,500 |
-| V0.9 Odometer | `0005045B00000000` | Report ×10 and ×100 hypotheses | No scale change without V3.6 |
-| V0.10 BMS VIN | NRC `0x31` | Explicit unsupported/rejected | No retry storm |
+| V0.7 CO2 | `03FE` | Report both byte1 and u16 hypotheses | Implemented: both readings pinned in `tests/test_payload_research.py`; decoder unchanged |
+| V0.8 Windshield | `7A2321C07D` | Current decode flagged invalid; five bytes retained | Implemented: invalid decode and byte-0 candidate pinned; cold-soak/defroster test still needed |
+| V0.9 Odometer | `0005045B00000000` | Report ×10 and ×100 hypotheses | Implemented: x10 kept; x100 refuted by the 10 km vs ~10.5 km delta; absolute zero unknown |
+| V0.10 BMS VIN | NRC `0x31` | Explicit unsupported/rejected | Implemented earlier: BMS request removed; `veh_info` path returns the VIN |
 
 **Deliverable:** regression vectors in the project's test suite, with raw
 inputs and expected outputs. **Do not merge a decoder change without them.**

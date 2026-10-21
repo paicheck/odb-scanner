@@ -3,6 +3,25 @@
 **Status:** read-only desk research. No vehicle connection, no `0x22` probes, no
 `data/odb_scanner.db` writes, no decoder changes.
 
+> **Implementation status (2026-10-22, commit `b8b1c70`).** The safe fixes from
+> this dossier are now implemented and covered by tests:
+>
+> - `0x1E39` `bat_charging_voltage` is decoded as signed; `0xFFFF`/`0xFFFE` and
+>   negative values return `None` instead of 2,047.97 V.
+> - `0x2A53` `dc_dc_converter_reserved_current` is raw-only (the field is the
+>   complement of the real current), so no fabricated ~250 A value is emitted.
+> - `0x5867` `odometer_2` is relabelled as a 10 km/LSB secondary counter; the
+>   x10 arithmetic is kept and x100 is recorded as refuted.
+> - `0xF449` `res_pid_0149` gains the `accelerator_pedal_pct` alias without
+>   renaming the stored key.
+> - `0x27C4` and `0x42DB` remain quarantined and unresolved; the candidate
+>   arithmetic is pinned in `tests/test_payload_research.py`.
+> - `tools/audit_payload_findings.py` re-runs these checks against a database
+>   opened `mode=ro`; `tests/test_payload_audit_tool.py` covers it.
+>
+> The original research text below is preserved as the 2026-10-21 evidence
+> snapshot.
+
 **Scope:** every MEB payload whose meaning or scale is currently unresolved,
 quarantined, or deferred:
 

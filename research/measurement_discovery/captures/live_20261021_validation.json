@@ -1,0 +1,355 @@
+{
+  "summary": {
+    "total": 35,
+    "pass": 35,
+    "fail": 0,
+    "indeterminate": 0
+  },
+  "verdicts": [
+    {
+      "key": "dc_link_voltage",
+      "raw": "43D75481",
+      "result": "PASS",
+      "value": 430.6601867675781,
+      "unit": "V",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "dc_link_voltage",
+      "raw": "43D7550E",
+      "result": "PASS",
+      "value": 430.66448974609375,
+      "unit": "V",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "dc_link_voltage",
+      "raw": "43D897DE",
+      "result": "PASS",
+      "value": 433.18646240234375,
+      "unit": "V",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "dc_link_voltage",
+      "raw": "43D89A0A",
+      "result": "PASS",
+      "value": 433.20343017578125,
+      "unit": "V",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "dc_link_voltage",
+      "raw": "43D8A679",
+      "result": "PASS",
+      "value": 433.3005676269531,
+      "unit": "V",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "electric_drive_inflow_coolant_temperature",
+      "raw": "4147E7B3",
+      "result": "PASS",
+      "value": 12.494067192077637,
+      "unit": "degC",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "electric_drive_inflow_coolant_temperature",
+      "raw": "41458D98",
+      "result": "PASS",
+      "value": 12.347068786621094,
+      "unit": "degC",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "electric_drive_inflow_coolant_temperature",
+      "raw": "41816D8E",
+      "result": "PASS",
+      "value": 16.17849349975586,
+      "unit": "degC",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "electric_drive_inflow_coolant_temperature",
+      "raw": "41805EA7",
+      "result": "PASS",
+      "value": 16.04621696472168,
+      "unit": "degC",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "electric_drive_inflow_coolant_temperature",
+      "raw": "417C8928",
+      "result": "PASS",
+      "value": 15.783485412597656,
+      "unit": "degC",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "stator_temperature",
+      "raw": "41239DA6",
+      "result": "PASS",
+      "value": 10.225988388061523,
+      "unit": "degC",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "stator_temperature",
+      "raw": "41200000",
+      "result": "PASS",
+      "value": 10.0,
+      "unit": "degC",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "stator_temperature",
+      "raw": "415C90A2",
+      "result": "PASS",
+      "value": 13.785310745239258,
+      "unit": "degC",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "stator_temperature",
+      "raw": "415AC1CF",
+      "result": "PASS",
+      "value": 13.672316551208496,
+      "unit": "degC",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "stator_temperature",
+      "raw": "4156B074",
+      "result": "PASS",
+      "value": 13.418079376220703,
+      "unit": "degC",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "motor_maximum_current",
+      "raw": "4411A000",
+      "result": "PASS",
+      "value": 582.5,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "motor_maximum_current",
+      "raw": "44116000",
+      "result": "PASS",
+      "value": 581.5,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "motor_maximum_current",
+      "raw": "44164000",
+      "result": "PASS",
+      "value": 601.0,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "motor_maximum_current",
+      "raw": "44164000",
+      "result": "PASS",
+      "value": 601.0,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "motor_maximum_current",
+      "raw": "4415E000",
+      "result": "PASS",
+      "value": 599.5,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "motor_minimum_current",
+      "raw": "C3278000",
+      "result": "PASS",
+      "value": -167.5,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "motor_minimum_current",
+      "raw": "C3270000",
+      "result": "PASS",
+      "value": -167.0,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "motor_minimum_current",
+      "raw": "C3260000",
+      "result": "PASS",
+      "value": -166.0,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "motor_minimum_current",
+      "raw": "C3260000",
+      "result": "PASS",
+      "value": -166.0,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "motor_minimum_current",
+      "raw": "C3250000",
+      "result": "PASS",
+      "value": -165.0,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "energy_counters",
+      "raw": "01E7CC17FE1B6F680C8071E1F3FF618E",
+      "result": "PASS",
+      "value": {
+        "charged_ah": 58196.46543987296,
+        "discharged_ah": 57810.82437854722,
+        "charged_kwh": 24436.978557576494,
+        "discharged_kwh": 23460.964522359292,
+        "used_kwh": 23460.964522359292
+      },
+      "unit": "kWh",
+      "issue": "structured value decoded",
+      "expected": null
+    },
+    {
+      "key": "energy_counters",
+      "raw": "01E7CC17FE1B6FD70C8071E1F3FF6473",
+      "result": "PASS",
+      "value": {
+        "charged_ah": 58196.46543987296,
+        "discharged_ah": 57810.622309250226,
+        "charged_kwh": 24436.978557576494,
+        "discharged_kwh": 23460.878189636373,
+        "used_kwh": 23460.878189636373
+      },
+      "unit": "kWh",
+      "issue": "structured value decoded",
+      "expected": null
+    },
+    {
+      "key": "energy_counters",
+      "raw": "01E7CC17FE1B74E70C8071E0F3FF868C",
+      "result": "PASS",
+      "value": {
+        "charged_ah": 58196.46543987296,
+        "discharged_ah": 57808.26301367444,
+        "charged_kwh": 24436.978441068095,
+        "discharged_kwh": 23459.861187830233,
+        "used_kwh": 23459.861187830233
+      },
+      "unit": "kWh",
+      "issue": "structured value decoded",
+      "expected": null
+    },
+    {
+      "key": "energy_counters",
+      "raw": "01E7CC17FE1B75190C8071E0F3FF87DE",
+      "result": "PASS",
+      "value": {
+        "charged_ah": 58196.46543987296,
+        "discharged_ah": 57808.17199146859,
+        "charged_kwh": 24436.978441068095,
+        "discharged_kwh": 23459.821807991706,
+        "used_kwh": 23459.821807991706
+      },
+      "unit": "kWh",
+      "issue": "structured value decoded",
+      "expected": null
+    },
+    {
+      "key": "energy_counters",
+      "raw": "01E7CC17FE1B75560C8071E0F3FF8975",
+      "result": "PASS",
+      "value": {
+        "charged_ah": 58196.46543987296,
+        "discharged_ah": 57808.060944377445,
+        "charged_kwh": 24436.978441068095,
+        "discharged_kwh": 23459.774389073722,
+        "used_kwh": 23459.774389073722
+      },
+      "unit": "kWh",
+      "issue": "structured value decoded",
+      "expected": null
+    },
+    {
+      "key": "pack_current",
+      "raw": "000248B332",
+      "result": "PASS",
+      "value": -3.17,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "pack_current",
+      "raw": "0002480732",
+      "result": "PASS",
+      "value": -4.89,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "pack_current",
+      "raw": "0002492635",
+      "result": "PASS",
+      "value": -2.02,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "pack_current",
+      "raw": "0002491934",
+      "result": "PASS",
+      "value": -2.15,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    },
+    {
+      "key": "pack_current",
+      "raw": "0002493D34",
+      "result": "PASS",
+      "value": -1.79,
+      "unit": "A",
+      "issue": "",
+      "expected": null
+    }
+  ]
+}
