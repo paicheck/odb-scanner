@@ -669,7 +669,10 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         "Pack voltage: 401.5 V". Per-cell keys are not in the DID registry, so
         they are described here.
         """
+        from decoders.aliases import aliases_for, resolve
         from decoders.quality import quality_for
+
+        key = resolve(key)
 
         if key.startswith("cell_v_"):
             try:
@@ -677,7 +680,9 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
                 name = f"Cell {idx} voltage"
             except ValueError:
                 name = "Cell voltage"
-            return {"name": name, "unit": "V", "data_kind": "numeric"}
+            return {"key": key, "name": name, "unit": "V",
+                    "data_kind": "numeric",
+                    "aliases": list(aliases_for(key))}
 
         name, unit, kind = key, "", "numeric"
         try:
@@ -689,7 +694,8 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             kind = quality_for(_profile(), key).data_kind.value
         except Exception:  # pragma: no cover - metadata must never break a chart
             kind = "numeric"
-        return {"name": name, "unit": unit, "data_kind": kind}
+        return {"key": key, "name": name, "unit": unit, "data_kind": kind,
+                "aliases": list(aliases_for(key))}
 
     def series_for(key: str, days: int, max_points: int, method: str) -> dict:
         """Chart payload for one key, server-side downsampled.
@@ -700,7 +706,9 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         `cell_voltages` table instead of `measurements`.
         """
         from analysis import series as series_mod
+        from decoders.aliases import resolve
 
+        key = resolve(key)
         meta = key_meta(key)
         _, vid = vehicle_and_id()
         if not vid:
@@ -777,6 +785,7 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         timeline_events = []
         if key:
             chart = series_for(key, days, max_points, method)
+            key = chart["key"]
             obs = observation_states([key])
             from analysis.timeline import build_timeline, markers
             window = build_timeline(repo, vehicle_and_id()[1],
@@ -818,7 +827,7 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         max_points = min(int(params.get("max_points", 1500)), 20000)
         method = params.get("method", "min_max")
         payload = series_for(key, days, max_points, method)
-        payload["observation"] = observation_states([key])
+        payload["observation"] = observation_states([payload["key"]])
         return payload
 
     @app.get("/api/timeline")

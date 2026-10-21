@@ -51,7 +51,7 @@ from enum import Enum
 
 from .registry import DIDRegistry, DIDSpec, build_default_registry
 
-CATALOGUE_VERSION = "2026-10-20.1"
+CATALOGUE_VERSION = "2026-10-21.1"
 
 
 class Confidence(str, Enum):
@@ -668,6 +668,132 @@ OVERLAY: dict[tuple[str, str], dict] = {
         "plausible_min": 0.0,
         "plausible_max": 65535 * 50.0,
         "plausible_basis": "encoding range only.",
+    },
+    # -- 2026-10-21 payload research -------------------------------------
+    ("meb", "bat_charging_voltage"): {
+        "confidence": Confidence.PROVISIONAL,
+        "length2": {"scale": 0.0312499784501336, "signed": True},
+        "response_length_hint": 2,
+        "evidence_kind": EvidenceKind.VEHICLE_RESPONSE,
+        "evidence_source": (
+            "stored 0x1E39 payloads 0000/0001/0006 and FFFF; the Car Scanner "
+            "profile declares the field signed. Signed, FFFF is -0.03125 V; "
+            "the parked-car samples are 0-0.1875 V."),
+        "evidence_artifact": (
+            "data/odb_scanner.db; docs/investigation/live_measurement_evidence.csv"),
+        "validation_method": (
+            "offline replay of the stored records; the sentinel is also the "
+            "pattern used by unpopulated BMS slots"),
+        "limitations": (
+            "every capture is from a parked car, so the top of the charging "
+            "range is unconfirmed; 0xFFFF/0xFFFE and negatives now return None"),
+        "falsified_by": (
+            "a capture where 0xFFFF is followed by a plausible charging "
+            "voltage and the field is known to be unsigned"),
+        "plausible_min": 0.0,
+        "plausible_max": 500.0,
+        "plausible_basis": "MEB pack charging voltage",
+    },
+    ("meb", "odometer_2"): {
+        "confidence": Confidence.PROVISIONAL,
+        "length2": {"offset": 2, "scale": 10.0},
+        "response_length_hint": 4,
+        "evidence_kind": EvidenceKind.VEHICLE_RESPONSE,
+        "evidence_source": (
+            "0x5867 0005045A00000000 -> 11,140 and 0005045B00000000 -> 11,150 "
+            "while the four agreeing odometers moved ~10.5 km. The x10 delta "
+            "matches; x100 would require 100 km per LSB and is refuted."),
+        "evidence_artifact": "data/odb_scanner.db",
+        "validation_method": "offline delta check across the 18/19 Oct captures",
+        "limitations": (
+            "a 10 km/LSB secondary distance counter, not the total odometer; "
+            "its absolute zero and physical meaning are unknown"),
+        "falsified_by": (
+            "a known-distance drive where the LSB does not track 10 km, or a "
+            "capture where the absolute value matches the total odometer"),
+        "plausible_min": 0.0,
+        "plausible_max": 2_000_000.0,
+        "plausible_basis": "passenger-car lifetime distance counter",
+    },
+    ("meb", "dc_dc_converter_reserved_current"): {
+        "confidence": Confidence.UNKNOWN,
+        "response_length_hint": 5,
+        "evidence_kind": EvidenceKind.VEHICLE_RESPONSE,
+        "evidence_source": (
+            "124 stored 0x2A53 five-byte payloads: u16[1:3] + u16[3:5] is "
+            "1287-1291 (~0x0508). The second field is the complement of the "
+            "real current, not a second current."),
+        "evidence_artifact": "data/odb_scanner.db",
+        "validation_method": "offline complement invariant",
+        "limitations": (
+            "the field carries no independent current; the registry is raw-only "
+            "for this key and dcdc_gw_current is the real current"),
+        "falsified_by": (
+            "a known-load capture where the second field moves independently "
+            "of the first"),
+    },
+    ("meb", "res_pid_0149"): {
+        "confidence": Confidence.PROVISIONAL,
+        "length1": {"offset": 0, "divisor": 2.55},
+        "response_length_hint": 1,
+        "evidence_kind": EvidenceKind.THIRD_PARTY_DEFINITION,
+        "evidence_source": (
+            "spot2000 0xF449: response byte XX / 2.55 = pedal position in %; "
+            "evDash lists 22F449 as accelerator pedal position; live raw 00 "
+            "= 0% in a parked car."),
+        "evidence_artifact": (
+            "research/measurement_discovery/sources/"
+            "spot2000_VW_MEB_UDS_PIDs_list.csv; "
+            "research/measurement_discovery/sources/evDash_CarVWID3.cpp; "
+            "data/odb_scanner.db"),
+        "validation_method": (
+            "two independent third-party definitions plus a live zero"),
+        "limitations": (
+            "a pressed-pedal capture is still needed to confirm the top of "
+            "the range; the stored key keeps its historical name"),
+        "falsified_by": (
+            "a pressed-pedal capture that does not scale as XX / 2.55"),
+        "plausible_min": 0.0,
+        "plausible_max": 100.0,
+        "plausible_basis": "accelerator pedal position (%)",
+        "extras": {"aliases": "accelerator_pedal_pct"},
+    },
+    ("meb", "windshield_temperature"): {
+        "confidence": Confidence.UNKNOWN,
+        "response_length_hint": 5,
+        "evidence_kind": EvidenceKind.VEHICLE_RESPONSE,
+        "evidence_source": (
+            "37 paired samples: byte 0 x 0.1 vs outside_temp has 1.17 degC "
+            "mean absolute error (max 2.5 degC). The profile's u16[0:2] x "
+            "15.625 - 39.5 decode produces ~483,476 degC and is refuted."),
+        "evidence_artifact": "data/odb_scanner.db",
+        "validation_method": (
+            "offline correlation; the byte-0 candidate is not implemented"),
+        "limitations": (
+            "current decode is invalid; byte 0 x 0.1 is a candidate that still "
+            "needs a cold-soak/defroster test to separate windshield from "
+            "ambient"),
+        "falsified_by": (
+            "a cold-soak/defroster test where byte 0 does not follow the "
+            "windshield/ambient temperature"),
+    },
+    ("meb", "co2_content_interior"): {
+        "confidence": Confidence.UNKNOWN,
+        "response_length_hint": 2,
+        "evidence_kind": EvidenceKind.VEHICLE_RESPONSE,
+        "evidence_source": (
+            "40/40 stored 0x42DB responses are 03FE. Byte 1 x 100 = 25,400 "
+            "ppm; the whole u16 = 1,022 ppm; 03FE is also the BMS not-fitted "
+            "sentinel for unpopulated cell-temperature slots."),
+        "evidence_artifact": "data/odb_scanner.db",
+        "validation_method": (
+            "offline payload enumeration; both hypotheses are retained"),
+        "limitations": (
+            "unresolved between a 1,022 ppm whole-u16 reading and a not-fitted "
+            "sentinel; the current 25,400 ppm decode is not credible"),
+        "falsified_by": (
+            "a fresh-air/occupied test where the value moves in 400-2,000 ppm "
+            "(whole-u16) or stays fixed (sentinel)"),
     },
 }
 

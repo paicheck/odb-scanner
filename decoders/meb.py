@@ -420,6 +420,34 @@ def _cs_field_decoder(
     return decode
 
 
+_BAT_CHARGING_VOLTAGE_SCALE = 0.0312499784501336
+
+
+def _bat_charging_voltage(raw: bytes) -> float | None:
+    """0x1E39 is a SIGNED 16-bit charging voltage, with a sentinel.
+
+    The Car Scanner profile declares this field signed, but the generic
+    `_cs_field_decoder` defaulted to unsigned.  That turned the stored
+    ``FFFF`` payload into 2,047.97 V -- a plausible-looking number that is
+    really either a sentinel or -0.03125 V.  The car was parked in every
+    capture, so the honest decode is "no value" for the sentinel and for any
+    negative result; a charging session is still needed to confirm the top of
+    the range.  The raw bytes are preserved by the collector either way.
+    """
+    chunk = raw[0:2]
+    if len(chunk) != 2:
+        raise IndexError(
+            f"battery charging voltage needs 2 bytes at offset 0, "
+            f"got {len(chunk)}"
+        )
+    if chunk in (b"\xff\xff", b"\xff\xfe"):
+        return None
+    value = int.from_bytes(chunk, "big", signed=True)
+    if value < 0:
+        return None
+    return value * _BAT_CHARGING_VOLTAGE_SCALE
+
+
 def _f32be(raw: bytes, off: int = 0) -> float | None:
     """IEEE-754 big-endian float32 at ``off`` (electric-drive family).
 
@@ -720,7 +748,18 @@ _CS_FIELDS: tuple[tuple, ...] = (
         1.0,
         0.0,
     ),
-    ("odometer_2", 0x5867, "Odometer (BMS copy 2)", "km", ECU_BAT, 2, 2, 10.0, 1.0, 0.0),
+    (
+        "odometer_2",
+        0x5867,
+        "Secondary distance counter (10 km/LSB; not the odometer)",
+        "km",
+        ECU_BAT,
+        2,
+        2,
+        10.0,
+        1.0,
+        0.0,
+    ),
     ("motor_rpm", 0xF40C, "Motor speed", "rpm", ECU_BAT, 0, 2, 1.0, 4.0, 0.0),
     ("obc_dc_current", 0x103D, "HV DC current (OBC)", "A", ECU_CHG, 0, 2, 0.1, 1.0, 0.0),
     (
@@ -779,9 +818,40 @@ _CS_PAIRS: tuple[tuple, ...] = (
     ("cell_soc_min", 0x1E2D, "Cell with the lowest SoC", "%", ECU_BAT),
 )
 
+# Profile rows whose generic arithmetic is not the whole story.  These are
+# decoder changes backed by the 2026-10-21 payload research, not guesses:
+#   * 0x1E39 is signed and carries a sentinel (2,047.97 V unsigned);
+#   * 0x2A53[3:5] is the complement of the real current at [1:3], so decoding
+#     it as a second current fabricated ~250 A;
+#   * 0x5867 is a 10 km/LSB counter, not the total odometer.
+_CS_SPECIAL_DECODERS = {
+    "bat_charging_voltage": _bat_charging_voltage,
+}
+
+_CS_RAW_ONLY = {"dc_dc_converter_reserved_current"}
+
+_CS_SPECIAL_NOTES = {
+    "bat_charging_voltage": (
+        "s16be[0:2] x 0.0312499784501336 [CS profile #342]; the profile "
+        "declares SIGNED. 0xFFFF/0xFFFE and negative values are treated as "
+        "sentinel/invalid -> None. Historical unsigned rows may still contain "
+        "2,047.97 V; raw bytes are preserved."
+    ),
+    "odometer_2": (
+        "u16be[2:4] x 10 km/LSB [CS profile #342]; a secondary distance "
+        "counter, not the odometer. The x10 delta matched a ~10.5 km drive, "
+        "which refutes x100. Its absolute zero/meaning is unknown; do not use "
+        "it for distance or SoH."
+    ),
+}
+
 
 def _register_profile_fields(reg: DIDRegistry) -> None:
     for key, did, name, unit, ecu, sbi, dl, mul, div, ofs in _CS_FIELDS:
+        decode = _CS_SPECIAL_DECODERS.get(key)
+        if key not in _CS_RAW_ONLY and decode is None:
+            decode = _cs_field_decoder(
+                sbi=sbi, dl=dl, mul=mul, div=div, ofs=ofs)
         reg.register(
             DIDSpec(
                 key,
@@ -789,10 +859,11 @@ def _register_profile_fields(reg: DIDRegistry) -> None:
                 did,
                 name,
                 unit,
-                decode=_cs_field_decoder(sbi=sbi, dl=dl, mul=mul, div=div, ofs=ofs),
+                decode=decode,
                 doc_status=_EXP,
                 slow=True,
-                notes=_cs_note(sbi, dl, mul, div, ofs),
+                notes=_CS_SPECIAL_NOTES.get(
+                    key, _cs_note(sbi, dl, mul, div, ofs)),
             )
         )
     for key, did, name, unit, ecu in _CS_PAIRS:
@@ -2617,8 +2688,8 @@ def _register_profile_extras(reg: DIDRegistry) -> None:
             "dc_dc_converter_reserved_current",
             ECU_ENERGY,
             0x2A53,
-            "DC-DC converter reserved current",
-            "A",
+            "DC-DC current complement (not an independent current)",
+            "",
             3,
             2,
             1,
@@ -2643,6 +2714,28 @@ def _register_profile_extras(reg: DIDRegistry) -> None:
         ),
     )
     for key, ecu, did, name, unit, sbi, dl, mul, div, ofs, sig, slow in table:
+        if key in _CS_RAW_ONLY:
+            # 0x2A53[3:5] is the complement of the real current at [1:3]
+            # (u16[1:3] + u16[3:5] ~= 0x0508 in every capture).  Subtracting
+            # the current offset from the complement fabricated ~250 A, so
+            # this key is now raw-only until an independent meaning is found.
+            reg.register(
+                DIDSpec(
+                    key,
+                    ecu,
+                    did,
+                    name,
+                    unit,
+                    decode=None,
+                    doc_status=_EXP,
+                    slow=slow,
+                    notes="u16be[3:5] is the complement of the real current "
+                    "at u16be[1:3] (sum ~0x0508); no independent current. "
+                    "Raw-only; use dcdc_gw_current for the actual current "
+                    f"[{CS_SRC}; 2026-10-21 payload research]",
+                )
+            )
+            continue
         if key in _FLOAT32_KEYS:
             # The profile's DL=2 here describes the displayed field width, not
             # the bytes consumed by FLOAT32(A,B,C,D). Always read four.

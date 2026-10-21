@@ -86,22 +86,29 @@ _KNOWN_BAD: dict[str, str] = {
     # degC / ~1738 V / ~1e8 W values were the u16 mis-decode, not the sensor.
     # climate — temperatures / concentrations far out of range
     "windshield_temperature": (
-        "reads ~483476 where a cabin-surface temperature is expected"),
+        "u16[0:2] x 15.625 - 39.5 reads ~483476 degC; byte 0 x 0.1 tracks "
+        "outside_temp (1.17 degC MAE) but needs a cold-soak/defroster test"),
     "co2_content_interior": (
-        "reads 25400; the decode does not match the documented unit"),
-    # bat_mgmt — charging voltage beyond the pack's own maximum
+        "40/40 responses are 03FE; byte 1 x 100 gives 25,400 ppm, whole u16 "
+        "gives 1,022 ppm, and 03FE is also the BMS not-fitted sentinel"),
+    # bat_mgmt — the profile declares this field SIGNED. The old unsigned
+    # decode turned the 0xFFFF sentinel into 2,047.97 V; the live decoder now
+    # returns None for 0xFFFF/0xFFFE and negative values.
     "bat_charging_voltage": (
-        "reaches 2048; a MEB pack charges to well under 500 V"),
-    # BMS odometer copy — three other odometers agree on ~111,020 km, this one
-    # decodes to ~11,150 km at x10 and ~111,500 km at x100. Do not use it for
-    # distance/SoH until the byte width is settled.
+        "profile declares signed; unsigned 0xFFFF became 2,047.97 V. "
+        "Sentinel/negative values now decode to None, not a voltage"),
+    # BMS 0x5867 — a 10 km/LSB secondary counter, not the total odometer.
+    # x10 matched a ~10.5 km drive; x100 is refuted by that same delta.
     "odometer_2": (
-        "x10 gives ~11,150 km while three other odometers read ~111,020 km; "
-        "the scale/field is unresolved"),
-    # Gateway 0x2A53 offsets 1 and 3 both decode to 15 A on the captured log,
-    # so the 'reserved' field carries no independent current information.
+        "10 km/LSB secondary distance counter, not the odometer: x10 matched "
+        "a ~10.5 km drive and x100 is refuted. Absolute zero/meaning unknown; "
+        "do not use for distance/SoH"),
+    # Gateway 0x2A53 offsets 1 and 3 are complementary, not two currents:
+    # u16[1:3] + u16[3:5] ~= 0x0508 in every capture. The key is raw-only.
     "dc_dc_converter_reserved_current": (
-        "same 15 A value as the DC-DC current field; no independent meaning"),
+        "bytes 3-4 are the complement of the real current in bytes 1-2 "
+        "(sum ~0x0508), not an independent current; raw-only, use "
+        "dcdc_gw_current"),
 }
 
 
@@ -215,6 +222,7 @@ _RANGES: dict[str, tuple[float, float, str]] = {
     "aux_12v_power_w": (-1000.0, 1000.0, "12 V battery terminal power"),
     "dcdc_power_kw": (0.0, 3.0, "MEB DC-DC converter output"),
     "dcdc_gw_power_kw": (0.0, 3.0, "MEB DC-DC converter output"),
+    "res_pid_0149": (0.0, 100.0, "accelerator pedal position"),
 }
 
 # `cell_v_NNN` all share the per-cell range.

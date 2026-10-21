@@ -87,3 +87,21 @@ def test_page_renders_with_a_text_valued_reading(dashboard, path):
     # gets its usual treatment.
     assert "WVWZZZE1ZMP087053" in response.text
     assert "436.4" in response.text
+
+
+def test_measurement_alias_resolves_to_the_stored_key(dashboard):
+    """`accelerator_pedal_pct` is a readable alias, not a second series."""
+    response = dashboard.get("/api/measurements/accelerator_pedal_pct")
+    assert response.status_code == 200, response.text[:500]
+    body = response.json()
+    assert body["key"] == "res_pid_0149"
+    assert body["aliases"] == ["accelerator_pedal_pct"]
+
+
+def test_series_alias_uses_canonical_key_for_observation(dashboard):
+    response = dashboard.get("/api/series?key=accelerator_pedal_pct")
+    assert response.status_code == 200, response.text[:500]
+    body = response.json()
+    assert body["key"] == "res_pid_0149"
+    assert body["observation"]
+    assert body["observation"][0]["key"] == "res_pid_0149"
