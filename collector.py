@@ -154,6 +154,12 @@ class Collector:
         # full adapter.timeout on every cycle otherwise, and the stored-DTC
         # set rarely changes within a run.
         self._dtc_snapshots: dict[str, dict] = {}
+        # Previous cycle's UDS DTC set as {(ecu_label, code): status_byte}. None
+        # means "no baseline yet" -- the first successful read only records the
+        # baseline, it does not emit warning-on/off, so a collector restart does
+        # not replay a lamp that was already on when it booted. The next read
+        # diffs against this to emit `dtc-cleared` when a code stops appearing.
+        self._prev_dtc_status: dict[tuple[str, str], int | None] | None = None
         # (ecu_key, did) pairs this vehicle has rejected with NRC 0x31, loaded
         # once the vehicle is known. poll_did() skips these and adds new ones,
         # so a DID the car does not implement is not re-polled every cycle.
@@ -807,11 +813,17 @@ class Collector:
             log.warning("collector.dtc_status_mask=%r is not a hex byte; "
                         "using the default 8F", mask)
             mask = "8F"
+        read_ok = False
         try:
             payloads = self.conn.functional_probe(
                 f"1902{mask}", "UDS 0x19 0x02 ReadDTCInformation (status mask "
                                f"0x{mask}, warning+active+pending+confirmed "
                                "DTCs) - functional, read-only")
+            # A response from any ECU (even an empty 0x59 list) is a real read.
+            # An empty mapping means no ECU answered, which is a silent failure,
+            # not "no DTCs" -- read_ok stays False so it can never read as a
+            # clear.
+            read_ok = bool(payloads)
         except CommunicationError as exc:
             log.debug("UDS DTC read failed: %s", exc)
             payloads = {}
@@ -879,6 +891,34 @@ class Collector:
             if records:
                 entry["snapshot"] = records
             all_dtcs.append(entry)
+
+        # ---- warning-lamp / DTC off-transition detection -------------------
+        # A code that fully clears drops out of the 0x19 0x02 response, and that
+        # absence is the only off-signal for it (bit 7 flipping while the code is
+        # still stored is recovered separately in analysis.timeline from the
+        # status-byte history). Guarded by `read_ok` so a failed read can never
+        # masquerade as "the lamp went out"; the first successful read only sets
+        # the baseline so a collector restart does not replay a lamp that was
+        # already on when it booted.
+        if read_ok:
+            curr = {(label, item["code"]): item.get("status_byte")
+                    for _, label, item in uds_items}
+            prev = self._prev_dtc_status
+            if prev is None:
+                self._prev_dtc_status = curr
+            else:
+                for key, was in prev.items():
+                    if key in curr:
+                        continue
+                    was_warning = bool(was) and bool(was & 0x80)
+                    desc = (
+                        f"Warning lamp off: {key[1]} on {key[0]} "
+                        "(code no longer reported)" if was_warning
+                        else f"DTC cleared: {key[1]} on {key[0]}")
+                    self.repo.add_event(
+                        self.vehicle_id, ts, "dtc-cleared", desc, ecu=key[0],
+                        data={"code": key[1], "was_warning": was_warning})
+                self._prev_dtc_status = curr
         return all_dtcs
 
     # -- main loop ----------------------------------------------------------------

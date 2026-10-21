@@ -21,8 +21,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from analysis import dtc as dtc_mod
+
 # Order used only to break exact timestamp ties, never to imply causation.
-_KIND_ORDER = ("dtc", "charge", "collection", "note", "sweep", "anomaly",
+_KIND_ORDER = ("dtc", "warning-on", "warning-off", "dtc-cleared", "charge",
+               "collection", "note", "sweep", "anomaly",
                "adapter", "wake", "sleep")
 
 
@@ -96,7 +99,8 @@ def build_timeline(repo, vehicle_id: int, *, since: str | None = None,
             ts=r["ts"], kind="note" if kind == "note" else kind,
             title=r["description"] or kind, detail=(r["data"] or ""),
             ecu=r["ecu"], ref_id=r["id"],
-            severity="notice" if kind in ("adapter", "wake", "sleep") else "info",
+            severity=("notice" if kind in ("adapter", "wake", "sleep",
+                                           "dtc-cleared") else "info"),
             simulated=_is_simulated(r["description"])))
 
     # DTC occurrence times are the real evidence; the DTC's first_seen is a
@@ -113,6 +117,19 @@ def build_timeline(repo, vehicle_id: int, *, since: str | None = None,
             title=f"{r['code']} on {r['ecu']}",
             detail=r["description"] or "", ecu=r["ecu"], ref_id=r["id"],
             severity="warning"))
+
+    # Warning-lamp on/off edges, recovered from each DTC's status-byte history
+    # (bit 7, warningIndicatorRequested). A "warning-off" edge here means the
+    # ECU stopped requesting the lamp while the code was still reported; the
+    # "code vanished entirely" case is the collector's `dtc-cleared` event.
+    for tr in dtc_mod.detect_warning_transitions(
+            repo.dtc_status_history(vehicle_id, since=since)):
+        on = tr["event"] == "warning-on"
+        add(TimelineEvent(
+            ts=tr["ts"], kind=tr["event"],
+            title=f"Warning lamp {'on' if on else 'off'}: "
+                  f"{tr['code']} on {tr['ecu']}",
+            ecu=tr["ecu"], severity="warning" if on else "notice"))
 
     for r in repo.conn.execute(
         "SELECT id, started_at, ended_at, charge_type, energy_estimate_kwh, "

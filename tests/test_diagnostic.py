@@ -1719,6 +1719,124 @@ def test_dtc_status_mask_falls_back_when_invalid(repo, tmp_path):
     assert seen["cmd"] == "19028F"
 
 
+def test_warning_lamp_requested():
+    from analysis.dtc import warning_lamp_requested
+
+    assert warning_lamp_requested(0x80) is True
+    assert warning_lamp_requested(0x8F) is True
+    assert warning_lamp_requested(0x08) is False
+    assert warning_lamp_requested(0x00) is False
+    assert warning_lamp_requested(None) is False
+
+
+def test_detect_warning_transitions_on_off_on():
+    from analysis.dtc import detect_warning_transitions
+
+    series = [
+        {"ts": "2026-10-20T12:00:00+00:00", "ecu": "eldrive", "code": "P1234",
+         "status_byte": 0x08},
+        {"ts": "2026-10-20T12:00:05+00:00", "ecu": "eldrive", "code": "P1234",
+         "status_byte": 0x88},
+        {"ts": "2026-10-20T12:00:10+00:00", "ecu": "eldrive", "code": "P1234",
+         "status_byte": 0x08},
+        {"ts": "2026-10-20T12:00:15+00:00", "ecu": "eldrive", "code": "P1234",
+         "status_byte": 0x88},
+    ]
+    events = detect_warning_transitions(series)
+    assert [e["event"] for e in events] == ["warning-on", "warning-off",
+                                             "warning-on"]
+    assert events[0]["ts"] == "2026-10-20T12:00:05+00:00"
+    assert events[0]["code"] == "P1234"
+
+
+def test_detect_warning_transitions_first_seen_and_unknown_are_not_edges():
+    from analysis.dtc import detect_warning_transitions
+
+    # First seen already requesting the lamp: not an observed transition.
+    assert detect_warning_transitions(
+        [{"ts": "t", "ecu": "e", "code": "C", "status_byte": 0x88}]) == []
+    # An unknown status byte between two known ones is skipped, not read as off.
+    series = [
+        {"ts": "1", "ecu": "e", "code": "C", "status_byte": 0x80},
+        {"ts": "2", "ecu": "e", "code": "C", "status_byte": None},
+        {"ts": "3", "ecu": "e", "code": "C", "status_byte": 0x08},
+    ]
+    assert [e["event"] for e in detect_warning_transitions(series)] == \
+        ["warning-off"]
+
+
+def test_dtc_status_history_exposes_status_byte(repo):
+    vid = repo.ensure_vehicle("VINSTATUS00000000")
+    repo.upsert_dtc(vid, "2026-10-20T12:00:00+00:00", "eldrive", "P1234",
+                    "desc", ["powertrain"], status="warning",
+                    freeze_frame={"status_byte": 0x88})
+    repo.upsert_dtc(vid, "2026-10-20T12:00:05+00:00", "eldrive", "P1234",
+                    "desc", ["powertrain"], status="confirmed",
+                    freeze_frame={"status_byte": 0x08})
+    hist = repo.dtc_status_history(vid)
+    assert [h["status_byte"] for h in hist] == [0x88, 0x08]
+    assert all(h["code"] == "P1234" for h in hist)
+
+
+def test_timeline_surfaces_warning_on_off(repo):
+    from analysis import timeline
+
+    vid = repo.ensure_vehicle("VINTIMELINE00000")
+    repo.upsert_dtc(vid, "2026-10-20T12:00:00+00:00", "eldrive", "P1234",
+                    "d", ["powertrain"], status="confirmed",
+                    freeze_frame={"status_byte": 0x08})
+    repo.upsert_dtc(vid, "2026-10-20T12:00:05+00:00", "eldrive", "P1234",
+                    "d", ["powertrain"], status="warning",
+                    freeze_frame={"status_byte": 0x88})
+    repo.upsert_dtc(vid, "2026-10-20T12:00:10+00:00", "eldrive", "P1234",
+                    "d", ["powertrain"], status="confirmed",
+                    freeze_frame={"status_byte": 0x08})
+    events = timeline.build_timeline(repo, vid)
+    kinds = [e.kind for e in events]
+    assert "warning-on" in kinds
+    assert "warning-off" in kinds
+    on = next(e for e in events if e.kind == "warning-on")
+    assert "P1234" in on.title
+
+
+def test_collector_emits_dtc_cleared_when_code_disappears(repo, tmp_path):
+    from collector import Collector
+
+    cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
+                                "max_value_age_s": 900.0, "dtc_status_mask": "8F",
+                                "dtc_ecu_keys": []},
+                  "database": {"path": str(tmp_path / "c.db")}})
+    state = {"present": True}
+
+    class _Conn:
+        def functional_probe(self, hexcmd, purpose, ecu=None):
+            if state["present"]:
+                return {0x18DAF10A: bytes([0x59, 0x02, 0xFF, 0xD1, 0x23,
+                                           0x00, 0x8B])}
+            return {0x18DAF10A: bytes([0x59, 0x02, 0xFF])}
+
+        def read_dtcs_obd2(self):
+            return []
+
+        def read_dtc_snapshots(self, code):
+            return {}
+
+    col = Collector(cfg, repo)
+    col.conn = _Conn()
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.read_and_store_dtcs()   # baseline: U112300 present, no event
+    state["present"] = False
+    col.read_and_store_dtcs()   # absent -> dtc-cleared
+
+    rows = repo.conn.execute(
+        "SELECT kind, description, data FROM diagnostic_events "
+        "WHERE vehicle_id=? ORDER BY id", (col.vehicle_id,)).fetchall()
+    assert [r["kind"] for r in rows] == ["dtc-cleared"]
+    assert "U112300" in rows[0]["description"]
+    import json
+    assert json.loads(rows[0]["data"])["was_warning"] is True
+
+
 def test_dtc_description_lookup():
     # the hand-maintained VAG data-bus wording wins over the generic SAE text
     desc, doc = describe("U112300")

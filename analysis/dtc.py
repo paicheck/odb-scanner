@@ -199,3 +199,57 @@ def dtc_summary(dtc_rows, freeze_frames: dict | None = None) -> dict:
             ]
         out["codes"].append(entry)
     return out
+
+
+def warning_lamp_requested(status_byte: int | None) -> bool:
+    """True when the ECU is asking the dashboard to light the warning lamp.
+
+    ISO 14229 DTC status byte bit 7 (`warningIndicatorRequested`) is the bit the
+    instrument-cluster lamp reads. It is the closest this project can get to
+    "the dash warning is on": no DID in the Car Scanner MEB profile, the
+    spot2000 list, or the ABRP JSON exposes the lamp/tell-tale state directly
+    (see research/measurement_discovery/unresolved_questions.md).
+    """
+    return bool(status_byte) and bool(status_byte & 0x80)
+
+
+def detect_warning_transitions(series: list[dict]) -> list[dict]:
+    """Warning-lamp on/off edges from a DTC's status-byte history.
+
+    `series` is a list of rows, each with at least ``ecu``, ``code``, ``ts`` and
+    ``status_byte`` (``None`` = unknown), in any order. Rows are grouped by
+    ``(ecu, code)`` and walked in time order; a flip of bit 7 (warningIndicator
+    Requested) between two consecutive *known* observations of the same DTC is
+    reported as ``warning-on`` or ``warning-off``.
+
+    Returns a list of ``{ts, ecu, code, event}`` with ``event`` in
+    ``{"warning-on", "warning-off"}``, ordered by time. Two boundaries are
+    deliberately NOT reported here, because presence-only bytes cannot show
+    them:
+
+    * a DTC first seen already requesting the lamp (it was on before we looked);
+    * a DTC that disappears from the read entirely (that is the collector's
+      absence signal, surfaced separately as ``dtc-cleared``).
+    """
+    by_dtc: dict[tuple[str, str], list[dict]] = {}
+    for row in series:
+        by_dtc.setdefault((row["ecu"], row["code"]), []).append(row)
+    events: list[dict] = []
+    for (ecu, code), rows in by_dtc.items():
+        rows.sort(key=lambda r: (r.get("ts") or "", r.get("ecu", "")))
+        prev: int | None = None
+        for r in rows:
+            cur = r.get("status_byte")
+            if prev is not None and cur is not None:
+                was_on = bool(prev & 0x80)
+                now_on = bool(cur & 0x80)
+                if was_on and not now_on:
+                    events.append({"ts": r["ts"], "ecu": ecu, "code": code,
+                                   "event": "warning-off"})
+                elif not was_on and now_on:
+                    events.append({"ts": r["ts"], "ecu": ecu, "code": code,
+                                   "event": "warning-on"})
+            if cur is not None:
+                prev = cur
+    events.sort(key=lambda e: (e["ts"] or "", e["ecu"], e["code"]))
+    return events

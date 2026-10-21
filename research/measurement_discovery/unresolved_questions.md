@@ -119,6 +119,22 @@ test or a reason it remains blocked. No live work is approved.
     - Current evidence: owner report 2026-10-19; no DTC.
     - Next: monitor; do not treat absence as a fix.
 
+23. **Is there a direct dashboard lamp / tell-tale DID?** (re-swept 2026-10-21)
+    - Current evidence: a fresh search of every available source — the Car
+      Scanner MEB profile (305 signals), the spot2000 VW MEB PID list, and the
+      ABRP JSON — finds **no** lamp / tell-tale / malfunction-indicator /
+      warning-light / MIL signal. The earlier "absence of a lamp channel"
+      finding is confirmed.
+    - Conclusion: the lamp state cannot be read directly. It is inferred from
+      the DTC status byte bit 7 (`warningIndicatorRequested`); the collector now
+      emits `dtc-cleared` when a code stops being reported, and
+      `analysis/timeline.py` recovers `warning-on` / `warning-off` edges from
+      the stored status-byte history.
+    - Remaining: if a direct lamp channel exists at all it would sit on the
+      instrument cluster (`inf`, `0x773 -> 0x7DD`), which the profile does not
+      cover. A future read-only cluster sweep could settle it; do not live-probe
+      it until the DTC-bit path has been exercised on a real event.
+
 ## Rules for closing a question
 
 - A profile row does not close it.

@@ -1079,6 +1079,36 @@ class Repository:
         sql += " ORDER BY o.ts"
         return self.conn.execute(sql, args).fetchall()
 
+    def dtc_status_history(self, vehicle_id: int,
+                           since: str | None = None) -> list[dict]:
+        """Each stored DTC sighting with its status byte, ordered by time.
+
+        The status byte lives inside the freeze-frame JSON (it is written on
+        every UDS occurrence), so it is surfaced here rather than as a column
+        the older rows could not have populated. OBD-II DTCs carry no freeze
+        frame and are returned with ``status_byte=None``, which the transition
+        detector skips rather than reading as an off-edge.
+        """
+        sql = ("SELECT o.ts, o.freeze_frame, d.ecu, d.code FROM dtc_occurrences o "
+               "JOIN dtcs d ON d.id=o.dtc_id WHERE d.vehicle_id=?")
+        args: list = [vehicle_id]
+        if since:
+            sql += " AND o.ts>=?"
+            args.append(since)
+        sql += " ORDER BY o.ts"
+        out: list[dict] = []
+        for r in self.conn.execute(sql, args):
+            status_byte = None
+            if r["freeze_frame"]:
+                try:
+                    parsed = json.loads(r["freeze_frame"])
+                    status_byte = parsed.get("status_byte")
+                except (TypeError, ValueError):
+                    status_byte = None
+            out.append({"ts": r["ts"], "ecu": r["ecu"], "code": r["code"],
+                        "status_byte": status_byte})
+        return out
+
     # -- events / analysis / reports / anomalies -------------------------------
     def add_event(self, vehicle_id: int, ts: str, kind: str, description: str,
                   ecu=None, data: dict | None = None) -> None:
