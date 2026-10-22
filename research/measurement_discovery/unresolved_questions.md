@@ -130,10 +130,12 @@ test or a reason it remains blocked. No live work is approved.
       emits `dtc-cleared` when a code stops being reported, and
       `analysis/timeline.py` recovers `warning-on` / `warning-off` edges from
       the stored status-byte history.
-    - Remaining: if a direct lamp channel exists at all it would sit on the
-      instrument cluster (`inf`, `0x773 -> 0x7DD`), which the profile does not
-      cover. A future read-only cluster sweep could settle it; do not live-probe
-      it until the DTC-bit path has been exercised on a real event.
+    - 2026-10-22 update: the recovered 2026-10-15 passive capture contains
+      **no** `0x773`/`0x7DD` traffic, and the Car Scanner profile still has no
+      cluster module and no lamp/tell-tale DID. A blind sweep is therefore
+      prohibited; it would not be evidence-driven. The DTC status-bit path is
+      the only supported lamp signal. Reopen only if a documented read-only
+      cluster allow-list (not a sweep) appears.
 
 ## Rules for closing a question
 

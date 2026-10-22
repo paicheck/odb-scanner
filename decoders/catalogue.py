@@ -51,7 +51,7 @@ from enum import Enum
 
 from .registry import DIDRegistry, DIDSpec, build_default_registry
 
-CATALOGUE_VERSION = "2026-10-21.1"
+CATALOGUE_VERSION = "2026-10-22.1"
 
 
 class Confidence(str, Enum):
@@ -697,20 +697,30 @@ OVERLAY: dict[tuple[str, str], dict] = {
     ("meb", "odometer_2"): {
         "confidence": Confidence.PROVISIONAL,
         "length2": {"offset": 2, "scale": 10.0},
-        "response_length_hint": 4,
+        "response_length_hint": 8,
         "evidence_kind": EvidenceKind.VEHICLE_RESPONSE,
         "evidence_source": (
             "0x5867 0005045A00000000 -> 11,140 and 0005045B00000000 -> 11,150 "
             "while the four agreeing odometers moved ~10.5 km. The x10 delta "
-            "matches; x100 would require 100 km per LSB and is refuted."),
-        "evidence_artifact": "data/odb_scanner.db",
-        "validation_method": "offline delta check across the 18/19 Oct captures",
+            "matches; x100 would require 100 km per LSB and is refuted. The "
+            "same capture's main odometer was 111,009/111,020 km, i.e. a "
+            "constant 99,869-99,871 km offset."),
+        "evidence_artifact": (
+            "data/odb_scanner.db; "
+            "research/measurement_discovery/captures/"
+            "passive_capture_evidence_20261015.json"),
+        "validation_method": (
+            "offline delta check across the 18/19 Oct captures plus the "
+            "2026-10-15 passive payload"),
         "limitations": (
             "a 10 km/LSB secondary distance counter, not the total odometer; "
-            "its absolute zero and physical meaning are unknown"),
+            "the constant ~99,870 km offset is consistent with a BMS "
+            "replacement/reset, but service history is unavailable, so its "
+            "absolute zero is not usable"),
         "falsified_by": (
-            "a known-distance drive where the LSB does not track 10 km, or a "
-            "capture where the absolute value matches the total odometer"),
+            "a known-distance drive where the LSB does not track 10 km, a "
+            "capture where the absolute value matches the total odometer, or "
+            "service history proving the BMS was never reset"),
         "plausible_min": 0.0,
         "plausible_max": 2_000_000.0,
         "plausible_basis": "passenger-car lifetime distance counter",
@@ -760,40 +770,56 @@ OVERLAY: dict[tuple[str, str], dict] = {
     },
     ("meb", "windshield_temperature"): {
         "confidence": Confidence.UNKNOWN,
+        "length1": {"offset": 0, "scale": 0.1},
         "response_length_hint": 5,
         "evidence_kind": EvidenceKind.VEHICLE_RESPONSE,
         "evidence_source": (
             "37 paired samples: byte 0 x 0.1 vs outside_temp has 1.17 degC "
             "mean absolute error (max 2.5 degC). The profile's u16[0:2] x "
-            "15.625 - 39.5 decode produces ~483,476 degC and is refuted."),
-        "evidence_artifact": "data/odb_scanner.db",
+            "15.625 - 39.5 decode produces ~483,476 degC and is refuted. The "
+            "2026-10-15 passive capture confirms the five-byte payload shape "
+            "on 0x27C4 (raw examples 7A2321C07D, 719F619091, 729FD1988D)."),
+        "evidence_artifact": (
+            "data/odb_scanner.db; "
+            "research/measurement_discovery/captures/"
+            "passive_capture_evidence_20261015.json"),
         "validation_method": (
-            "offline correlation; the byte-0 candidate is not implemented"),
+            "offline correlation; byte 0 x 0.1 is implemented in "
+            "decoders/meb.py, while quality still quarantines the key"),
         "limitations": (
-            "current decode is invalid; byte 0 x 0.1 is a candidate that still "
-            "needs a cold-soak/defroster test to separate windshield from "
-            "ambient"),
+            "the decoder is implemented but the key stays out of scoring until "
+            "a cold-soak/defroster test separates windshield from ambient; the "
+            "remaining payload bytes are not decoded"),
         "falsified_by": (
             "a cold-soak/defroster test where byte 0 does not follow the "
             "windshield/ambient temperature"),
     },
     ("meb", "co2_content_interior"): {
         "confidence": Confidence.UNKNOWN,
+        "length2": {"offset": 0, "scale": 1.0},
         "response_length_hint": 2,
         "evidence_kind": EvidenceKind.VEHICLE_RESPONSE,
         "evidence_source": (
             "40/40 stored 0x42DB responses are 03FE. Byte 1 x 100 = 25,400 "
             "ppm; the whole u16 = 1,022 ppm; 03FE is also the BMS not-fitted "
-            "sentinel for unpopulated cell-temperature slots."),
-        "evidence_artifact": "data/odb_scanner.db",
+            "sentinel for unpopulated cell-temperature slots. The profile's "
+            "SBI=1 DL=1 x100 layout would turn a normal 500 ppm frame (01F4) "
+            "into 24,400 ppm, so it is rejected. 03FE now decodes to None; a "
+            "non-sentinel frame decodes as a whole-u16 ppm value."),
+        "evidence_artifact": (
+            "data/odb_scanner.db; "
+            "research/measurement_discovery/captures/"
+            "passive_capture_evidence_20261015.json"),
         "validation_method": (
-            "offline payload enumeration; both hypotheses are retained"),
+            "offline payload enumeration; sentinel-aware decoder implemented, "
+            "non-sentinel scale still provisional"),
         "limitations": (
-            "unresolved between a 1,022 ppm whole-u16 reading and a not-fitted "
-            "sentinel; the current 25,400 ppm decode is not credible"),
+            "the sensor appears not fitted on this car; no non-sentinel "
+            "payload exists yet, so the 16-bit ppm scale cannot be confirmed"),
         "falsified_by": (
-            "a fresh-air/occupied test where the value moves in 400-2,000 ppm "
-            "(whole-u16) or stays fixed (sentinel)"),
+            "a fresh-air/occupied test where a non-sentinel value does not "
+            "move in 400-2,000 ppm as a whole-u16 reading, or a known CO2 "
+            "source that matches byte 1 x 100 instead"),
     },
 }
 

@@ -36,12 +36,15 @@ class DiagnosticConnection:
             log.exception("Error closing adapter")
 
     # -- core transmit -------------------------------------------------------
-    def _transmit(self, hexcmd: str, ecu: ECUSpec | None, purpose: str) -> list[str]:
+    def _transmit(self, hexcmd: str, ecu: ECUSpec | None, purpose: str,
+                  *, validator=uds.validate_request) -> list[str]:
         # The single choke point for every request that reaches the vehicle.
         # validate_request raises ReadOnlyViolationError for anything off the
         # read-only allow-list, so no caller -- including the ones that build
-        # hex by hand -- can put a write service on the wire.
-        uds.validate_request(hexcmd)
+        # hex by hand -- can put a write service on the wire. The only caller
+        # that passes a different validator is approved_extended_session(),
+        # which can accept exactly 0x10 0x03 and nothing else.
+        validator(hexcmd)
         # Addressing: functional by default (see Elm327Transport.set_header --
         # field clones refuse 29-bit headers outright). When the transport
         # negotiated VAG MEB addressing AND the ECU carries a module address,
@@ -76,6 +79,56 @@ class DiagnosticConnection:
                        " | ".join(lines[:4]),
                        purpose="response")
         return lines
+
+    # -- explicitly approved ABS session ------------------------------------
+    def approved_extended_session(self, ecu: ECUSpec, *, approval: str,
+                                  purpose: str) -> bytes:
+        """Send the one approved 0x10 0x03 and require a positive 0x50 0x03.
+
+        Only the dedicated ABS wheel-speed reader calls this. The normal
+        `validate_request` path still refuses 0x10 0x03; the narrow validator
+        accepted here refuses every other request. The caller must supply the
+        same token the CLI required, and the TX/RX pair is written to tx_log.
+        """
+        lines = self._transmit(
+            "1003", ecu,
+            f"{purpose} (APPROVED extended session; token supplied)",
+            validator=lambda command: uds.validate_approved_extended_session(
+                command, approval
+            ),
+        )
+        for payload in uds.payloads_by_source(lines).values():
+            if not payload:
+                continue
+            if payload[0] == 0x50:
+                if len(payload) < 2 or payload[1] != 0x03:
+                    raise ProtocolError(
+                        f"Unexpected session-control positive response: "
+                        f"{payload.hex()}"
+                    )
+                return payload
+            if payload[0] == 0x7F:
+                nrc = payload[2] if len(payload) > 2 else 0
+                raise NegativeResponseError(0x10, nrc)
+        raise CommunicationError("No response to 0x10 0x03 session change")
+
+    def default_session(self, ecu: ECUSpec,
+                        purpose: str = "return to default session") -> bytes:
+        """Return to the normal session with the already-allowed 0x10 0x01."""
+        lines = self._transmit("1001", ecu, purpose)
+        for payload in uds.payloads_by_source(lines).values():
+            if not payload:
+                continue
+            if payload[0] == 0x50:
+                if len(payload) < 2 or payload[1] != 0x01:
+                    raise ProtocolError(
+                        f"Unexpected default-session response: {payload.hex()}"
+                    )
+                return payload
+            if payload[0] == 0x7F:
+                nrc = payload[2] if len(payload) > 2 else 0
+                raise NegativeResponseError(0x10, nrc)
+        raise CommunicationError("No response to 0x10 0x01 default session")
 
     def functional_probe(self, hexcmd: str, purpose: str,
                          ecu: ECUSpec | None = None) -> dict[int | None, bytes | None]:

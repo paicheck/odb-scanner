@@ -1,0 +1,15 @@
+{
+  "archive": "passive_capture_evidence_20261015.json",
+  "bytes": 73642,
+  "generated_utc": "2026-10-22",
+  "notes": "Sanitised static extract; regenerate records with tools/mine_passive_capture.py. DB evidence was read with mode=ro.",
+  "sha256": "b2c490d523bbeecc61b9ee30022e2929e3c4d31752d69754fb7f950e03646cb7",
+  "source_capture": {
+    "acl_records": 10417,
+    "datalink": 1002,
+    "file": "btsnoop_hci.log",
+    "sha256": "eefb5c3ef2781a523692f62484255a70ec7f322a746cde750a4c75c6260496f9",
+    "size_bytes": 1455992,
+    "version": 1
+  }
+}

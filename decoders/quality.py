@@ -86,11 +86,13 @@ _KNOWN_BAD: dict[str, str] = {
     # degC / ~1738 V / ~1e8 W values were the u16 mis-decode, not the sensor.
     # climate — temperatures / concentrations far out of range
     "windshield_temperature": (
-        "u16[0:2] x 15.625 - 39.5 reads ~483476 degC; byte 0 x 0.1 tracks "
-        "outside_temp (1.17 degC MAE) but needs a cold-soak/defroster test"),
+        "the profile u16[0:2] x 15.625 - 39.5 read ~483476 degC; the decoder "
+        "now uses byte 0 x 0.1 (11-13 degC, ~1.17 degC MAE versus outside) but "
+        "windshield-vs-ambient still needs a cold-soak/defroster test"),
     "co2_content_interior": (
         "40/40 responses are 03FE; byte 1 x 100 gives 25,400 ppm, whole u16 "
-        "gives 1,022 ppm, and 03FE is also the BMS not-fitted sentinel"),
+        "gives 1,022 ppm, and 03FE is also the BMS not-fitted sentinel. 03FE "
+        "now decodes to None; a non-sentinel 16-bit scale is still unconfirmed"),
     # bat_mgmt — the profile declares this field SIGNED. The old unsigned
     # decode turned the 0xFFFF sentinel into 2,047.97 V; the live decoder now
     # returns None for 0xFFFF/0xFFFE and negative values.
@@ -101,8 +103,10 @@ _KNOWN_BAD: dict[str, str] = {
     # x10 matched a ~10.5 km drive; x100 is refuted by that same delta.
     "odometer_2": (
         "10 km/LSB secondary distance counter, not the odometer: x10 matched "
-        "a ~10.5 km drive and x100 is refuted. Absolute zero/meaning unknown; "
-        "do not use for distance/SoH"),
+        "a ~10.5 km drive and x100 is refuted. It equals the main odometer "
+        "minus 99,869-99,871 km on this car, consistent with a BMS reset at "
+        "~99,870 km; service history is unavailable, so the absolute zero is "
+        "still not usable for distance/SoH"),
     # Gateway 0x2A53 offsets 1 and 3 are complementary, not two currents:
     # u16[1:3] + u16[3:5] ~= 0x0508 in every capture. The key is raw-only.
     "dc_dc_converter_reserved_current": (

@@ -22,6 +22,43 @@
 > The original research text below is preserved as the 2026-10-21 evidence
 > snapshot.
 
+## 2026-10-22 passive-capture recovery (supersedes the "gateway is blocked" note)
+
+The missing passive capture was found at
+`C:\Users\kings\Documents\CarScanner_Capture\btsnoop_hci.log`
+(SHA-256 `eefb5c3ef2781a523692f62484255a70ec7f322a746cde750a4c75c6260496f9`).
+It contains unrelated phone traffic, so **only sanitised CAN/DID payloads** are
+committed. The extractor is `tools/mine_passive_capture.py`; it reassembles
+ISO-TP SF/FF/CF frames and emits only positive `0x62` responses. The raw log is
+not in the repository.
+
+Recovered facts:
+
+| DID | Passive payload / finding | Status |
+|---|---|---|
+| `0x2A26` | `2D0000002608508C8062904048180040C000400000060000000000000000C057` (32 bytes) on `0x77A` | Raw-only. `0x04A3` returns the byte-identical payload with its own DID, so it is an alias/shared block. No profile layout, no scale. **Quarantined.** |
+| `0x2A28` | `090000000000108000608000400800400000000000000000000000000000C051` (32 bytes) on `0x77A` | Raw-only; absent from the Car Scanner MEB profile. **Quarantined.** |
+| `0x2A2F` | `62 2A 2F 00` on `0x77F` | Single byte `0x00`, meaning unknown. **Quarantined.** |
+| `0x42DB` | `62 42 DB 03 FE` on `0x7B0`; 40/40 stored rows are `03FE`; the same `03FE` appears in `cell_t_18`–`cell_t_23` | **Not-fitted sentinel.** A sentinel-aware decoder returns `None`; a non-sentinel frame decodes as whole-u16 ppm. Do not decode `03FE` as 1,022 or 25,400 ppm. |
+| `0x27C4` | Five-byte payloads `7A2321C07D`, `719F619091`, `729FD1988D`; byte 0 × 0.1 = 12.2/11.3/11.4 °C | The profile `u16 × 15.625 − 39.5` gives ~488,507 °C and is arithmetically refuted. Byte-0 decoder implemented; windshield-vs-ambient label still needs a cold-soak/defroster test, so the key remains quarantined. |
+| `0x5867` | `00 05 04 5A 00 00 00 00`; `0x045A = 1114`; ×10 = 11,140 km | Main odometer 111,009/111,020 km gives a constant **99,869–99,871 km** offset. Consistent with a BMS replacement/reset at ~99,870 km; absolute zero still not usable without service history. |
+| `0x1800`–`0x1803` | Absent from the normal capture; the passive capture contains the Car Scanner sequence `ATSH713`, `ATSP6`, `ATCRA77D`, `1003`, positive `77D065003001E01E5`, then `221800`–`221803`. Each returns a 12-byte block; the parked first u16 is zero. | Profile layout `SBI=0 DL=2 ×0.01 km/h`; four decoders are registered **only** for the dedicated tool, not the default collector. Live reads still require separately approved `0x10 03`. |
+
+Evidence archive:
+
+- `research/measurement_discovery/captures/passive_capture_evidence_20261015.json`
+  (278 selected records + DB evidence, 73,642 bytes before the final edit;
+  SHA-256 in the adjacent `.manifest.json`).
+- `research/measurement_discovery/captures/strict_expected_values_20261022.json`
+  (five independent expected values; strict validation **5/5 PASS**).
+- `tools/mine_passive_capture.py` and `tests/test_passive_capture.py` reproduce
+  the extraction and pin the archive facts.
+
+The profile has **no** `0x773`/`0x7DD` cluster module and no documented lamp /
+tell-tale DID. The passive capture contains no `0x773`/`0x7DD` traffic. A blind
+cluster sweep remains prohibited; the lamp state continues to be inferred from
+DTC status bit 7.
+
 **Scope:** every MEB payload whose meaning or scale is currently unresolved,
 quarantined, or deferred:
 
@@ -54,15 +91,15 @@ Five keys are quarantined. The raw history now explains or refutes four of them:
 | Key | New finding | Confidence |
 |---|---|---|
 | `dc_dc_converter_reserved_current` | Not a current. Bytes 3–4 are the **complement** of the real current in bytes 1–2: `u16[1:3] + u16[3:5] ≈ 0x0508` in every capture. The 250 A value is an artifact of subtracting 511 from the complement. | High |
-| `odometer_2` | A **10 km/LSB distance counter**, not the odometer. It incremented 1 LSB (10 km) while the car moved ~10.5 km. The ×100 "fix" is refuted by that delta. Its absolute value is ~10× below the four agreeing odometers, so it has a different zero/meaning. | High for the delta and ×100 refutation |
+| `odometer_2` | A **10 km/LSB distance counter**, not the odometer. It incremented 1 LSB (10 km) while the car moved ~10.5 km. The ×100 "fix" is refuted by that delta. On this car it sits a constant 99,869–99,871 km below the main odometer, consistent with a BMS reset at ~99,870 km. | High for the delta and ×100 refutation; absolute zero still unexplained |
 | `bat_charging_voltage` | The profile declares a **signed** `uint16`; the decoder is unsigned. `0xFFFF` becomes 2,047.97 V. Signed it is −0.03125 V; the value is almost certainly a sentinel. | High |
-| `windshield_temperature` | The profile's `u16[0:2] × 15.625 − 39.5` is refuted. Byte 0 × 0.1 °C tracks the independent outside temperature (mean absolute error 1.17 °C over 37 samples). Candidate layout: `u8[0] × 0.1`. | High that the current decode is wrong; medium-high for the candidate |
-| `co2_content_interior` | 40/40 responses are `03FE`. Byte 1 × 100 gives 25,400 ppm (implausible); the whole `u16` is 1,022 ppm. The same `03FE` is the BMS "not fitted" sentinel for unpopulated cell-temperature slots. | High that 25,400 is wrong; **unresolved** between 1,022 ppm and not-fitted |
+| `windshield_temperature` | The profile's `u16[0:2] × 15.625 − 39.5` is refuted. Byte 0 × 0.1 °C tracks the independent outside temperature (mean absolute error 1.17 °C over 37 samples). The byte-0 decoder is implemented; the windshield-vs-ambient label still needs the cold-soak test. | High that the current decode is wrong; medium-high for the candidate |
+| `co2_content_interior` | 40/40 responses are `03FE`. Byte 1 × 100 gives 25,400 ppm (implausible); the whole `u16` is 1,022 ppm. The same `03FE` is the BMS "not fitted" sentinel for unpopulated cell-temperature slots. The sentinel now decodes to `None`; a non-sentinel whole-u16 reading is implemented but still provisional. | High that 25,400 is wrong; sensor appears not fitted |
 
-The three gateway DIDs are still **blocked**: the original `btsnoop_hci.log`
-is not in the workspace, the payloads were never retained, and none of the
-three appears in the Car Scanner, evDash, or spot2000 sources. Do not
-blind-probe them.
+The three gateway DIDs (`0x2A26`, `0x2A28`, `0x2A2F`) now have recovered
+payloads, but **no profile layout or scale**. `0x2A26` and `0x04A3` return the
+byte-identical block. They remain raw-only and quarantined; do not blind-probe
+or invent a scale.
 
 Two "unknowns" turn out not to be payload unknowns at all:
 
@@ -94,7 +131,8 @@ DIDs, and the deferred backlog are genuine payload unknowns.
 4. Cross-checked the Car Scanner field definitions against evDash and
    spot2000 rather than treating any one profile as authority.
 5. Only claimed what the bytes show. Where the bytes support two readings
-   (CO2), both are recorded and neither is implemented.
+   (CO2), both are recorded; the not-fitted sentinel now returns `None`, while
+   the non-sentinel whole-u16 scale remains provisional.
 
 ---
 

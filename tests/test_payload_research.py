@@ -96,11 +96,11 @@ def test_odometer_2_is_a_ten_km_counter_not_the_odometer(reg):
 
 # --------------------------------------------------------------- 0x27C4
 def test_windshield_temperature_current_u16_decode_is_refuted(reg):
-    """The profile's u16 scale is wrong; byte 0 x 0.1 is the candidate.
+    """The profile's u16 scale is wrong; byte 0 x 0.1 is now implemented.
 
-    The candidate is not implemented yet. This test keeps both the refuted
-    arithmetic and the candidate visible so a future decoder change has to
-    confront them.
+    The old arithmetic is kept in the test so a future change cannot silently
+    revive it, while the decoder must return the byte-0 candidate. The key is
+    still quarantined until the cold-soak/defroster test.
     """
     spec = reg.get("windshield_temperature")
 
@@ -112,24 +112,55 @@ def test_windshield_temperature_current_u16_decode_is_refuted(reg):
     ]
     for raw, old_value, candidate in cases:
         payload = bytes.fromhex(raw)
-        assert spec.decode_value(payload) == pytest.approx(old_value)
-        assert payload[0] * 0.1 == pytest.approx(candidate)
+        old_formula = int.from_bytes(payload[:2], "big") * 15.625 - 39.5
+        assert old_formula == pytest.approx(old_value)
+        assert spec.decode_value(payload) == pytest.approx(candidate)
+        assert spec.decode_value(payload) != pytest.approx(old_value)
 
 
 # --------------------------------------------------------------- 0x42DB
-def test_co2_remains_unresolved_between_two_readings(reg):
-    """03FE is 25,400 ppm as byte 1 x 100, or 1,022 ppm as a whole u16.
+def test_co2_sentinel_is_not_a_ppm_reading(reg):
+    """03FE is the not-fitted sentinel, not 25,400 or 1,022 ppm.
 
-    03FE is also the BMS not-fitted sentinel, so neither reading is promoted
-    without a known-state test. The current decoder is left unchanged.
+    03FE is also the BMS not-fitted sentinel, and all 40 live rows carry it.
+    A non-sentinel frame decodes as a whole u16; the byte-1 x100 layout is
+    rejected because a normal 500 ppm frame (01F4) would become 24,400 ppm.
     """
     spec = reg.get("co2_content_interior")
-    payload = bytes.fromhex("03FE")
+    sentinel = bytes.fromhex("03FE")
 
-    assert spec.decode_value(payload) == pytest.approx(25400.0)
-    assert int.from_bytes(payload, "big") == 1022
+    assert spec.decode_value(sentinel) is None
+    assert int.from_bytes(sentinel, "big") == 1022
+    assert spec.decode_value(bytes.fromhex("01F4")) == pytest.approx(500.0)
     # The same two bytes are the unpopulated cell-temperature sentinel.
-    assert reg.get("cell_t_18").decode_value(payload) is None
+    assert reg.get("cell_t_18").decode_value(sentinel) is None
+
+
+# --------------------------------------------------------------- 0x1800-03
+def test_abs_wheel_speeds_are_registered_only_for_the_dedicated_tool(reg):
+    """The default collector must not send 0x1800..0x1803 without 0x10 03."""
+    from decoders.meb import register_abs
+    from decoders.registry import DIDRegistry
+
+    with pytest.raises(KeyError):
+        reg.get("wheel_speed_front_left")
+
+    abs_reg = DIDRegistry()
+    register_abs(abs_reg)
+    keys = [f"wheel_speed_{corner}" for corner in
+            ("front_left", "front_right", "rear_left", "rear_right")]
+    for key in keys:
+        spec = abs_reg.get(key)
+        assert spec.ecu_key == "brk"
+        assert spec.unit == "km/h"
+        # Parked capture block: first u16 is zero.
+        assert spec.decode_value(
+            bytes.fromhex("00000000FF00FFFFFFFFFFFF")
+        ) == pytest.approx(0.0)
+        # Synthetic 10.00 km/h.
+        assert spec.decode_value(
+            bytes.fromhex("03E80000FF00FFFFFFFFFFFF")
+        ) == pytest.approx(10.0)
 
 
 # --------------------------------------------------------------- 0xF449

@@ -24,7 +24,7 @@ profile, 308 rows / 255 DIDs), `decoders/meb.py`, `decoders/registry.py`,
 | F9 | Battery serial ASCII is not decoded | `battery_serial` | Raw bytes logged, value/text null | High | Decode ASCII; low diagnostic value |
 | F10 | Several lower-priority anomalies | `bat_charging_voltage`, `dc_dc_converter_reserved_current`, `cell_soc_max/min` | Sentinel values or JSON-only output | Medium | Separate backlog; do not conflate with the drive/LV investigation |
 
-## Resolution log (2026-10-22, commit `b8b1c70`)
+## Resolution log (2026-10-22 payload/capture pass)
 
 | Finding | Status | Evidence / action |
 |---|---|---|
@@ -32,15 +32,18 @@ profile, 308 rows / 255 DIDs), `decoders/meb.py`, `decoders/registry.py`,
 | F2 energy block | Resolved earlier | Four fields at Ah 0/4 and kWh 8/12; raw bytes preserved |
 | F3 cell/temp index | Resolved earlier | 1-based indices exposed; tie handling tested |
 | F4 pack current | Resolved earlier | Arithmetic unchanged; documentation states negative = discharge |
-| F5 CO2 | **Still unresolved** | 40/40 responses are `03FE`; 25,400 ppm (byte1×100) and 1,022 ppm (whole u16) are both pinned; `03FE` is also the not-fitted sentinel. Decoder unchanged. |
-| F6 windshield | **Still unresolved** | Current u16 decode is refuted; byte 0 × 0.1 is a candidate (1.17 °C MAE vs outside). Cold-soak/defroster test still needed. |
-| F7 `0x5867` | **Resolved as a counter** | A 10 km/LSB secondary counter, not the total odometer. The x10 delta matched a ~10.5 km drive; x100 is refuted. Key relabelled; still excluded from scoring because its absolute zero/meaning is unknown. |
+| F5 CO2 | **Decoder implemented; sensor appears not fitted** | 40/40 responses are `03FE`; the same bytes are the BMS not-fitted sentinel. The decoder returns `None` for `03FE` and whole-u16 ppm for a non-sentinel frame; 25,400 ppm is rejected. Non-sentinel scale still provisional. |
+| F6 windshield | **Decoder implemented; label still quarantined** | The old u16 decode is refuted. Byte 0 × 0.1 is implemented (1.17 °C MAE vs outside); cold-soak/defroster still needed to decide windshield vs ambient. |
+| F7 `0x5867` | **Resolved as a counter with a known offset** | A 10 km/LSB secondary counter, not the total odometer. The x10 delta matched a ~10.5 km drive; x100 is refuted. It sits a constant 99,869–99,871 km below the main odometer on this car, consistent with a BMS reset; service history still needed. |
 | F8 BMS VIN | Resolved earlier | BMS `0xF802` request removed; `veh_info` path returns the VIN. |
 | F9 battery serial | Resolved earlier | ASCII decoded into `value`/`text_value`; JSON cell SoC pairs are not undecoded. |
 | F10 sentinels | **Partially resolved** | `0x1E39` `FFFF`/`FFFE` now return `None`; `0x2A53` reserved current is raw-only (complement, not a current); `cell_soc_max/min` are JSON by design. |
+| F11 ABS wheel speeds | **Decoders + tool ready; not executed** | `0x1800`–`0x1803`, `0x713 -> 0x77D`, `SBI=0 DL=2 ×0.01 km/h`; the passive capture shows `1003` then the four reads. Registered only by `register_abs()`; the default collector does not send them. `tools/read_abs_wheel_speeds.py` is approval-gated and always attempts `1001`. |
+| F12 gateway unknowns | **Payloads recovered; raw-only** | `0x2A26`/`0x2A28`/`0x2A2F` exact payloads are archived; `0x2A26` == `0x04A3`; no profile layout/scale. |
 
-Regression tests: `tests/test_payload_research.py` and
-`tests/test_payload_audit_tool.py`. The read-only replay is
+Regression tests: `tests/test_payload_research.py`,
+`tests/test_payload_audit_tool.py`, `tests/test_passive_capture.py` and
+`tests/test_abs_tool.py`. The read-only replay is
 `tools/audit_payload_findings.py`.
 
 ## Method
@@ -285,11 +288,18 @@ accuracy at ±0.01 A is not established.
 samples. 1,022 ppm is a normal cabin concentration. The profile may be wrong
 about the field, not just our decoder.
 
+The 2026-10-22 passive capture confirms the response is exactly `62 42 DB 03 FE`
+on `0x7B0`, and all 40 stored rows are `03FE`. The same `03FE` is the repeated
+not-fitted sentinel in `cell_t_18`–`cell_t_23`. The decoder therefore returns
+`None` for `03FE`; a non-sentinel frame is read as a whole u16 ppm value. The
+non-sentinel scale is still provisional and the sensor appears not fitted on
+this car.
+
 ### Proposed test
 
-Read in fresh air with the HVAC off, then with occupants. Expect roughly
-400–1,500 ppm. Compare byte 1, byte 0, and u16. Do not change the decoder before
-the test; this is not a drive-warning signal.
+Read in fresh air with the HVAC off, then with occupants. A non-sentinel value
+should move in roughly 400–2,000 ppm as a whole u16; `03FE` must stay `None`.
+This is not a drive-warning signal.
 
 ---
 
@@ -304,17 +314,18 @@ the test; this is not a drive-warning signal.
   humidity, so the payload is at least partly understood.
 
 No simple 2-byte interpretation of bytes 0–1 with the profile scale is physical.
-Hypotheses that fit the latest sample (e.g. `u16*0.01 - 300` -> 12.67 °C) are
-not confirmed; other bytes vary in ways that do not look like a single
-temperature.
+The 2026-10-15 passive capture contains five-byte payloads `7A2321C07D`,
+`719F619091`, and `729FD1988D`; byte 0 × 0.1 gives 12.2, 11.3, and 11.4 °C,
+within a few degrees of the same-session outside temperature. Byte 0 × 0.1 is
+now implemented. The remaining bytes are not decoded.
 
 ### Proposed action
 
-- Quarantine the current value; do not use it in analysis.
+- Keep the key quarantined; do not use it in scoring until the label is decided.
 - Log all five bytes and compare with ambient, cabin and HVAC outlet
   temperatures during a cold soak and a defroster test.
 - Consider that this vehicle's `0x27C4` payload variant differs from the profile
-  author's car. Do not change the scale until the field is identified.
+  author's car. The old u16 scale is refuted; do not revive it.
 
 ---
 
@@ -323,19 +334,24 @@ temperature.
 ### Evidence
 
 - Profile row: SBI 2, DL 2, ×10.
+- Raw `0005045A00000000`: `0x045A` = 1,114; ×10 = **11,140 km**.
 - Raw `0005045B00000000`: `0x045B` = 1,115; ×10 = **11,150 km**.
-- `0x02BD`, `0x295A`, `0xF817` all read ~**111,020 km** on the same car.
-- ×100 gives **111,500 km**, within 0.43% of the other odometers.
+- `0x02BD`, `0x295A`, `0xF817` all read ~**111,009–111,020 km** on the same car.
+- The x10 counter increments 1 LSB (10 km) while the odometers move ~10.5 km;
+  ×100 would require 100 km per LSB and is refuted by that delta.
+- The constant offset is **99,869–99,871 km** (111,009 − 11,140; 111,020 −
+  11,150), consistent with a BMS replacement/reset at ~99,870 km. Service
+  history is not available, so the absolute zero is still not usable.
 
-This could be a profile scale error (×100), a different counter (trip/lifetime
-in different units), or a mis-offset field. It is not safe to "fix" by choosing
-the scale that makes the numbers agree.
+This is a 10 km/LSB secondary counter, not a profile scale error. Do not "fix"
+it by choosing ×100 to make the absolute numbers agree.
 
 ### Proposed test
 
 Log `0x5867`, `0x02BD`, `0x295A`, `0xF817` and `eldrive_odometer` on one drive.
-Check increments over a known distance. If `0x5867` increments in 100 km steps,
-it is not a total odometer in the same sense.
+Check increments over a known distance. The 10 km/LSB step should track the
+drive, and the ~99,870 km offset should stay constant unless the BMS was reset.
+A service record showing no BMS replacement would refute the offset hypothesis.
 
 ---
 
@@ -378,6 +394,22 @@ identity is needed for service records.
 
 These are recorded so they are not lost, not promoted as findings.
 
+## F11 — ABS wheel speeds (`0x1800`–`0x1803`)
+
+The Car Scanner `[03.ABS]` profile declares four DIDs on `0x713 -> 0x77D`,
+`SBI=0 DL=2 ×0.01 km/h`. The 2026-10-15 passive capture contains Car Scanner's
+sequence: `ATSH713`, `ATSP6`, `ATCRA77D`, `1003`, positive
+`77D065003001E01E5`, then `221800`–`221803`. Each response is a 12-byte block;
+the parked first u16 is zero (`00000000FF00FFFFFFFFFFFF`).
+
+The four decoders are registered by `register_abs()` and are deliberately
+**not** in the default registry, so the normal collector never sends the reads
+without the extended session. The dedicated reader
+(`tools/read_abs_wheel_speeds.py`) requires `--execute --approve-session-change`,
+sends exactly one `1003`, reads only those four DIDs, and always attempts
+`1001`. It has **not** been executed against the car. The ordinary UDS
+allow-list still refuses `1003`.
+
 ## Negative controls / things that look wrong but are not
 
 - **Cell voltage decoder** matches the profile: `u16/4096` on `0x1E40..`.
@@ -393,7 +425,9 @@ These are recorded so they are not lost, not promoted as findings.
 
 ## What was not changed
 
-No decoder, registry, catalogue, database, profile, log, test, or production
-file was modified. All new work is additive under
-`research/measurement_discovery/`. Proposed changes are in
-`validation_roadmap.md` and `python_integration.md`.
+At the time of the original 2026-10-21 audit, no decoder, registry, catalogue,
+database, profile, log, test, or production file was modified; all new work was
+additive under `research/measurement_discovery/`. The 2026-10-22 resolution log
+above records the later, evidence-backed decoder/tool changes. `data/odb_scanner.db`
+itself has never been rewritten; every audit, export, validation and passive
+mining step opened it read-only or did not touch it.

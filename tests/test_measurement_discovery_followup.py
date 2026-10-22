@@ -58,6 +58,27 @@ def test_capture_checker_pass_and_fail():
     assert verdicts[-1].issue.startswith("unknown key")
 
 
+def test_strict_expected_values_are_compared_and_kept_in_the_report():
+    from tools.validate_measurement_capture import evaluate
+
+    caps = [
+        {"key": "hv_energy_max", "raw": "04280400", "expected": 53200.0},
+        {"key": "hv_energy_content", "raw": "0000057F00000000",
+         "expected": 35175.0},
+    ]
+    verdicts, summary = evaluate(caps, "meb", strict=True)
+    assert summary == {"total": 2, "pass": 2, "fail": 0, "indeterminate": 0}
+    assert [v.expected for v in verdicts] == [53200.0, 35175.0]
+
+    bad, bad_summary = evaluate(
+        [{"key": "hv_energy_max", "raw": "04280400", "expected": 50000.0}],
+        "meb", strict=True,
+    )
+    assert bad_summary["fail"] == 1
+    assert bad[0].expected == 50000.0
+    assert "does not match" in bad[0].issue
+
+
 def test_capture_export_and_check_round_trip(tmp_path):
     import sqlite3
 

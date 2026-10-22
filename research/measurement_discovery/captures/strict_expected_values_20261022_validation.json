@@ -1,0 +1,55 @@
+{
+  "summary": {
+    "total": 5,
+    "pass": 5,
+    "fail": 0,
+    "indeterminate": 0
+  },
+  "verdicts": [
+    {
+      "key": "hv_energy_max",
+      "raw": "04280400",
+      "result": "PASS",
+      "value": 53200.0,
+      "unit": "Wh",
+      "issue": "",
+      "expected": 53200.0
+    },
+    {
+      "key": "hv_energy_content",
+      "raw": "0000057F00000000",
+      "result": "PASS",
+      "value": 35175.0,
+      "unit": "Wh",
+      "issue": "",
+      "expected": 35175.0
+    },
+    {
+      "key": "soc_abs",
+      "raw": "C7",
+      "result": "PASS",
+      "value": 79.6,
+      "unit": "%",
+      "issue": "",
+      "expected": 79.6
+    },
+    {
+      "key": "pack_voltage",
+      "raw": "06B6",
+      "result": "PASS",
+      "value": 429.5,
+      "unit": "V",
+      "issue": "",
+      "expected": 429.5
+    },
+    {
+      "key": "odometer_km",
+      "raw": "01B1AC",
+      "result": "PASS",
+      "value": 111020.0,
+      "unit": "km",
+      "issue": "",
+      "expected": 111020.0
+    }
+  ]
+}

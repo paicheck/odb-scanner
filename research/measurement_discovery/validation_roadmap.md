@@ -33,15 +33,22 @@ serial and the pack-current layout.
 ## 0b. Deferred (blocked on evidence or approval)
 
 - **ABS wheel speeds** `0x1800`–`0x1803` need `0x10 03` on `0x713`, a session
-  change that is not approved. Deferred; see the ABS note in section 3.
-- **Gateway unknowns** `0x2A26` / `0x2A28` / `0x2A2F` have no payload or
-  scaling evidence and must not be blind-probed. Deferred to V1 archived
-  evidence recovery.
-- **Quarantined keys** — `co2_content_interior`, `windshield_temperature`,
-  `odometer_2`, `bat_charging_voltage`, `dc_dc_converter_reserved_current`
-  stay invalid/excluded until evidence or policy allows reopening them.
+  change that is not approved. The four decoders and the approval-gated
+  `tools/read_abs_wheel_speeds.py` are ready but **not executed**; see the ABS
+  note in section 3.
+- **Gateway unknowns** `0x2A26` / `0x2A28` / `0x2A2F` now have recovered
+  payloads (V1 done), but no profile layout or scale. They must not be
+  blind-probed or assigned an invented scale.
+- **Quarantined keys** — `co2_content_interior` (sentinel-aware decoder
+  implemented; sensor appears not fitted), `windshield_temperature` (byte-0
+  decoder implemented; label still needs cold-soak/defroster), `odometer_2`
+  (offset known), `bat_charging_voltage` (sentinel `None`) and
+  `dc_dc_converter_reserved_current` (raw-only) stay invalid/excluded until
+  evidence or policy allows reopening them.
 - **Live capture** — `validation_capture_protocol.md` records the exact
-  read-only reproduction to run if and when the owner approves it.
+  read-only reproduction to run if and when the owner approves it. The
+  five-record strict archive supplies independent expected values; the 35-record
+  archive remains a plausibility check.
 
 ## 0. Principles
 
@@ -53,7 +60,9 @@ serial and the pack-current layout.
    `0x14`, coding, adaptation, routine or actuator test.
 4. **Session changes are separate.** `0x10 03` (extended session) is not a
    read. It must be separately approved, scoped to one module, and never
-   combined with a write. ABS is the only candidate that needs it.
+   combined with a write. ABS is the only candidate that needs it. The prepared
+   tool sends exactly one `1003`, reads only `0x1800`–`0x1803`, and always
+   attempts `1001`; the ordinary allow-list still refuses `1003`.
 5. **Raw bytes are the record.** Store timestamp, ECU, DID, request, raw
    response, decoded value, ignition state, ambient, HVAC/charger state, and
    software version. Keep failures and NRCs.
@@ -72,34 +81,40 @@ serial and the pack-current layout.
 | V0.4 Energy short | First 8 bytes only | Explicit failure, not 0 kWh | No silent 0 |
 | V0.5 Cell/temp index | `offline_crosscheck.csv` | 1-based index; tie-aware match | 28/31 max, 29/31 min; 31/31 + 30/31 temp (already reproduced) |
 | V0.6 Pack current | `000248FD`, `FFED` | -2.43 A and -1.9 A | Same sign; no final negation |
-| V0.7 CO2 | `03FE` | Report both byte1 and u16 hypotheses | Implemented: both readings pinned in `tests/test_payload_research.py`; decoder unchanged |
-| V0.8 Windshield | `7A2321C07D` | Current decode flagged invalid; five bytes retained | Implemented: invalid decode and byte-0 candidate pinned; cold-soak/defroster test still needed |
-| V0.9 Odometer | `0005045B00000000` | Report ×10 and ×100 hypotheses | Implemented: x10 kept; x100 refuted by the 10 km vs ~10.5 km delta; absolute zero unknown |
+| V0.7 CO2 | `03FE` | Report both byte1 and u16 hypotheses | Implemented: `03FE` returns `None` (not-fitted sentinel); non-sentinel whole-u16 ppm is provisional; both readings pinned in `tests/test_payload_research.py` |
+| V0.8 Windshield | `7A2321C07D` | Current decode flagged invalid; five bytes retained | Implemented: byte 0 × 0.1 decoder; old u16 formula refuted; cold-soak/defroster label test still needed |
+| V0.9 Odometer | `0005045B00000000` | Report ×10 and ×100 hypotheses | Implemented: x10 kept; x100 refuted by the 10 km vs ~10.5 km delta; constant 99,869–99,871 km offset from the main odometer |
 | V0.10 BMS VIN | NRC `0x31` | Explicit unsupported/rejected | Implemented earlier: BMS request removed; `veh_info` path returns the VIN |
 
 **Deliverable:** regression vectors in the project's test suite, with raw
 inputs and expected outputs. **Do not merge a decoder change without them.**
 
-## 2. Phase V1 — archived/passive evidence recovery
+## 2. Phase V1 — archived/passive evidence recovery (done 2026-10-22)
 
 **Goal:** recover missing payloads without the car.
 
-1. Locate the original `btsnoop_hci.log` (not present in the workspace) or any
-   other saved capture.
-2. Re-run the extraction for `0x2A26`, `0x2A28`, `0x2A2F`:
-   - requesting CAN ID / ATSH;
-   - request bytes;
-   - response length and payload;
-   - repeat count and variation.
-3. Recover payloads for `0x0600`, `0x6156`, `0x6167`, `0x6572`, `0xD476`,
-   `0xE323`, `0xE445`, `0xE4C5`, `0xE535`, `0x0313`, `0x305A`, `0xF190`.
-4. Compare the byte patterns with the profile's known gateway family
-   (`0x2AB2`, `0x2AB4`–`0x2AB8`) and with static identification strings.
-5. If no capture exists, mark the gateway unknowns as **blocked** and do not
-   blind-probe them.
+1. Located the original `btsnoop_hci.log` at
+   `C:\Users\kings\Documents\CarScanner_Capture\btsnoop_hci.log`; SHA-256
+   `eefb5c3ef2781a523692f62484255a70ec7f322a746cde750a4c75c6260496f9`.
+2. Ran `tools/mine_passive_capture.py`: 18,468 btsnoop records / 10,417 ACL
+   records; recovered `0x2A26`, `0x2A28`, `0x2A2F`, `0x42DB`, `0x5867`,
+   `0x1800`–`0x1803`, `0x2AB2`, `0x2AB8`.
+   - `0x2A26` = `2D0000002608508C8062904048180040C000400000060000000000000000C057`
+   - `0x2A28` = `090000000000108000608000400800400000000000000000000000000000C051`
+   - `0x2A2F` = `00` (single byte)
+   - `0x2A26` and `0x04A3` are byte-identical (alias/shared block).
+3. The selected records, lengths, offsets, and DB evidence are in
+   `captures/passive_capture_evidence_20261015.json`; the raw log is **not**
+   committed because it contains unrelated phone data.
+4. The payloads are documented, but none of the three gateway DIDs has a
+   profile layout or scale. They remain raw-only/quarantined; a positive
+   response alone is not a decoder.
+5. Strict expected values for the two energy DIDs, SoC, pack voltage, and
+   odometer are in `captures/strict_expected_values_20261022.json`; the
+   validator reports **5/5 PASS** with the expected values retained.
 
-**Deliverable:** a payload inventory with lengths and context. A positive
-response alone is not enough to create a decoder.
+**Deliverable:** a sanitised, hashed payload inventory plus a decoder/MCP
+status for each DID. Done.
 
 ## 3. Phase V2 — minimal read-only vehicle checks
 
@@ -121,20 +136,24 @@ reproduction, not a discovery.
 | V2.6 Recirculation | `0x263B` | HVAC fresh vs recirculation | 00 vs 04 | Low |
 | V2.7 Accelerator alias | `0xF449` | Parked/ready, pedal released then pressed | 0% then rises | Low (car stationary) |
 | V2.8 GPS fix/time | `0x2430`, `0x22B3` | Outdoors, clear sky | Valid lat/lon/alt/time; compare with phone | Low/medium (multiframe) |
-| V2.9 CO2 | `0x42DB` | Fresh air, then occupied | 400–1,500 ppm; byte vs u16 decided | Low |
-| V2.10 Windshield | `0x27C4` | Cold soak, then defroster | Five bytes logged; plausible field found | Low |
-| V2.11 Odometer | `0x5867`, `0x02BD`, `0x295A`, `0xF817`, `0x086D` | One drive of known distance | Increments reconcile; scale decided | Low |
+| V2.9 CO2 | `0x42DB` | Fresh air, then occupied | A non-sentinel value moves in 400–2,000 ppm as a whole u16; `03FE` stays `None` (sensor appears not fitted) | Low |
+| V2.10 Windshield | `0x27C4` | Cold soak, then defroster | Byte 0 × 0.1 follows windshield/ambient in the expected direction; label decided | Low |
+| V2.11 Odometer | `0x5867`, `0x02BD`, `0x295A`, `0xF817`, `0x086D` | One drive of known distance | Increments reconcile at 10 km/LSB; the ~99,870 km offset stays constant unless the BMS was reset | Low |
 | V2.12 PTC/seat extras | `0x0801`, `0x3ADF`, `0x3AE0` | Off/on states | Raw length and scaling identified | Low/medium (unknown layout) |
 
 ### ABS is not in V2
 
 `0x1800`–`0x1803` require `0x10 03` on `0x713` per the Car Scanner profile.
 That is a **session change**, not a read, and it is not approved for this phase.
-If it is ever considered:
+The decoders and `tools/read_abs_wheel_speeds.py` are prepared but **not
+executed**. If it is ever considered:
 
 - separate approval, separate session, one module only;
 - no other module in the same session;
 - verify the module is the ABS controller and the car is stationary;
+- run `--dry-run` first, then `--execute --approve-session-change`;
+- the tool sends exactly `1003`, reads only `0x1800`–`0x1803`, and always
+  attempts `1001`;
 - read all four wheels at crawl speed in a safe area;
 - stop on any ABS/ESC warning or unexpected NRC;
 - do not combine with any write/actuator test.

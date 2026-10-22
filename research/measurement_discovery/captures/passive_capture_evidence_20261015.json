@@ -1,0 +1,2998 @@
+{
+  "capture_date": "2026-10-15",
+  "derived": {
+    "abs_wheel_speeds": {
+      "addressing": "0x713 -> 0x77D",
+      "observed_session_change": {
+        "note": "observed in Car Scanner passive capture; this project has not executed it",
+        "record": 7783,
+        "request_hex": "1003",
+        "response_hex": "5003001E01E5"
+      },
+      "parked_payloads": {
+        "0x1800": "00000000FF00FFFFFFFFFFFF",
+        "0x1801": "00000000FF00FFFFFFFFFFFF",
+        "0x1802": "00000000FF00FFFFFFFFFFFF",
+        "0x1803": "00000000FF00FFFFFFFFFFFF"
+      },
+      "profile": {
+        "0x1800": "Front left wheel speed, SBI=0 DL=2 x0.01 km/h",
+        "0x1801": "Front right wheel speed, SBI=0 DL=2 x0.01 km/h",
+        "0x1802": "Rear left wheel speed, SBI=0 DL=2 x0.01 km/h",
+        "0x1803": "Rear right wheel speed, SBI=0 DL=2 x0.01 km/h"
+      }
+    },
+    "co2_content_interior": {
+      "cell_temperature_sentinel": {
+        "cell_t_18": {
+          "count": 32,
+          "payload_hex": "03FE"
+        },
+        "cell_t_19": {
+          "count": 33,
+          "payload_hex": "03FE"
+        },
+        "cell_t_20": {
+          "count": 33,
+          "payload_hex": "03FE"
+        },
+        "cell_t_21": {
+          "count": 33,
+          "payload_hex": "03FE"
+        },
+        "cell_t_22": {
+          "count": 32,
+          "payload_hex": "03FE"
+        },
+        "cell_t_23": {
+          "count": 32,
+          "payload_hex": "03FE"
+        }
+      },
+      "conclusion": "03FE is the not-fitted sentinel: 40/40 passive/live rows and the same sentinel in cell_t_18..cell_t_23. Do not decode it as 1,022 ppm or 25,400 ppm.",
+      "db_first_ts": "2026-10-16T17:09:44+00:00",
+      "db_last_ts": "2026-10-21T20:49:29+00:00",
+      "db_payloads": {
+        "03FE": 40
+      },
+      "db_rows": 40,
+      "passive_capture_payload_hex": "03FE"
+    },
+    "energy_content": {
+      "0x2AB2": [
+        {
+          "count": 133,
+          "decoded_wh": 53200,
+          "field_offset_bytes": 0,
+          "field_u16": 1064,
+          "raw_hex": "04280400",
+          "scale_wh_per_lsb": 50
+        }
+      ],
+      "0x2AB8": [
+        {
+          "count": 133,
+          "decoded_wh": 35175,
+          "field_offset_bytes": 2,
+          "field_u16": 1407,
+          "raw_hex": "0000057F00000000",
+          "scale_wh_per_lsb": 25
+        },
+        {
+          "count": 1,
+          "decoded_wh": 35200,
+          "field_offset_bytes": 2,
+          "field_u16": 1408,
+          "raw_hex": "0000058000000000",
+          "scale_wh_per_lsb": 25
+        }
+      ],
+      "displayed_values_wh": {
+        "hv_battery_energy_content": 35175,
+        "maximum_energy_content": 53200
+      },
+      "field_notes": "0x2AB2 uses bytes 0:2 x50; 0x2AB8 uses bytes 2:4 x25 (Car Scanner [19.Gate])."
+    },
+    "gateway_energy_family": {
+      "0x04A3": {
+        "length": 32,
+        "payload_hex": "2D0000002608508C8062904048180040C000400000060000000000000000C057",
+        "profile_definition": false,
+        "status": "same payload as 0x2A26 in this capture"
+      },
+      "0x2A26": {
+        "length": 32,
+        "payload_hex": "2D0000002608508C8062904048180040C000400000060000000000000000C057",
+        "profile_definition": false,
+        "status": "raw-only; no layout/scaling; quarantined"
+      },
+      "0x2A28": {
+        "length": 32,
+        "payload_hex": "090000000000108000608000400800400000000000000000000000000000C051",
+        "profile_definition": false,
+        "status": "raw-only; no layout/scaling; quarantined"
+      },
+      "0x2A2F": {
+        "length": 1,
+        "payload_hex": "00",
+        "profile_definition": false,
+        "status": "single byte 0x00; meaning unknown; quarantined"
+      },
+      "alias_0x04A3_equals_0x2A26": true
+    },
+    "odometer_counter": {
+      "conclusion": "The counter is 10 km/LSB. On this car it is the main odometer minus about 99,870 km (observed 99,869-99,871 km, within the two counters' rounding); that constant offset is consistent with a BMS replacement/reset at ~99,870 km, but service history is not available.",
+      "db_pairs": [
+        {
+          "eldrive_odometer_km": 111009.0,
+          "lifetime_km": 111009.8,
+          "odometer_2_km": 11140.0,
+          "odometer_km": 111009.0,
+          "offset_km": 99869.0,
+          "raw_hex": "0005045A00000000",
+          "ts": "2026-10-18T13:53:18+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111009.0,
+          "lifetime_km": 111009.8,
+          "odometer_2_km": 11140.0,
+          "odometer_km": 111009.0,
+          "offset_km": 99869.0,
+          "raw_hex": "0005045A00000000",
+          "ts": "2026-10-18T13:57:05+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111009.0,
+          "lifetime_km": 111009.8,
+          "odometer_2_km": 11140.0,
+          "odometer_km": 111009.0,
+          "offset_km": 99869.0,
+          "raw_hex": "0005045A00000000",
+          "ts": "2026-10-18T14:00:48+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111009.0,
+          "lifetime_km": 111009.8,
+          "odometer_2_km": 11140.0,
+          "odometer_km": 111009.0,
+          "offset_km": 99869.0,
+          "raw_hex": "0005045A00000000",
+          "ts": "2026-10-18T14:04:31+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111011.0,
+          "lifetime_km": 111010.1,
+          "odometer_2_km": 11140.0,
+          "odometer_km": 111010.0,
+          "offset_km": 99870.0,
+          "raw_hex": "0005045A00000000",
+          "ts": "2026-10-18T18:15:05+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111011.0,
+          "lifetime_km": 111011.70000000001,
+          "odometer_2_km": 11140.0,
+          "odometer_km": 111011.0,
+          "offset_km": 99871.0,
+          "raw_hex": "0005045A00000000",
+          "ts": "2026-10-18T18:19:05+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111011.0,
+          "lifetime_km": 111011.70000000001,
+          "odometer_2_km": 11140.0,
+          "odometer_km": 111011.0,
+          "offset_km": 99871.0,
+          "raw_hex": "0005045A00000000",
+          "ts": "2026-10-18T18:22:50+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111011.0,
+          "lifetime_km": 111011.70000000001,
+          "odometer_2_km": 11140.0,
+          "odometer_km": 111011.0,
+          "offset_km": 99871.0,
+          "raw_hex": "0005045A00000000",
+          "ts": "2026-10-18T18:26:30+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111020.0,
+          "lifetime_km": 111020.3,
+          "odometer_2_km": 11150.0,
+          "odometer_km": 111020.0,
+          "offset_km": 99870.0,
+          "raw_hex": "0005045B00000000",
+          "ts": "2026-10-19T19:10:00+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111020.0,
+          "lifetime_km": 111020.3,
+          "odometer_2_km": 11150.0,
+          "odometer_km": 111020.0,
+          "offset_km": 99870.0,
+          "raw_hex": "0005045B00000000",
+          "ts": "2026-10-19T19:13:50+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111020.0,
+          "lifetime_km": 111020.3,
+          "odometer_2_km": 11150.0,
+          "odometer_km": 111020.0,
+          "offset_km": 99870.0,
+          "raw_hex": "0005045B00000000",
+          "ts": "2026-10-19T19:17:33+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111020.0,
+          "lifetime_km": 111020.3,
+          "odometer_2_km": 11150.0,
+          "odometer_km": 111020.0,
+          "offset_km": 99870.0,
+          "raw_hex": "0005045B00000000",
+          "ts": "2026-10-19T19:21:16+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111020.0,
+          "lifetime_km": 111020.3,
+          "odometer_2_km": 11150.0,
+          "odometer_km": 111020.0,
+          "offset_km": 99870.0,
+          "raw_hex": "0005045B00000000",
+          "ts": "2026-10-19T19:24:59+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111020.0,
+          "lifetime_km": 111020.3,
+          "odometer_2_km": 11150.0,
+          "odometer_km": 111020.0,
+          "offset_km": 99870.0,
+          "raw_hex": "0005045B00000000",
+          "ts": "2026-10-19T19:28:42+00:00"
+        },
+        {
+          "eldrive_odometer_km": 111020.0,
+          "lifetime_km": 111020.3,
+          "odometer_2_km": 11150.0,
+          "odometer_km": 111020.0,
+          "offset_km": 99870.0,
+          "raw_hex": "0005045B00000000",
+          "ts": "2026-10-21T20:45:37+00:00"
+        }
+      ],
+      "decoded_km": 11140,
+      "field_offset_bytes": 2,
+      "field_u16": 1114,
+      "offset_km_max": 99871.0,
+      "offset_km_min": 99869.0,
+      "passive_capture_payload_hex": "0005045A00000000",
+      "scale_km_per_lsb": 10
+    },
+    "windshield_temperature": {
+      "candidate_definition": "byte 0 x0.1 degC",
+      "conclusion": "The two-byte profile formula gives implausible values; byte 0 x0.1 tracks outside temperature within a few degrees. Windshield-vs-ambient identity still needs the cold-soak/defroster test.",
+      "profile_definition": "SBI=0 DL=2 x15.625 -39.5 (refuted)",
+      "row_count": 41,
+      "rows": [
+        {
+          "byte0_c": 12.9,
+          "cabin_humidity_pct": 48.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": 14.5,
+          "profile_u16_decode_c": 519569.875,
+          "raw_hex": "81E7D1FC60",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-16T17:09:44+00:00"
+        },
+        {
+          "byte0_c": 12.3,
+          "cabin_humidity_pct": 72.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": 12.0,
+          "profile_u16_decode_c": 493476.125,
+          "raw_hex": "7B61E1B092",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-17T16:47:34+00:00"
+        },
+        {
+          "byte0_c": 12.3,
+          "cabin_humidity_pct": 69.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": 11.5,
+          "profile_u16_decode_c": 492491.75,
+          "raw_hex": "7B2241B88A",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-17T16:51:22+00:00"
+        },
+        {
+          "byte0_c": 12.4,
+          "cabin_humidity_pct": 69.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": 11.5,
+          "profile_u16_decode_c": 496491.75,
+          "raw_hex": "7C2291BC8B",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-17T16:55:09+00:00"
+        },
+        {
+          "byte0_c": 12.6,
+          "cabin_humidity_pct": 71.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 11.5,
+          "profile_u16_decode_c": 504491.75,
+          "raw_hex": "7E22D1BC8E",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-17T16:58:56+00:00"
+        },
+        {
+          "byte0_c": 12.6,
+          "cabin_humidity_pct": 71.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 11.5,
+          "profile_u16_decode_c": 507507.375,
+          "raw_hex": "7EE301C08F",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-17T17:01:32+00:00"
+        },
+        {
+          "byte0_c": 12.7,
+          "cabin_humidity_pct": 71.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 11.5,
+          "profile_u16_decode_c": 511507.375,
+          "raw_hex": "7FE341C48F",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-17T17:04:09+00:00"
+        },
+        {
+          "byte0_c": 12.8,
+          "cabin_humidity_pct": 71.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 11.5,
+          "profile_u16_decode_c": 512507.375,
+          "raw_hex": "802361C48F",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-17T17:06:47+00:00"
+        },
+        {
+          "byte0_c": 12.8,
+          "cabin_humidity_pct": 71.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": null,
+          "profile_u16_decode_c": 515507.375,
+          "raw_hex": "80E391C88E",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-17T17:09:24+00:00"
+        },
+        {
+          "byte0_c": 12.7,
+          "cabin_humidity_pct": 46.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 511569.875,
+          "raw_hex": "7FE7B1FC5D",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-18T13:17:57+00:00"
+        },
+        {
+          "byte0_c": 12.2,
+          "cabin_humidity_pct": 40.0,
+          "compressor_w": 216.0,
+          "evaporator_c": 0.333,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 491569.875,
+          "raw_hex": "7AE7C1FC50",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-18T13:20:31+00:00"
+        },
+        {
+          "byte0_c": 12.2,
+          "cabin_humidity_pct": 40.0,
+          "compressor_w": 216.0,
+          "evaporator_c": 0.333,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 490569.875,
+          "raw_hex": "7AA7F20050",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-18T13:23:01+00:00"
+        },
+        {
+          "byte0_c": 12.2,
+          "cabin_humidity_pct": 38.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 489585.5,
+          "raw_hex": "7A6812004D",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-18T13:25:32+00:00"
+        },
+        {
+          "byte0_c": 12.8,
+          "cabin_humidity_pct": 44.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 512585.5,
+          "raw_hex": "8028420459",
+          "recirculation_flap_pct": 66.0,
+          "ts": "2026-10-18T13:28:03+00:00"
+        },
+        {
+          "byte0_c": 12.8,
+          "cabin_humidity_pct": 44.5,
+          "compressor_w": 216.0,
+          "evaporator_c": 0.333,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 515585.5,
+          "raw_hex": "80E8720459",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-18T13:30:40+00:00"
+        },
+        {
+          "byte0_c": 12.5,
+          "cabin_humidity_pct": 41.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 503585.5,
+          "raw_hex": "7DE8A20852",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-18T13:33:17+00:00"
+        },
+        {
+          "byte0_c": 12.4,
+          "cabin_humidity_pct": 37.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": null,
+          "profile_u16_decode_c": 497585.5,
+          "raw_hex": "7C68E20C4B",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-18T13:38:11+00:00"
+        },
+        {
+          "byte0_c": 13.1,
+          "cabin_humidity_pct": 45.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 525585.5,
+          "raw_hex": "8368F20C5B",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-18T13:41:25+00:00"
+        },
+        {
+          "byte0_c": 13.3,
+          "cabin_humidity_pct": 47.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 532585.5,
+          "raw_hex": "8528E20C5E",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-18T13:44:01+00:00"
+        },
+        {
+          "byte0_c": 13.2,
+          "cabin_humidity_pct": 47.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 528585.5,
+          "raw_hex": "8428E20C5E",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-18T13:46:38+00:00"
+        },
+        {
+          "byte0_c": 13.2,
+          "cabin_humidity_pct": 47.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 531585.5,
+          "raw_hex": "84E8D20C5F",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-18T13:49:10+00:00"
+        },
+        {
+          "byte0_c": 13.2,
+          "cabin_humidity_pct": null,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": null,
+          "profile_u16_decode_c": 531585.5,
+          "raw_hex": "84E8D20C60",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-18T13:51:56+00:00"
+        },
+        {
+          "byte0_c": 13.2,
+          "cabin_humidity_pct": 48.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 531585.5,
+          "raw_hex": "84E8D20C60",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-18T13:53:18+00:00"
+        },
+        {
+          "byte0_c": 13.3,
+          "cabin_humidity_pct": 48.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 533585.5,
+          "raw_hex": "8568C20860",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-18T13:57:05+00:00"
+        },
+        {
+          "byte0_c": 13.3,
+          "cabin_humidity_pct": 48.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 534585.5,
+          "raw_hex": "85A8D20C60",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-18T14:00:48+00:00"
+        },
+        {
+          "byte0_c": 13.2,
+          "cabin_humidity_pct": 45.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 14.0,
+          "profile_u16_decode_c": 528601.125,
+          "raw_hex": "842922105B",
+          "recirculation_flap_pct": 86.0,
+          "ts": "2026-10-18T14:04:31+00:00"
+        },
+        {
+          "byte0_c": 13.3,
+          "cabin_humidity_pct": 46.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 15.0,
+          "profile_u16_decode_c": 532601.125,
+          "raw_hex": "852922105D",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-18T14:08:13+00:00"
+        },
+        {
+          "byte0_c": 13.4,
+          "cabin_humidity_pct": 47.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": null,
+          "profile_u16_decode_c": 536601.125,
+          "raw_hex": "862922105E",
+          "recirculation_flap_pct": 100.0,
+          "ts": "2026-10-18T14:12:09+00:00"
+        },
+        {
+          "byte0_c": 12.0,
+          "cabin_humidity_pct": 78.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 10.5,
+          "profile_u16_decode_c": 480460.5,
+          "raw_hex": "782061A09D",
+          "recirculation_flap_pct": 66.0,
+          "ts": "2026-10-18T18:15:05+00:00"
+        },
+        {
+          "byte0_c": 12.0,
+          "cabin_humidity_pct": 78.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 10.5,
+          "profile_u16_decode_c": 480460.5,
+          "raw_hex": "782061A09C",
+          "recirculation_flap_pct": 66.0,
+          "ts": "2026-10-18T18:19:05+00:00"
+        },
+        {
+          "byte0_c": 12.0,
+          "cabin_humidity_pct": 77.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 10.5,
+          "profile_u16_decode_c": 481460.5,
+          "raw_hex": "7860B1A49A",
+          "recirculation_flap_pct": 66.0,
+          "ts": "2026-10-18T18:22:50+00:00"
+        },
+        {
+          "byte0_c": 12.0,
+          "cabin_humidity_pct": 75.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 10.5,
+          "profile_u16_decode_c": 483476.125,
+          "raw_hex": "78E101A896",
+          "recirculation_flap_pct": 66.0,
+          "ts": "2026-10-18T18:26:30+00:00"
+        },
+        {
+          "byte0_c": 12.0,
+          "cabin_humidity_pct": 73.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 12.0,
+          "profile_u16_decode_c": 480476.125,
+          "raw_hex": "782101A893",
+          "recirculation_flap_pct": 66.0,
+          "ts": "2026-10-19T19:10:00+00:00"
+        },
+        {
+          "byte0_c": 12.0,
+          "cabin_humidity_pct": 71.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 11.5,
+          "profile_u16_decode_c": 481476.125,
+          "raw_hex": "786151AC8E",
+          "recirculation_flap_pct": 66.0,
+          "ts": "2026-10-19T19:13:50+00:00"
+        },
+        {
+          "byte0_c": 11.7,
+          "cabin_humidity_pct": 63.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": 11.5,
+          "profile_u16_decode_c": 469476.125,
+          "raw_hex": "7561A1B07F",
+          "recirculation_flap_pct": 81.0,
+          "ts": "2026-10-19T19:17:33+00:00"
+        },
+        {
+          "byte0_c": 12.3,
+          "cabin_humidity_pct": 70.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": 11.5,
+          "profile_u16_decode_c": 492491.75,
+          "raw_hex": "7B2201B48E",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-19T19:21:16+00:00"
+        },
+        {
+          "byte0_c": 12.1,
+          "cabin_humidity_pct": 66.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 11.5,
+          "profile_u16_decode_c": 487491.75,
+          "raw_hex": "79E261B886",
+          "recirculation_flap_pct": 71.5,
+          "ts": "2026-10-19T19:24:59+00:00"
+        },
+        {
+          "byte0_c": 12.2,
+          "cabin_humidity_pct": 65.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 11.5,
+          "profile_u16_decode_c": 489491.75,
+          "raw_hex": "7A62C1BC81",
+          "recirculation_flap_pct": 73.0,
+          "ts": "2026-10-19T19:28:42+00:00"
+        },
+        {
+          "byte0_c": 12.2,
+          "cabin_humidity_pct": 63.0,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.666,
+          "outside_c": 12.0,
+          "profile_u16_decode_c": 488507.375,
+          "raw_hex": "7A2321C07D",
+          "recirculation_flap_pct": 76.5,
+          "ts": "2026-10-19T19:32:25+00:00"
+        },
+        {
+          "byte0_c": 11.3,
+          "cabin_humidity_pct": 72.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": 9.0,
+          "profile_u16_decode_c": 454444.875,
+          "raw_hex": "719F619091",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-21T20:45:37+00:00"
+        },
+        {
+          "byte0_c": 11.4,
+          "cabin_humidity_pct": 70.5,
+          "compressor_w": 0.0,
+          "evaporator_c": 0.333,
+          "outside_c": 9.0,
+          "profile_u16_decode_c": 458444.875,
+          "raw_hex": "729FD1988D",
+          "recirculation_flap_pct": 65.5,
+          "ts": "2026-10-21T20:49:29+00:00"
+        }
+      ]
+    }
+  },
+  "extraction": {
+    "method": "ELF/RFCOMM printable lines -> ISO-TP SF/FF/CF reassembly -> UDS 0x62",
+    "record_count": 278,
+    "selected_dids": [
+      "0x04A3",
+      "0x15D1",
+      "0x1800",
+      "0x1801",
+      "0x1802",
+      "0x1803",
+      "0x2A26",
+      "0x2A28",
+      "0x2A2F",
+      "0x2AB2",
+      "0x2AB8",
+      "0x42DB",
+      "0x5867"
+    ],
+    "tool": "tools/mine_passive_capture.py"
+  },
+  "privacy": {
+    "raw_capture_committed": false,
+    "reason": "contains unrelated personal phone traffic",
+    "retained_fields": [
+      "can_id",
+      "did",
+      "payload",
+      "length",
+      "offset_s",
+      "record"
+    ]
+  },
+  "records": [
+    {
+      "can_id": "0x77A",
+      "did": "0x04A3",
+      "length": 32,
+      "offset_s": 3212.90001,
+      "payload": "2D0000002608508C8062904048180040C000400000060000000000000000C057",
+      "record": 3635
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x15D1",
+      "length": 20,
+      "offset_s": 3624.511851,
+      "payload": "0100001E3302C000000000000000000000000000",
+      "record": 8674
+    },
+    {
+      "can_id": "0x77D",
+      "did": "0x1800",
+      "length": 12,
+      "offset_s": 3196.93831,
+      "payload": "00000000FF00FFFFFFFFFFFF",
+      "record": 3492
+    },
+    {
+      "can_id": "0x77D",
+      "did": "0x1801",
+      "length": 12,
+      "offset_s": 3197.738497,
+      "payload": "00000000FF00FFFFFFFFFFFF",
+      "record": 3496
+    },
+    {
+      "can_id": "0x77D",
+      "did": "0x1802",
+      "length": 12,
+      "offset_s": 3197.85878,
+      "payload": "00000000FF00FFFFFFFFFFFF",
+      "record": 3500
+    },
+    {
+      "can_id": "0x77D",
+      "did": "0x1803",
+      "length": 12,
+      "offset_s": 3198.018573,
+      "payload": "00000000FF00FFFFFFFFFFFF",
+      "record": 3504
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2A26",
+      "length": 32,
+      "offset_s": 3212.739941,
+      "payload": "2D0000002608508C8062904048180040C000400000060000000000000000C057",
+      "record": 3632
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2A28",
+      "length": 32,
+      "offset_s": 3213.059144,
+      "payload": "090000000000108000608000400800400000000000000000000000000000C051",
+      "record": 3638
+    },
+    {
+      "can_id": "0x77F",
+      "did": "0x2A2F",
+      "length": 1,
+      "offset_s": 3398.143692,
+      "payload": "00",
+      "record": 6345
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3713.474182,
+      "payload": "04280400",
+      "record": 9536
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3715.275148,
+      "payload": "04280400",
+      "record": 9544
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3716.194133,
+      "payload": "04280400",
+      "record": 9552
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3716.434141,
+      "payload": "04280400",
+      "record": 9558
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3716.674046,
+      "payload": "04280400",
+      "record": 9564
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3716.956857,
+      "payload": "04280400",
+      "record": 9570
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3717.234306,
+      "payload": "04280400",
+      "record": 9576
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3718.357294,
+      "payload": "04280400",
+      "record": 9582
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3720.274358,
+      "payload": "04280400",
+      "record": 9588
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3722.197332,
+      "payload": "04280400",
+      "record": 9594
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3723.27422,
+      "payload": "04280400",
+      "record": 9601
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3724.35396,
+      "payload": "04280400",
+      "record": 9607
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3725.436053,
+      "payload": "04280400",
+      "record": 9613
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3726.554247,
+      "payload": "04280400",
+      "record": 9619
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3726.834361,
+      "payload": "04280400",
+      "record": 9625
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3727.11416,
+      "payload": "04280400",
+      "record": 9631
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3727.434454,
+      "payload": "04280400",
+      "record": 9637
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3727.674549,
+      "payload": "04280400",
+      "record": 9643
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3728.755032,
+      "payload": "04280400",
+      "record": 9649
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3729.115202,
+      "payload": "04280400",
+      "record": 9655
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3729.394777,
+      "payload": "04280400",
+      "record": 9661
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3729.634431,
+      "payload": "04280400",
+      "record": 9667
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3730.716581,
+      "payload": "04280400",
+      "record": 9673
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3731.796196,
+      "payload": "04280400",
+      "record": 9679
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3732.115548,
+      "payload": "04280400",
+      "record": 9685
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3733.275154,
+      "payload": "04280400",
+      "record": 9691
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3734.354846,
+      "payload": "04280400",
+      "record": 9698
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3735.475503,
+      "payload": "04280400",
+      "record": 9704
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3737.395231,
+      "payload": "04280400",
+      "record": 9712
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3739.315192,
+      "payload": "04280400",
+      "record": 9718
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3739.555211,
+      "payload": "04280400",
+      "record": 9725
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3740.635676,
+      "payload": "04280400",
+      "record": 9731
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3742.635052,
+      "payload": "04280400",
+      "record": 9737
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3744.595418,
+      "payload": "04280400",
+      "record": 9743
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3745.676153,
+      "payload": "04280400",
+      "record": 9749
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3745.914946,
+      "payload": "04280400",
+      "record": 9755
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3746.195762,
+      "payload": "04280400",
+      "record": 9761
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3747.275253,
+      "payload": "04280400",
+      "record": 9768
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3747.517545,
+      "payload": "04280400",
+      "record": 9775
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3747.795449,
+      "payload": "04280400",
+      "record": 9781
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3749.756539,
+      "payload": "04280400",
+      "record": 9787
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3751.715394,
+      "payload": "04280400",
+      "record": 9793
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3752.835966,
+      "payload": "04280400",
+      "record": 9799
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3753.915822,
+      "payload": "04280400",
+      "record": 9805
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3755.03534,
+      "payload": "04280400",
+      "record": 9811
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3755.316033,
+      "payload": "04280400",
+      "record": 9817
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3755.555981,
+      "payload": "04280400",
+      "record": 9823
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3756.677135,
+      "payload": "04280400",
+      "record": 9829
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3758.5956,
+      "payload": "04280400",
+      "record": 9835
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3760.515536,
+      "payload": "04280400",
+      "record": 9841
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3762.437484,
+      "payload": "04280400",
+      "record": 9847
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3764.396025,
+      "payload": "04280400",
+      "record": 9853
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3764.757313,
+      "payload": "04280400",
+      "record": 9859
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3766.675602,
+      "payload": "04280400",
+      "record": 9865
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3768.595873,
+      "payload": "04280400",
+      "record": 9871
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3770.557142,
+      "payload": "04280400",
+      "record": 9877
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3770.835892,
+      "payload": "04280400",
+      "record": 9883
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3771.915658,
+      "payload": "04280400",
+      "record": 9889
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3772.155831,
+      "payload": "04280400",
+      "record": 9895
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3773.237035,
+      "payload": "04280400",
+      "record": 9901
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3774.315853,
+      "payload": "04280400",
+      "record": 9907
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3776.395969,
+      "payload": "04280400",
+      "record": 9913
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3778.317442,
+      "payload": "04280400",
+      "record": 9919
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3780.276082,
+      "payload": "04280400",
+      "record": 9925
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3780.516441,
+      "payload": "04280400",
+      "record": 9931
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3780.796641,
+      "payload": "04280400",
+      "record": 9937
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3781.115892,
+      "payload": "04280400",
+      "record": 9943
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3781.356333,
+      "payload": "04280400",
+      "record": 9949
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3783.356784,
+      "payload": "04280400",
+      "record": 9955
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3783.595827,
+      "payload": "04280400",
+      "record": 9961
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3783.875965,
+      "payload": "04280400",
+      "record": 9967
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3785.07605,
+      "payload": "04280400",
+      "record": 9973
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3785.317782,
+      "payload": "04280400",
+      "record": 9979
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3785.635707,
+      "payload": "04280400",
+      "record": 9985
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3785.875555,
+      "payload": "04280400",
+      "record": 9991
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3786.11671,
+      "payload": "04280400",
+      "record": 9997
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3786.357103,
+      "payload": "04280400",
+      "record": 10003
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3788.317417,
+      "payload": "04280400",
+      "record": 10009
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3790.316993,
+      "payload": "04280400",
+      "record": 10015
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3792.316549,
+      "payload": "04280400",
+      "record": 10021
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3794.277965,
+      "payload": "04280400",
+      "record": 10027
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3794.556662,
+      "payload": "04280400",
+      "record": 10033
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3794.79642,
+      "payload": "04280400",
+      "record": 10039
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3795.916662,
+      "payload": "04280400",
+      "record": 10045
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3796.15646,
+      "payload": "04280400",
+      "record": 10051
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3797.236067,
+      "payload": "04280400",
+      "record": 10057
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3797.717032,
+      "payload": "04280400",
+      "record": 10070
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3799.676909,
+      "payload": "04280400",
+      "record": 10076
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3801.598631,
+      "payload": "04280400",
+      "record": 10082
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3803.562228,
+      "payload": "04280400",
+      "record": 10088
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3805.481328,
+      "payload": "04280400",
+      "record": 10094
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3807.478569,
+      "payload": "04280400",
+      "record": 10100
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3808.557064,
+      "payload": "04280400",
+      "record": 10106
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3810.47695,
+      "payload": "04280400",
+      "record": 10112
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3810.797542,
+      "payload": "04280400",
+      "record": 10118
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3811.036837,
+      "payload": "04280400",
+      "record": 10124
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3811.317865,
+      "payload": "04280400",
+      "record": 10130
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3812.39705,
+      "payload": "04280400",
+      "record": 10136
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3813.477475,
+      "payload": "04280400",
+      "record": 10142
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3813.75744,
+      "payload": "04280400",
+      "record": 10148
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3815.679221,
+      "payload": "04280400",
+      "record": 10154
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3817.639893,
+      "payload": "04280400",
+      "record": 10160
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3819.560519,
+      "payload": "04280400",
+      "record": 10166
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3819.83766,
+      "payload": "04280400",
+      "record": 10172
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3821.757443,
+      "payload": "04280400",
+      "record": 10178
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3823.678128,
+      "payload": "04280400",
+      "record": 10184
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3825.59796,
+      "payload": "04280400",
+      "record": 10190
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3825.83719,
+      "payload": "04280400",
+      "record": 10196
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3826.117073,
+      "payload": "04280400",
+      "record": 10202
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3827.317681,
+      "payload": "04280400",
+      "record": 10208
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3827.597887,
+      "payload": "04280400",
+      "record": 10214
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3828.67861,
+      "payload": "04280400",
+      "record": 10220
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3830.601474,
+      "payload": "04280400",
+      "record": 10226
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3832.519247,
+      "payload": "04280400",
+      "record": 10232
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3834.477992,
+      "payload": "04280400",
+      "record": 10238
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3834.757936,
+      "payload": "04280400",
+      "record": 10244
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3834.998374,
+      "payload": "04280400",
+      "record": 10250
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3835.238287,
+      "payload": "04280400",
+      "record": 10256
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3836.318113,
+      "payload": "04280400",
+      "record": 10262
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3838.238331,
+      "payload": "04280400",
+      "record": 10268
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3840.158517,
+      "payload": "04280400",
+      "record": 10274
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3841.241136,
+      "payload": "04280400",
+      "record": 10280
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3843.158966,
+      "payload": "04280400",
+      "record": 10286
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3844.360892,
+      "payload": "04280400",
+      "record": 10292
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3845.478293,
+      "payload": "04280400",
+      "record": 10298
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3845.799256,
+      "payload": "04280400",
+      "record": 10304
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3846.399235,
+      "payload": "04280400",
+      "record": 10310
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3848.319862,
+      "payload": "04280400",
+      "record": 10316
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3850.242228,
+      "payload": "04280400",
+      "record": 10322
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3852.199051,
+      "payload": "04280400",
+      "record": 10328
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3853.278472,
+      "payload": "04280400",
+      "record": 10334
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3855.198426,
+      "payload": "04280400",
+      "record": 10340
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB2",
+      "length": 4,
+      "offset_s": 3856.278566,
+      "payload": "04280400",
+      "record": 10347
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3596.870093,
+      "payload": "0000058000000000",
+      "record": 8506
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3696.593658,
+      "payload": "0000057F00000000",
+      "record": 9414
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3714.233736,
+      "payload": "0000057F00000000",
+      "record": 9540
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3716.034038,
+      "payload": "0000057F00000000",
+      "record": 9548
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3716.314098,
+      "payload": "0000057F00000000",
+      "record": 9555
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3716.554476,
+      "payload": "0000057F00000000",
+      "record": 9561
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3716.795995,
+      "payload": "0000057F00000000",
+      "record": 9567
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3717.115048,
+      "payload": "0000057F00000000",
+      "record": 9573
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3717.354487,
+      "payload": "0000057F00000000",
+      "record": 9579
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3719.315573,
+      "payload": "0000057F00000000",
+      "record": 9585
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3721.23505,
+      "payload": "0000057F00000000",
+      "record": 9591
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3723.154726,
+      "payload": "0000057F00000000",
+      "record": 9598
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3723.394436,
+      "payload": "0000057F00000000",
+      "record": 9604
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3724.474518,
+      "payload": "0000057F00000000",
+      "record": 9610
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3726.394887,
+      "payload": "0000057F00000000",
+      "record": 9616
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3726.714288,
+      "payload": "0000057F00000000",
+      "record": 9622
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3726.995241,
+      "payload": "0000057F00000000",
+      "record": 9628
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3727.316574,
+      "payload": "0000057F00000000",
+      "record": 9634
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3727.554826,
+      "payload": "0000057F00000000",
+      "record": 9640
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3727.794941,
+      "payload": "0000057F00000000",
+      "record": 9646
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3728.874527,
+      "payload": "0000057F00000000",
+      "record": 9652
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3729.234815,
+      "payload": "0000057F00000000",
+      "record": 9658
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3729.515001,
+      "payload": "0000057F00000000",
+      "record": 9664
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3729.755082,
+      "payload": "0000057F00000000",
+      "record": 9670
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3731.675078,
+      "payload": "0000057F00000000",
+      "record": 9676
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3731.954971,
+      "payload": "0000057F00000000",
+      "record": 9682
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3732.274937,
+      "payload": "0000057F00000000",
+      "record": 9688
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3734.23601,
+      "payload": "0000057F00000000",
+      "record": 9694
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3734.475744,
+      "payload": "0000057F00000000",
+      "record": 9701
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3736.435676,
+      "payload": "0000057F00000000",
+      "record": 9709
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3738.355548,
+      "payload": "0000057F00000000",
+      "record": 9715
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3739.434997,
+      "payload": "0000057F00000000",
+      "record": 9722
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3739.675213,
+      "payload": "0000057F00000000",
+      "record": 9728
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3741.595727,
+      "payload": "0000057F00000000",
+      "record": 9734
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3743.63576,
+      "payload": "0000057F00000000",
+      "record": 9740
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3744.715205,
+      "payload": "0000057F00000000",
+      "record": 9746
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3745.795141,
+      "payload": "0000057F00000000",
+      "record": 9752
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3746.035141,
+      "payload": "0000057F00000000",
+      "record": 9758
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3746.315596,
+      "payload": "0000057F00000000",
+      "record": 9764
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3747.675607,
+      "payload": "0000057F00000000",
+      "record": 9778
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3748.755566,
+      "payload": "0000057F00000000",
+      "record": 9784
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3750.757152,
+      "payload": "0000057F00000000",
+      "record": 9790
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3751.876836,
+      "payload": "0000057F00000000",
+      "record": 9796
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3752.996333,
+      "payload": "0000057F00000000",
+      "record": 9802
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3754.876683,
+      "payload": "0000057F00000000",
+      "record": 9808
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3755.155371,
+      "payload": "0000057F00000000",
+      "record": 9814
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3755.435621,
+      "payload": "0000057F00000000",
+      "record": 9820
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3755.675326,
+      "payload": "0000057F00000000",
+      "record": 9826
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3757.640656,
+      "payload": "0000057F00000000",
+      "record": 9832
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3759.556134,
+      "payload": "0000057F00000000",
+      "record": 9838
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3761.476483,
+      "payload": "0000057F00000000",
+      "record": 9844
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3763.436505,
+      "payload": "0000057F00000000",
+      "record": 9850
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3764.596808,
+      "payload": "0000057F00000000",
+      "record": 9856
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3765.715829,
+      "payload": "0000057F00000000",
+      "record": 9862
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3767.636859,
+      "payload": "0000057F00000000",
+      "record": 9868
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3769.556801,
+      "payload": "0000057F00000000",
+      "record": 9874
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3770.715528,
+      "payload": "0000057F00000000",
+      "record": 9880
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3770.955581,
+      "payload": "0000057F00000000",
+      "record": 9886
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3772.035669,
+      "payload": "0000057F00000000",
+      "record": 9892
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3772.277578,
+      "payload": "0000057F00000000",
+      "record": 9898
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3773.358756,
+      "payload": "0000057F00000000",
+      "record": 9904
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3775.276761,
+      "payload": "0000057F00000000",
+      "record": 9910
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3777.356512,
+      "payload": "0000057F00000000",
+      "record": 9916
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3779.276283,
+      "payload": "0000057F00000000",
+      "record": 9922
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3780.396251,
+      "payload": "0000057F00000000",
+      "record": 9928
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3780.637082,
+      "payload": "0000057F00000000",
+      "record": 9934
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3780.917291,
+      "payload": "0000057F00000000",
+      "record": 9940
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3781.235727,
+      "payload": "0000057F00000000",
+      "record": 9946
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3782.357238,
+      "payload": "0000057F00000000",
+      "record": 9952
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3783.476118,
+      "payload": "0000057F00000000",
+      "record": 9958
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3783.716099,
+      "payload": "0000057F00000000",
+      "record": 9964
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3784.077721,
+      "payload": "0000057F00000000",
+      "record": 9970
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3785.196392,
+      "payload": "0000057F00000000",
+      "record": 9976
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3785.477067,
+      "payload": "0000057F00000000",
+      "record": 9982
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3785.757212,
+      "payload": "0000057F00000000",
+      "record": 9988
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3785.996615,
+      "payload": "0000057F00000000",
+      "record": 9994
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3786.236626,
+      "payload": "0000057F00000000",
+      "record": 10000
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3787.359618,
+      "payload": "0000057F00000000",
+      "record": 10006
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3789.276924,
+      "payload": "0000057F00000000",
+      "record": 10012
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3791.278325,
+      "payload": "0000057F00000000",
+      "record": 10018
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3793.276796,
+      "payload": "0000057F00000000",
+      "record": 10024
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3794.436721,
+      "payload": "0000057F00000000",
+      "record": 10030
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3794.676796,
+      "payload": "0000057F00000000",
+      "record": 10036
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3794.916926,
+      "payload": "0000057F00000000",
+      "record": 10042
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3796.036746,
+      "payload": "0000057F00000000",
+      "record": 10048
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3796.277198,
+      "payload": "0000057F00000000",
+      "record": 10054
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3797.356617,
+      "payload": "0000057F00000000",
+      "record": 10060
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3797.597181,
+      "payload": "0000057F00000000",
+      "record": 10067
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3798.717336,
+      "payload": "0000057F00000000",
+      "record": 10073
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3800.637957,
+      "payload": "0000057F00000000",
+      "record": 10079
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3802.557927,
+      "payload": "0000057F00000000",
+      "record": 10085
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3804.518508,
+      "payload": "0000057F00000000",
+      "record": 10091
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3806.478407,
+      "payload": "0000057F00000000",
+      "record": 10097
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3807.597379,
+      "payload": "0000057F00000000",
+      "record": 10103
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3809.518177,
+      "payload": "0000057F00000000",
+      "record": 10109
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3810.637343,
+      "payload": "0000057F00000000",
+      "record": 10115
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3810.916851,
+      "payload": "0000057F00000000",
+      "record": 10121
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3811.157037,
+      "payload": "0000057F00000000",
+      "record": 10127
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3811.437338,
+      "payload": "0000057F00000000",
+      "record": 10133
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3812.518208,
+      "payload": "0000057F00000000",
+      "record": 10139
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3813.637235,
+      "payload": "0000057F00000000",
+      "record": 10145
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3814.719668,
+      "payload": "0000057F00000000",
+      "record": 10151
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3816.637826,
+      "payload": "0000057F00000000",
+      "record": 10157
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3818.601318,
+      "payload": "0000057F00000000",
+      "record": 10163
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3819.717541,
+      "payload": "0000057F00000000",
+      "record": 10169
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3820.797891,
+      "payload": "0000057F00000000",
+      "record": 10175
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3822.717759,
+      "payload": "0000057F00000000",
+      "record": 10181
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3824.639648,
+      "payload": "0000057F00000000",
+      "record": 10187
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3825.717609,
+      "payload": "0000057F00000000",
+      "record": 10193
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3825.997645,
+      "payload": "0000057F00000000",
+      "record": 10199
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3826.35855,
+      "payload": "0000057F00000000",
+      "record": 10205
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3827.437672,
+      "payload": "0000057F00000000",
+      "record": 10211
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3827.718552,
+      "payload": "0000057F00000000",
+      "record": 10217
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3829.638056,
+      "payload": "0000057F00000000",
+      "record": 10223
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3831.558481,
+      "payload": "0000057F00000000",
+      "record": 10229
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3833.47839,
+      "payload": "0000057F00000000",
+      "record": 10235
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3834.638062,
+      "payload": "0000057F00000000",
+      "record": 10241
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3834.877732,
+      "payload": "0000057F00000000",
+      "record": 10247
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3835.118091,
+      "payload": "0000057F00000000",
+      "record": 10253
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3835.359662,
+      "payload": "0000057F00000000",
+      "record": 10259
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3837.278175,
+      "payload": "0000057F00000000",
+      "record": 10265
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3839.200408,
+      "payload": "0000057F00000000",
+      "record": 10271
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3841.11824,
+      "payload": "0000057F00000000",
+      "record": 10277
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3842.199055,
+      "payload": "0000057F00000000",
+      "record": 10283
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3843.319121,
+      "payload": "0000057F00000000",
+      "record": 10289
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3845.318852,
+      "payload": "0000057F00000000",
+      "record": 10295
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3845.599056,
+      "payload": "0000057F00000000",
+      "record": 10301
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3845.918509,
+      "payload": "0000057F00000000",
+      "record": 10307
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3847.360491,
+      "payload": "0000057F00000000",
+      "record": 10313
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3849.278565,
+      "payload": "0000057F00000000",
+      "record": 10319
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3851.239344,
+      "payload": "0000057F00000000",
+      "record": 10325
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3852.31889,
+      "payload": "0000057F00000000",
+      "record": 10331
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3854.239726,
+      "payload": "0000057F00000000",
+      "record": 10337
+    },
+    {
+      "can_id": "0x77A",
+      "did": "0x2AB8",
+      "length": 8,
+      "offset_s": 3855.319153,
+      "payload": "0000057F00000000",
+      "record": 10343
+    },
+    {
+      "can_id": "0x7B0",
+      "did": "0x42DB",
+      "length": 2,
+      "offset_s": 3694.433857,
+      "payload": "03FE",
+      "record": 9392
+    },
+    {
+      "can_id": "0x17FE007B",
+      "did": "0x5867",
+      "length": 8,
+      "offset_s": 3177.337594,
+      "payload": "0005045A00000000",
+      "record": 3261
+    }
+  ],
+  "schema": "odb_scanner.passive_evidence.v1",
+  "source": {
+    "acl_records": 10417,
+    "datalink": 1002,
+    "file": "btsnoop_hci.log",
+    "note": "Raw btsnoop is not committed: it contains unrelated phone data. Only CAN id/DID/payload records selected by tools/mine_passive_capture.py are retained here. Timestamps are offsets from the first btsnoop record.",
+    "sha256": "eefb5c3ef2781a523692f62484255a70ec7f322a746cde750a4c75c6260496f9",
+    "size_bytes": 1455992,
+    "version": 1
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "archive": "strict_expected_values_20261022.json",
+  "bytes": 2190,
+  "created_utc": "2026-10-22",
+  "notes": "Six strict expected values from independently displayed app/car values. Regenerate with tools/validate_measurement_capture.py --strict.",
+  "sha256": "52bc7026458755db0f65b9e13e9447bea34bda201b87343c2f43e82b80f9a35d"
+}

@@ -56,6 +56,28 @@ All files under `C:\Users\kings\Documents\CarScanner_Capture\`. The manifest
 analysis was performed on copies only. The complete bug report was **not**
 uploaded or transmitted anywhere.
 
+### Sanitised repository extract (2026-10-22)
+
+The raw btsnoop contains unrelated phone traffic, including SMS/XML content. It
+is **not** committed and must not be echoed wholesale. Only the CAN/DID/payload
+records selected by `tools/mine_passive_capture.py` are retained:
+
+| File | Bytes | SHA-256 |
+|---|---:|---|
+| `research/measurement_discovery/captures/passive_capture_evidence_20261015.json` | 73 642 | `b2c490d523bbeecc61b9ee30022e2929e3c4d31752d69754fb7f950e03646cb7` |
+| `research/measurement_discovery/captures/passive_capture_evidence_20261015.manifest.json` | — | records the archive hash and the source-log hash `eefb…96f9` |
+
+The extractor parsed 18,468 btsnoop records (10,417 ACL records) and recovered
+the target `0x2A26`, `0x2A28`, `0x2A2F`, `0x42DB`, `0x5867`,
+`0x1800`–`0x1803`, `0x2AB2` and `0x2AB8` payloads. It does **not** include the
+phone data, and it does not copy the raw log into the repository.
+
+The strict expected-value companion is
+`research/measurement_discovery/captures/strict_expected_values_20261022.json`
+(SHA-256 `52bc7026458755db0f65b9e13e9447bea34bda201b87343c2f43e82b80f9a35d`);
+it validates **5/5 PASS** with independent displayed values for the two energy
+DIDs, SoC, pack voltage, and odometer.
+
 ## 4. Files inspected
 
 - `bugreport.zip` (extracted to `extracted\`).

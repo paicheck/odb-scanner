@@ -97,15 +97,16 @@ def evaluate(captures: list[dict], profile: str = "meb",
     for cap in captures:
         key = cap.get("key")
         raw = _hex(cap.get("raw"))
+        expected = cap.get("expected")
         spec = specs.get(key) if key else None
         if not key or spec is None:
             verdicts.append(Verdict(key=key or "", raw=cap.get("raw") or "",
-                                    result="FAIL",
+                                    result="FAIL", expected=expected,
                                     issue="unknown key: not in the registry"))
             continue
         if raw is None or spec.decode is None:
             verdicts.append(Verdict(key=key, raw=cap.get("raw") or "",
-                                    result="INDETERMINATE",
+                                    result="INDETERMINATE", expected=expected,
                                     unit=spec.unit or "",
                                     issue="no decodable raw bytes"))
             continue
@@ -114,10 +115,10 @@ def evaluate(captures: list[dict], profile: str = "meb",
         except Exception as exc:  # noqa: BLE001 - report, do not crash the run
             verdicts.append(Verdict(key=key, raw=cap.get("raw") or "",
                                     result="FAIL", unit=spec.unit or "",
+                                    expected=expected,
                                     issue=f"decoder raised: {exc}"))
             continue
 
-        expected = cap.get("expected")
         if strict and expected is not None and not _matches(value, expected):
             verdicts.append(Verdict(key=key, raw=cap.get("raw") or "",
                                     result="FAIL", value=_json_safe(value),
@@ -135,14 +136,14 @@ def evaluate(captures: list[dict], profile: str = "meb",
                       Plausibility.NO_VALUE: "INDETERMINATE"}[check]
             verdicts.append(Verdict(key=key, raw=cap.get("raw") or "",
                                     result=result, value=_json_safe(value),
-                                    unit=spec.unit or "",
+                                    unit=spec.unit or "", expected=expected,
                                     issue="" if check is Plausibility.OK
                                     else why))
         else:
             # dict/text decoders have no single numeric range; structural.
             verdicts.append(Verdict(key=key, raw=cap.get("raw") or "",
                                     result="PASS", value=_json_safe(value),
-                                    unit=spec.unit or "",
+                                    unit=spec.unit or "", expected=expected,
                                     issue="structured value decoded"))
     summary = {
         "total": len(verdicts),

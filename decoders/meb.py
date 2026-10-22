@@ -81,6 +81,7 @@ ECU_CLIMATE = "climate"  # MEB module 0x746 (11-bit)
 ECU_CHG = "chg"  # MEB module 0x744 (11-bit): HV charger / OBC
 ECU_ELDRIVE = "eldrive"  # MEB module 0x7C (29-bit): electric drive
 ECU_GPS = "gps"  # MEB module 0x767 (11-bit): GPS / telematics
+ECU_BRK = "brk"  # MEB module 0x713 (11-bit): ABS/ESC; extended session required
 
 _EXP = DocStatus.EXPERIMENTAL
 
@@ -448,6 +449,39 @@ def _bat_charging_voltage(raw: bytes) -> float | None:
     return value * _BAT_CHARGING_VOLTAGE_SCALE
 
 
+def _windshield_temperature(raw: bytes) -> float | None:
+    """0x27C4 byte 0 is a 0.1 degC climate sensor; the profile u16 is wrong.
+
+    The Car Scanner profile declares SBI=0 DL=2 x15.625 -39.5. Applying that
+    to the observed ``7A2321C07D`` gives 488,507 degC, while byte 0 x0.1 gives
+    12.2 degC -- within a few degrees of the same-session outside temperature
+    across 41 rows. The remaining bytes are not decoded here. Whether this
+    sensor is the windshield itself or an ambient sensor near it still needs
+    the cold-soak/defroster test, so the key remains quarantined.
+    """
+    if not raw:
+        raise IndexError("windshield temperature needs byte 0")
+    return raw[0] * 0.1
+
+
+def _co2_content_interior(raw: bytes) -> float | None:
+    """0x42DB is a 16-bit ppm field; 0x03FE is the not-fitted sentinel.
+
+    The profile's SBI=1 DL=1 x100 layout turns the observed ``03FE`` into
+    25,400 ppm and a normal 500 ppm frame (``01F4``) into 24,400 ppm. The
+    whole-u16 reading is 1,022 ppm for the sentinel and 500 ppm for ``01F4``.
+    0x03FE is also the repeated BMS cell-temperature not-fitted sentinel, and
+    all 40 live rows carry it, so the sensor is treated as not fitted rather
+    than as a 1,022 ppm reading. A non-sentinel scale is still provisional.
+    """
+    if len(raw) < 2:
+        raise IndexError("CO2 content needs 2 bytes, got 1")
+    value = int.from_bytes(raw[:2], "big")
+    if value == 0x03FE:
+        return None
+    return float(value)
+
+
 def _f32be(raw: bytes, off: int = 0) -> float | None:
     """IEEE-754 big-endian float32 at ``off`` (electric-drive family).
 
@@ -588,6 +622,45 @@ def _gear(raw: bytes) -> str:
 
 def _vin(raw: bytes) -> str:
     return raw.decode("ascii", errors="replace").strip("\x00 ")
+
+
+_ABS_FIELDS: tuple[tuple[str, int, str], ...] = (
+    ("wheel_speed_front_left", 0x1800, "Front left wheel speed"),
+    ("wheel_speed_front_right", 0x1801, "Front right wheel speed"),
+    ("wheel_speed_rear_left", 0x1802, "Rear left wheel speed"),
+    ("wheel_speed_rear_right", 0x1803, "Rear right wheel speed"),
+)
+
+
+def register_abs(reg: DIDRegistry) -> None:
+    """Register the four Car Scanner [03.ABS] wheel-speed DIDs.
+
+    Deliberately NOT called by ``register_meb``: the default collector would
+    send 0x22 0x1800..0x1803 without the extended diagnostic session and only
+    collect negative responses. The dedicated ABS tool calls this after an
+    explicitly approved ``0x10 03`` on the 0x713 -> 0x77D pair.
+    """
+    for key, did, name in _ABS_FIELDS:
+        reg.register(
+            DIDSpec(
+                key,
+                ECU_BRK,
+                did,
+                name,
+                "km/h",
+                decode=_cs_field_decoder(
+                    sbi=0, dl=2, mul=0.01, div=1, ofs=0
+                ),
+                doc_status=_EXP,
+                slow=False,
+                notes=(
+                    "u16be[0:2] x 0.01 km/h [CS profile #342, [03.ABS]]; "
+                    "the response is a 12-byte block but the profile field is "
+                    "the first two bytes. Requires extended session 0x10 03 "
+                    "on 0x713 -> 0x77D; raw bytes are preserved."
+                ),
+            )
+        )
 
 
 def register_meb(reg: DIDRegistry) -> None:
@@ -826,6 +899,8 @@ _CS_PAIRS: tuple[tuple, ...] = (
 #   * 0x5867 is a 10 km/LSB counter, not the total odometer.
 _CS_SPECIAL_DECODERS = {
     "bat_charging_voltage": _bat_charging_voltage,
+    "windshield_temperature": _windshield_temperature,
+    "co2_content_interior": _co2_content_interior,
 }
 
 _CS_RAW_ONLY = {"dc_dc_converter_reserved_current"}
@@ -840,8 +915,24 @@ _CS_SPECIAL_NOTES = {
     "odometer_2": (
         "u16be[2:4] x 10 km/LSB [CS profile #342]; a secondary distance "
         "counter, not the odometer. The x10 delta matched a ~10.5 km drive, "
-        "which refutes x100. Its absolute zero/meaning is unknown; do not use "
-        "it for distance or SoH."
+        "which refutes x100. On this car the counter equals the main odometer "
+        "minus 99,869-99,871 km, consistent with a BMS replacement/reset at "
+        "~99,870 km; service history is not available, so its absolute zero "
+        "still cannot be asserted. Do not use it for distance or SoH."
+    ),
+    "windshield_temperature": (
+        "byte 0 x 0.1 degC; the profile's u16be[0:2] x15.625 -39.5 gives "
+        "488,507 degC for raw 7A2321C07D and is arithmetically refuted. Byte 0 "
+        "tracks the same-session outside temperature within a few degrees "
+        "across 41 rows. Whether it is the windshield itself or an ambient "
+        "sensor still needs the cold-soak/defroster test; raw bytes preserved."
+    ),
+    "co2_content_interior": (
+        "u16be[0:2] ppm; 0x03FE is the not-fitted sentinel (40/40 rows and "
+        "cell_t_18..cell_t_23) and decodes to None. The profile's "
+        "SBI=1 DL=1 x100 layout turns 03FE into 25,400 ppm and would turn a "
+        "normal 500 ppm frame 01F4 into 24,400 ppm, so that layout is "
+        "rejected. A non-sentinel scale remains provisional."
     ),
 }
 
@@ -2521,12 +2612,12 @@ def _register_profile_extras(reg: DIDRegistry) -> None:
             ECU_CLIMATE,
             0x27C4,
             "Windshield temperature",
-            "",
+            "degC",
             0,
-            2,
-            15.625,
             1,
-            -39.5,
+            0.1,
+            1,
+            0,
             False,
             False,
         ),
@@ -2548,11 +2639,11 @@ def _register_profile_extras(reg: DIDRegistry) -> None:
             "co2_content_interior",
             ECU_CLIMATE,
             0x42DB,
-            "CO2 content interior",
+            "CO2 content interior (16-bit ppm; 0x03FE = not fitted)",
             "ppm",
+            0,
+            2,
             1,
-            1,
-            100,
             1,
             0,
             False,
@@ -2733,6 +2824,25 @@ def _register_profile_extras(reg: DIDRegistry) -> None:
                     "at u16be[1:3] (sum ~0x0508); no independent current. "
                     "Raw-only; use dcdc_gw_current for the actual current "
                     f"[{CS_SRC}; 2026-10-21 payload research]",
+                )
+            )
+            continue
+        if key in _CS_SPECIAL_DECODERS:
+            # The generic SBI/DL arithmetic is not the whole story: 0x27C4's
+            # two-byte temperature formula and 0x42DB's byte-1 ppm formula are
+            # both refuted by the captured payloads. Use the documented special
+            # decoder and keep the raw bytes.
+            reg.register(
+                DIDSpec(
+                    key,
+                    ecu,
+                    did,
+                    name,
+                    unit,
+                    decode=_CS_SPECIAL_DECODERS[key],
+                    doc_status=_EXP,
+                    slow=slow,
+                    notes=_CS_SPECIAL_NOTES[key],
                 )
             )
             continue

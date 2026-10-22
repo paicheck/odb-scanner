@@ -1,0 +1,61 @@
+{
+  "captures": [
+    {
+      "expected": 53200.0,
+      "key": "hv_energy_max",
+      "raw": "04280400",
+      "source": "2026-10-15 display: 53 200 Wh; passive 0x2AB2",
+      "unit": "Wh"
+    },
+    {
+      "expected": 35175.0,
+      "key": "hv_energy_content",
+      "raw": "0000057F00000000",
+      "source": "2026-10-15 display: 35 175 Wh; passive 0x2AB8",
+      "unit": "Wh"
+    },
+    {
+      "expected": 79.6,
+      "key": "soc_abs",
+      "raw": "C7",
+      "source": "2026-10-21T20:45:37Z display: 79.6%",
+      "unit": "%"
+    },
+    {
+      "expected": 429.5,
+      "key": "pack_voltage",
+      "raw": "06B6",
+      "source": "2026-10-21T20:45:37Z display: 429.5 V",
+      "unit": "V"
+    },
+    {
+      "expected": 111020.0,
+      "key": "odometer_km",
+      "raw": "01B1AC",
+      "source": "2026-10-21T20:45:37Z displayed odometer: 111,020 km",
+      "unit": "km"
+    }
+  ],
+  "created_utc": "2026-10-22",
+  "purpose": "Strict expected-value confirmation for decoders that already have an independent displayed value. This is not a new vehicle session.",
+  "schema": "odb_scanner.strict_expected_values.v1",
+  "source": {
+    "energy": {
+      "artifact": "docs/investigation/meb_gateway_energy_passive_capture_20261015.md",
+      "capture": "2026-10-15 Car Scanner passive btsnoop",
+      "displayed_values": {
+        "HV Battery energy content": 35175,
+        "Maximum energy content of the traction battery": 53200
+      },
+      "note": "The app displayed these Wh values; the raw bytes are the 0x2AB2/0x2AB8 responses in the sanitised passive archive."
+    },
+    "snapshot": {
+      "artifact": "docs/PROJECT_HANDOVER.md / 2026-10-21 20:45:37 UTC battery snapshot",
+      "displayed_values": {
+        "pack_voltage_v": 429.5,
+        "soc_abs_pct": 79.6
+      },
+      "note": "Car Scanner's displayed state-of-charge and pack voltage; raw bytes are the stored successful rows at that timestamp. The odometer display was 111,020 km. bat_v_after_contacts was removed from the strict set because its quality range is not established; pack_voltage covers the same physical voltage with a range."
+    }
+  }
+}

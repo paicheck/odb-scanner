@@ -244,6 +244,38 @@ def validate_request(payload: str | bytes) -> int:
     return service
 
 
+# The ABS wheel-speed DIDs only answer in the extended diagnostic session.
+# That session changes ECU behaviour, so it is not part of the read-only
+# allow-list above and `validate_request("1003")` MUST keep refusing it. The
+# dedicated ABS tool may send exactly one 0x10 0x03 only after the operator
+# passes this token; the narrow validator below is the only code path that
+# permits it.
+ABS_APPROVAL_TOKEN = "ABS-WHEEL-SPEED-READ-2026-10-22"
+
+
+def validate_approved_extended_session(payload: str | bytes, approval: str) -> int:
+    """Validate the single approved 0x10 0x03 request for the ABS reader.
+
+    This is deliberately separate from `validate_request`, whose default
+    remains "0x10 0x03 is blocked". It accepts only the exact two-byte request
+    and only with the explicit token. No other state-changing session
+    sub-function is reachable through it.
+    """
+    if approval != ABS_APPROVAL_TOKEN:
+        raise ReadOnlyViolationError(
+            "Refusing 0x10 0x03: the ABS approval token was not supplied. "
+            "This session change is not part of the normal read-only path."
+        )
+    hexed = clean_hex(payload) if isinstance(payload, str) else payload.hex()
+    if hexed.upper() != "1003":
+        raise ReadOnlyViolationError(
+            f"Refusing {hexed!r}: the approved session request is exactly "
+            "'10 03'. This system remains read-only apart from that one "
+            "explicitly approved ABS read."
+        )
+    return 0x10
+
+
 def build_read_did_request(did: int) -> bytes:
     validate_service(0x22)
     if not 0 <= did <= 0xFFFF:

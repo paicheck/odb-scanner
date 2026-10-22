@@ -1,6 +1,6 @@
 # odb_scanner — Project Handover
 
-**Last updated:** 2026-10-22 · **Git HEAD:** `main` (implementation `b8b1c70`) · **Test suite:** 746 passing
+**Last updated:** 2026-10-22 · **Git HEAD:** `main` (2026-10-22 payload/capture pass) · **Test suite:** 765 passing
 
 This document is the "hand this to the next person" summary. It explains what the
 project is, how it is put together, what state it is in, and — most importantly —
@@ -47,13 +47,25 @@ structurally in `diagnostic/uds.py`, the *only* module that builds UDS requests.
   There is **no API to send arbitrary payloads**.
 - The guard checks the **whole request**, including sub-functions: `0x10 0x02`
   and `0x10 0x03` (session changes) are refused even though `0x10` is allowed.
-- Every transmitted request is logged to the `tx_log` table with a human-readable
-  `purpose` (the safety manifest).
+- Every request sent by the collector is logged to the `tx_log` table with a
+  human-readable `purpose` (the safety manifest). The ABS reader records its
+  TX/RX pairs in its report and forwards them to any `tx_logger` the connection
+  already has; it does not open the database itself.
 
-**One deliberate exception:** `tools/elm_console.py` is a raw, no-allow-list
-console for debugging. If you type `2E`, `31`, `14` there, it reaches the car.
-Everything else — `collect`, `discover`, `doctor`, `guard-test`, the dashboard —
-goes through the allow-list. Do not assume `elm_console.py` is safe.
+**Two deliberate exceptions:**
+
+1. `tools/elm_console.py` is a raw, no-allow-list console for debugging. If you
+   type `2E`, `31`, `14` there, it reaches the car. Everything else — `collect`,
+   `discover`, `doctor`, `guard-test`, the dashboard — goes through the
+   allow-list. Do not assume `elm_console.py` is safe.
+2. `tools/read_abs_wheel_speeds.py` is a narrow, approval-gated ABS reader. The
+   normal allow-list still refuses `0x10 0x03`; this tool can send **exactly
+   one** `0x10 0x03` on `0x713` after `--execute --approve-session-change`, then
+   reads only `0x1800`–`0x1803`, and always attempts `0x10 0x01` in a `finally`
+   block. Its TX/RX pairs are kept in the printed/written report and forwarded
+   to an existing `tx_logger`; the tool does not open `data/odb_scanner.db`
+   itself. It has **not** been run against the car. Use `--dry-run` unless the
+   session change has been separately approved.
 
 Verify the guard yourself at any time:
 
@@ -76,10 +88,21 @@ surfaced. The 2026-10-21 live read-only session succeeded: 568 measurement rows,
 295 distinct keys, 557 successful reads, and all 22 raw captures passed the
 plausibility checker. The battery snapshot at 20:45 UTC read 79.6 % SoC
 (81.8628 % normalized), 429.5 V, −4.89 A, −2.1 kW, an 18.1 mV cell delta and
-9.5 °C; SOH is 91.7 %. The read-only `[19.Gate]` scanner is built, tested and
-dry-run verified, but has not yet been run against the car. **746 tests pass.**
-The next live step is the gateway scan, then known-state tests for the remaining
-payloads; no writes or session changes are part of that plan.
+9.5 °C; SOH is 91.7 %.
+
+The 2026-10-22 payload/capture pass recovered the missing passive btsnoop:
+`0x2A26`/`0x2A28`/`0x2A2F` payloads are now archived (still no profile scale,
+so raw-only), `0x42DB` `03FE` is a not-fitted sentinel (decoded as `None`), and
+`0x27C4` byte 0 × 0.1 °C is implemented while the windshield-vs-ambient label
+stays quarantined. `0x5867` is pinned to a 10 km/LSB counter with a constant
+99,869–99,871 km offset from the main odometer. The four ABS wheel-speed
+decoders and an approval-gated reader are prepared but **not executed**; the
+ordinary allow-list still refuses `0x10 0x03`. A sanitised evidence archive
+excludes the raw phone log, and the strict expected-value archive passes 5/5
+with non-null expected values. **765 tests pass.** The next live step is the
+gateway scan, then known-state tests for the remaining payloads; no writes or
+session changes are part of that plan, except the separately approved ABS
+session if the owner opts in.
 
 ---
 
@@ -100,7 +123,7 @@ payloads; no writes or session changes are part of that plan.
 | `android/` | Kotlin/Compose client + its own `Decode.kt` (mirrors `decoders/meb.py`) |
 | `cloud/` | Optional MySQL ingest API |
 | `spec/odb_scanner.json` | Generated shared spec consumed by the Android client (source of truth for DID addresses/scales) |
-| `tests/` | 746 tests (no car, no Ollama required) |
+| `tests/` | 765 tests (no car, no Ollama required) |
 | `tools/` | Scripts: `smoke_test.py`, `doctor` helpers, `replay_decoder_impact.py`, `validate_measurement_capture.py`, `export_validation_capture.py`, `export_spec.py`, `export_catalogue.py`, … |
 | `research/measurement_discovery/` | The evidence package for the recent decoder work (see §7) |
 | `docs/investigation/` | Historical investigation notes, replay reports, gateway-energy passive-capture writeups |
@@ -158,8 +181,8 @@ copy config.local.yaml.example config.local.yaml     :: optional, gitignored
 
 ```bat
 .venv\Scripts\python tools\smoke_test.py              :: end-to-end self-test
-.venv\Scripts\python -m pytest tests -q               :: 746 tests
-.venv\Scripts\python -m pytest -m "not slow"          :: 729-test fast subset
+.venv\Scripts\python -m pytest tests -q               :: 765 tests
+.venv\Scripts\python -m pytest -m "not slow"          :: 748-test fast subset
 .venv\Scripts\python -m ruff check .                  :: lint (clean)
 ```
 
@@ -234,14 +257,45 @@ This is the substance of the recent effort and is recorded in
   checks against a database opened `mode=ro`; `tests/test_payload_research.py`
   pins the arithmetic and the remaining hypotheses.
 
+**2026-10-22 passive-capture pass:**
+
+- **Recovered the missing btsnoop** (`C:\Users\kings\Documents\CarScanner_Capture\btsnoop_hci.log`,
+  1,455,992 bytes, SHA-256 `eefb…96f9`). The raw log contains unrelated phone
+  traffic and is **not committed**; `tools/mine_passive_capture.py` extracts only
+  CAN/DID/payload records via ISO-TP SF/FF/CF reassembly.
+- **`0x2A26`/`0x2A28`/`0x2A2F`** — exact payloads recovered on `0x77A`/`0x77F`.
+  `0x2A26` and `0x04A3` are byte-identical (alias/shared block). No profile
+  layout or scale exists, so all three remain raw-only and quarantined.
+- **`0x42DB`** — every stored response is `03FE`; the same bytes are the BMS
+  not-fitted sentinel in `cell_t_18`–`cell_t_23`. The decoder now returns `None`
+  for `03FE` and whole-u16 ppm for a non-sentinel frame. The sensor appears not
+  fitted; the non-sentinel scale is still provisional.
+- **`0x27C4`** — byte 0 × 0.1 °C is implemented. The profile's
+  `u16 × 15.625 − 39.5` gives ~488,507 °C and is refuted. The key remains
+  quarantined until a cold-soak/defroster test separates windshield from ambient.
+- **`0x5867`** — the recovered payload gives 11,140 km at ×10, and the main
+  odometer pairs give a constant 99,869–99,871 km offset. That is consistent with
+  a BMS replacement/reset at ~99,870 km, but service history is unavailable.
+- **ABS `0x1800`–`0x1803`** — the passive capture contains the Car Scanner
+  sequence `ATSH713`, `ATSP6`, `ATCRA77D`, `1003`, positive
+  `77D065003001E01E5`, then the four reads. The four decoders use
+  `SBI=0 DL=2 ×0.01 km/h`, are registered only by `register_abs()`, and are
+  **not** in the default collector. `tools/read_abs_wheel_speeds.py` is
+  approval-gated, dry-run by default, and always attempts `0x10 0x01`.
+- **Evidence archive** — `passive_capture_evidence_20261015.json` (278 records
+  plus DB evidence; SHA-256 `b2c490…46cb7`) and
+  `strict_expected_values_20261022.json` (5/5 PASS with independent displayed
+  values). The raw btsnoop is never copied into the repository.
+
 **Still quarantined (invalid, excluded from scoring — do not "fix" by guessing):**
 
-- `co2_content_interior` and `windshield_temperature` are genuinely unresolved;
-  their candidate arithmetic is pinned, but neither candidate is implemented.
+- `co2_content_interior` and `windshield_temperature` remain quarantined even
+  though their candidate decoders are implemented. CO2 `03FE` is a sentinel;
+  windshield byte 0 needs the cold-soak/defroster label test.
 - `odometer_2`, `bat_charging_voltage` and `dc_dc_converter_reserved_current`
   still have no scoring use, but no longer emit the old artifact: the first is a
-  relabelled counter, the second returns `None` for sentinels, and the third is
-  raw-only.
+  relabelled counter with a known ~99,870 km offset, the second returns `None`
+  for sentinels, and the third is raw-only.
 - `res_pid_0149` is resolved and scoreable; the alias does not create a second
   key.
 
@@ -267,7 +321,7 @@ raw bytes remain the source of truth.
 
 ## 8. Test, lint, and CI status
 
-- **Tests:** 746 passing (`python -m pytest tests -q`); 729 in the fast subset
+- **Tests:** 765 passing (`python -m pytest tests -q`); 748 in the fast subset
   (`-m "not slow"`). No car or Ollama needed.
 - **Lint:** `ruff check .` passes clean. Two rules are intentionally ignored in
   `pyproject.toml` (`E402`, `B905`).
@@ -286,23 +340,25 @@ Every remaining item is blocked on **hardware or approval**, not on code:
 
 | Item | Status | Unblocked by |
 |---|---|---|
-| Live validation capture | 2026-10-21 session done (568 rows / 295 keys); formal archive and strict expected-value confirmation pending | Next capture, then `export_validation_capture.py` → `validate_measurement_capture.py` |
+| Live validation capture | 2026-10-21 session archived (35/35 plausibility); strict archive 5/5 with independent values | Next capture, then `export_validation_capture.py` → `validate_measurement_capture.py`; add `expected` only from an independent display |
 | Gateway `[19.Gate]` scan | Built, tested, dry-run verified; real-car run pending | Adapter + car; `python tools/scan_gateway.py` (exit 2 on any NRC/no response) |
 | Known-state payload tests (`0x27C4`, `0x42DB`, `0x5867`, `0xF449`) | Prepared, blocked | Car + safe states; exact commands in `docs/NEXT_STEPS_20261022.md` |
-| ABS wheel speeds `0x1800–0x1803` | Deferred | Separate approval for `0x10 03` on `0x713` (a session change, not a read) |
-| Gateway `0x2A26`/`0x2A28`/`0x2A2F` | Blocked | Recovering a payload/capture (no scaling evidence exists; must not blind-probe) |
-| Quarantined keys (`co2_content_interior`, `windshield_temperature`) | Genuinely unresolved | Fresh-air/occupied and cold-soak/defroster tests |
-| `odometer_2`, `bat_charging_voltage`, `dc_dc_converter_reserved_current` | Decoded honestly but excluded from scoring | Known-distance drive, charging session, and known-load capture respectively |
+| ABS wheel speeds `0x1800–0x1803` | Decoders + approval-gated reader ready; **not executed** | Separate approval for `0x10 03` on `0x713`; run `--dry-run` first, then `--execute --approve-session-change` |
+| Gateway `0x2A26`/`0x2A28`/`0x2A2F` | Payloads recovered and archived; no profile layout/scale | A documented layout or a controlled test that proves a scale; do not blind-probe |
+| Quarantined keys (`co2_content_interior`, `windshield_temperature`) | Decoders implemented; keys still invalid | Fresh-air/occupied and cold-soak/defroster tests |
+| `odometer_2`, `bat_charging_voltage`, `dc_dc_converter_reserved_current` | Decoded honestly but excluded from scoring; offset known | Known-distance drive/service history, charging session, and known-load capture respectively |
+| Direct cluster lamp/tell-tale DID | Closed for now: no documented DID; no capture traffic | A documented read-only cluster allow-list, not a sweep; DTC bit 7 remains the signal |
 | GPS `0x2430`/`0x22B3`, HVAC `0x263B`, PTC/seat DIDs | Backlog | One live read-only state test each |
 
 The live-capture protocol is written down in
 `research/measurement_discovery/validation_capture_protocol.md`; the checker
 (`tools/validate_measurement_capture.py`) and the extractor
 (`tools/export_validation_capture.py`) make it a two-command job once the car is
-present. That loop now has an archived offline run:
-`research/measurement_discovery/captures/` reports 35/35 pass under the normal
-and `--strict` checkers. The capture has no independent `expected` values, so it
-validates reproducible decoding and plausibility, not the scale factors.
+present. The archived 35-record run passes 35/35 under the normal and `--strict`
+checkers, but it has no independent `expected` fields; the separate five-record
+strict archive supplies those for the two energy DIDs, SoC, pack voltage, and
+odometer, and passes 5/5. `strict` mode now records the expected value in its
+report, so a PASS is visibly tied to it.
 
 ---
 
@@ -324,7 +380,16 @@ validates reproducible decoding and plausibility, not the scale factors.
 - `docs/NEXT_STEPS_20261022.md` — the 20 prioritized steps, with done/blocked
   status and the exact commands for the next car session.
 - `docs/investigation/meb_gateway_energy_passive_capture_20261015.md` — the
-  passive HCI capture that confirmed gateway energy addressing/scales.
+  passive HCI capture that confirmed gateway energy addressing/scales, plus the
+  sanitised archive hashes.
+- `research/measurement_discovery/captures/passive_capture_evidence_20261015.json`
+  + `.manifest.json` — 278 sanitised CAN/DID records and DB evidence; raw log
+  not committed.
+- `research/measurement_discovery/captures/strict_expected_values_20261022.json`
+  + `.manifest.json` — five independent expected values; 5/5 PASS.
+- `tools/mine_passive_capture.py` — ISO-TP reassembly from a local btsnoop.
+- `tools/read_abs_wheel_speeds.py` — approval-gated ABS reader (dry-run default;
+  exact `1003`; always attempts `1001`).
 - `research/measurement_discovery/sources/` — spot2000 CSV and ABRP JSON
   (third-party references).
 
@@ -344,10 +409,25 @@ validates reproducible decoding and plausibility, not the scale factors.
 - **`0x1E39` `0xFFFF` is a sentinel**, not 2,047.97 V. The decoder now returns
   `None` for `0xFFFF`/`0xFFFE` and negatives; a missing charging voltage is not
   a fault by itself. Historical rows keep the old unsigned value.
-- **`0x5867` is a 10 km/LSB counter, not the odometer.** Its absolute zero and
-  physical meaning are unknown; do not use it for distance, SOH, or service
+- **`0x5867` is a 10 km/LSB counter, not the odometer.** It sits a constant
+  99,869–99,871 km below the main odometer on this car, consistent with a BMS
+  reset/replacement at ~99,870 km; the absolute zero and the reset explanation
+  still need service history. Do not use it for distance, SOH, or service
   intervals. The four agreeing odometers (`0x02BD`, `0x295A`, `0xF817`,
   `eldrive_odometer`) are the distance evidence.
+- **`0x42DB` `03FE` is a sentinel, not a ppm reading.** It appears in 40/40
+  stored rows and in the unpopulated `cell_t_18`–`cell_t_23` slots. The decoder
+  returns `None`; do not show 1,022 or 25,400 ppm.
+- **`0x27C4` uses byte 0 × 0.1 °C, not the profile's u16 formula.** The key is
+  still quarantined because the cold-soak/defroster test has not separated
+  windshield from ambient. The remaining bytes are not decoded.
+- **The ABS tool is the only session-change exception.** The ordinary guard
+  still refuses `0x10 0x03`; the tool requires both `--execute` and
+  `--approve-session-change`, sends exactly one `1003`, and always attempts
+  `1001`. It has not been run. Do not run it without separate approval.
+- **Never commit the raw btsnoop.** It contains unrelated phone/SMS/XML data.
+  Use `tools/mine_passive_capture.py` and commit only the sanitised CAN/DID
+  payload archive.
 - **`accelerator_pedal_pct` is an alias for `res_pid_0149`**, not a second
   measurement. API and chart lookups resolve it to the stored key.
 - **The LLM is not a diagnosis** — it ranks hypotheses with confidence; a
@@ -359,11 +439,17 @@ validates reproducible decoding and plausibility, not the scale factors.
 
 ## 12. Handoff checklist
 
-- [ ] Run `python -m pytest tests -q` — expect 746 passed.
+- [ ] Run `python -m pytest tests -q` — expect 765 passed.
 - [ ] Run `python main.py guard-test` — confirms the read-only guard.
 - [ ] Run `python tools/smoke_test.py` — confirms the whole pipeline without a car.
 - [ ] Run `python tools/audit_payload_findings.py` — re-checks the payload
   findings against the stored DB, read-only (no car required).
+- [ ] Run `python tools/validate_measurement_capture.py --in research\measurement_discovery\captures\strict_expected_values_20261022.json --strict`
+  — expect 5/5 PASS with non-null expected values.
+- [ ] Run `python tools/read_abs_wheel_speeds.py --dry-run` — prints the plan and
+  does **not** open an adapter. Do not use `--execute` without separate approval.
 - [ ] Read `diagnostic/uds.py` header (safety) and `research/measurement_discovery/validation_roadmap.md` (what's blocked).
 - [ ] Read `research/measurement_discovery/decoder_audit.md` before touching any decoder.
 - [ ] For the live capture: get explicit owner approval, then follow `validation_capture_protocol.md`.
+- [ ] Never copy the raw btsnoop into the repo; use the miner and commit only the
+  sanitised archive.
