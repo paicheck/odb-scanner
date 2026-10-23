@@ -1,6 +1,6 @@
 # odb_scanner — Project Handover
 
-**Last updated:** 2026-10-22 · **Git HEAD:** `main` (2026-10-22 payload/capture pass) · **Test suite:** 765 passing
+**Last updated:** 2026-10-23 · **Git HEAD:** `main` (2026-10-23 gateway-scan evidence pass) · **Test suite:** 765 passing
 
 This document is the "hand this to the next person" summary. It explains what the
 project is, how it is put together, what state it is in, and — most importantly —
