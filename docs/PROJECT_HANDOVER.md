@@ -99,10 +99,14 @@ stays quarantined. `0x5867` is pinned to a 10 km/LSB counter with a constant
 decoders and an approval-gated reader are prepared but **not executed**; the
 ordinary allow-list still refuses `0x10 0x03`. A sanitised evidence archive
 excludes the raw phone log, and the strict expected-value archive passes 5/5
-with non-null expected values. **765 tests pass.** The next live step is the
-gateway scan, then known-state tests for the remaining payloads; no writes or
-session changes are part of that plan, except the separately approved ABS
-session if the owner opts in.
+with non-null expected values. **765 tests pass.** On 2026-10-22 the live
+gateway scan succeeded: **9/9 DIDs, 0 NRC, 0 timeouts**, only UDS `0x22`, no
+session change; it is archived as `live_gateway_scan_20261022.json` plus a
+manifest. The follow-up `0x27C4` cold-soak/defroster test captured a baseline
+(windshield 12.7 °C, outside 12.0 °C) but was stopped before the defroster
+window, so it did not resolve the windshield-vs-ambient label. The remaining
+known-state tests and the separately approved ABS session are still blocked on
+the car; no writes or session changes are part of that plan.
 
 ---
 
@@ -285,7 +289,10 @@ This is the substance of the recent effort and is recorded in
 - **Evidence archive** — `passive_capture_evidence_20261015.json` (278 records
   plus DB evidence; SHA-256 `b2c490…46cb7`) and
   `strict_expected_values_20261022.json` (5/5 PASS with independent displayed
-  values). The raw btsnoop is never copied into the repository.
+  values). The live gateway scan is archived as
+  `live_gateway_scan_20261022.json` plus `.manifest.json` (9/9 DIDs, no NRC;
+  SHA-256 `05bf1e4a690c1ca88b38bc1e32ae59aa1d15ff3c39ec7e05b35ee5a9975f9595`).
+  The raw btsnoop is never copied into the repository.
 
 **Still quarantined (invalid, excluded from scoring — do not "fix" by guessing):**
 
@@ -341,8 +348,8 @@ Every remaining item is blocked on **hardware or approval**, not on code:
 | Item | Status | Unblocked by |
 |---|---|---|
 | Live validation capture | 2026-10-21 session archived (35/35 plausibility); strict archive 5/5 with independent values | Next capture, then `export_validation_capture.py` → `validate_measurement_capture.py`; add `expected` only from an independent display |
-| Gateway `[19.Gate]` scan | Built, tested, dry-run verified; real-car run pending | Adapter + car; `python tools/scan_gateway.py` (exit 2 on any NRC/no response) |
-| Known-state payload tests (`0x27C4`, `0x42DB`, `0x5867`, `0xF449`) | Prepared, blocked | Car + safe states; exact commands in `docs/NEXT_STEPS_20261022.md` |
+| Gateway `[19.Gate]` scan | **Done 2026-10-22: 9/9 positive, 0 NRC**; live evidence archived | No longer blocked; keep `python tools/scan_gateway.py` as the repeatable bounded scan |
+| Known-state payload tests (`0x27C4`, `0x42DB`, `0x5867`, `0xF449`) | `0x27C4` attempted but incomplete (baseline only); others blocked | Car + safe states; exact commands in `docs/NEXT_STEPS_20261022.md` |
 | ABS wheel speeds `0x1800–0x1803` | Decoders + approval-gated reader ready; **not executed** | Separate approval for `0x10 03` on `0x713`; run `--dry-run` first, then `--execute --approve-session-change` |
 | Gateway `0x2A26`/`0x2A28`/`0x2A2F` | Payloads recovered and archived; no profile layout/scale | A documented layout or a controlled test that proves a scale; do not blind-probe |
 | Quarantined keys (`co2_content_interior`, `windshield_temperature`) | Decoders implemented; keys still invalid | Fresh-air/occupied and cold-soak/defroster tests |

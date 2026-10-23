@@ -94,17 +94,40 @@ python -m ruff check .
 
 | # | Step | Status | Exact test |
 |---:|---|---|---|
-| 12 | Run the `[19.Gate]` scanner on the real car | **Blocked: adapter + car** | `python tools/scan_gateway.py`; expect 9/9 DIDs and exit 2 on any NRC/no response |
-| 13 | Distinguish windshield from ambient for `0x27C4` | **Blocked: safe cold state; byte-0 decoder done** | Cold-soak, record `0x27C4`, `outside_temp`, HVAC state; then defroster/vent. Candidate is byte 0 × 0.1; the key stays quarantined until this test |
+| 12 | Run the `[19.Gate]` scanner on the real car | **Done 2026-10-22: 9/9 positive, 0 NRC** | `python tools/scan_gateway.py`; archived as `research/measurement_discovery/captures/live_gateway_scan_20261022.json` + manifest |
+| 13 | Distinguish windshield from ambient for `0x27C4` | **Attempted 2026-10-22; incomplete: baseline only, no defroster window** | Cold-soak, record `0x27C4`, `outside_temp`, HVAC state; then defroster/vent. Candidate is byte 0 × 0.1; the key stays quarantined until this test |
 | 14 | Resolve `0x42DB` (whole-u16 ppm vs `03FE` not-fitted) | **Blocked: safe cabin state; sentinel decoder done** | Fresh air, then occupied cabin; look for movement in 400–2,000 ppm or a fixed `03FE`. All 40 rows so far are `03FE`, so “sensor not fitted” is the leading hypothesis |
 | 15 | Confirm `0x5867` on a known-distance drive | **Blocked: drive; offset now known** | Log `0x5867`, `0x02BD`, `0x295A`, `0xF817`, `eldrive_odometer`; expect ~10 km per LSB, not 100. On this car the counter is 99,869–99,871 km below the main odometer |
 | 16 | Confirm `0xF449` at part/full pedal | **Blocked: safe stationary or closed-road state** | Read `0xF449` at 0 %, ~50 %, 100 %; expect raw / 2.55 = % |
 | 17 | Confirm `0x1E39` during a real charge | **Blocked: charging session** | Expect a positive voltage that rises; `FFFF` must stay `None`, never 2,047.97 V |
 | 18 | Confirm the `0x2A53` complement under a known 12 V load | **Blocked: known load** | Compare bytes 1-2 (real current) with bytes 3-4; their sum should stay ~0x0508 |
 | 19 | Optional cell 36/61 check at lower SoC or steady load | **Blocked: safe low-SoC state** | Read-only cell sweep at 30–50 % SoC; compare cell 61 (−13/−14 mV persistent) and cell 36 (drifting downward) |
-| 20 | Restart collection and refresh the dashboard | **Partly done: docs updated; collector stopped by user** | `python main.py collect`; dashboard picks up the next rows. No DB rewrite |
+| 20 | Restart collection and refresh the dashboard | **Stopped after 2026-10-22 live session; no adapter process running** | `python tools/start_scanner.py` when back at the car; dashboard picks up the next rows. No DB rewrite |
 | 21 | Read ABS wheel speeds `0x1800`–`0x1803` | **Blocked: separate approval for `0x10 03`** | `python tools/read_abs_wheel_speeds.py --dry-run`, then only after approval `--execute --approve-session-change`; exact `1003`, four `22` reads, `1001` return |
 | 22 | Direct cluster lamp/tell-tale DID | **Closed for now: no documented DID** | No `0x773`/`0x7DD` traffic in the passive capture and no profile lamp DID; do not sweep. Use DTC status bit 7 |
+
+---
+
+## Live session 2026-10-22 (results)
+
+- **Gateway scan: DONE.** `tools/scan_gateway.py` read all nine `[19.Gate]`
+  DIDs on `0x710 -> 0x77A`: **9/9 positive, 0 NRC, 0 timeouts**, only UDS
+  `0x22`, no session change. Cross-check: `0x2AB8` and the final field of
+  `0x15D1` both read **39,950 Wh**; `0x2AB2` read **53,200 Wh**. Evidence:
+  `research/measurement_discovery/captures/live_gateway_scan_20261022.json`
+  plus `.manifest.json` (SHA-256
+  `05bf1e4a690c1ca88b38bc1e32ae59aa1d15ff3c39ec7e05b35ee5a9975f9595`).
+- **`0x27C4` cold-soak/defroster: INCOMPLETE.** A targeted read-only sampler
+  captured four baseline points (windshield **12.7 °C**, outside **12.0 °C**,
+  front-left deflector **39.96 °C**, parked, A/C and PTC off) before the session
+  was stopped at 26 s. No defroster-on window was captured. This is **not**
+  evidence for the windshield label; the key remains quarantined. The raw
+  sampler log is `data/logs/climate_27c4_defroster_20261022T204247Z.json`
+  (gitignored, not archived as evidence).
+- **ABS wheel speeds: not attempted.** No `0x10 03` was sent and no separate
+  approval was given.
+- **Collector/dashboard: stopped.** No live adapter process remains. Restart
+  with `python tools/start_scanner.py` when back at the car.
 
 ---
 

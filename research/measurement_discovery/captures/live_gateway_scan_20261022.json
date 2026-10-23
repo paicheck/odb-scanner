@@ -1,0 +1,337 @@
+{
+  "tool": "tools/scan_gateway.py",
+  "profile": "meb",
+  "gateway": {
+    "request_id": "0x710",
+    "response_id": "0x77A",
+    "source": "Car Scanner MEB profile idx 342"
+  },
+  "started_utc": "Profile: meb | 2026-10-22T20:35:57+00:00",
+  "adapter": "ATI ELM327 v1.5",
+  "results": [
+    {
+      "did": "0x2AB2",
+      "label": "Maximum energy content of the traction battery",
+      "request": "222AB2",
+      "record_hex": "04280400",
+      "payload_len": 4,
+      "decoded": [
+        {
+          "key": "hv_energy_max",
+          "name": "Max HV energy content",
+          "unit": "Wh",
+          "value": 53200.0
+        }
+      ],
+      "tx": [
+        "222AB2"
+      ],
+      "rx": [
+        "622AB204280400"
+      ],
+      "error": null
+    },
+    {
+      "did": "0x2AB4",
+      "label": "Estimated electric power reserve (internal) / consumption",
+      "request": "222AB4",
+      "record_hex": "0000012000000000000A",
+      "payload_len": 10,
+      "decoded": [
+        {
+          "key": "range_internal",
+          "name": "Estimated range (internal)",
+          "unit": "km",
+          "value": 288.0
+        },
+        {
+          "key": "average_battery_consumption_internal_value",
+          "name": "Average battery consumption (internal value)",
+          "unit": "A",
+          "value": 10.0
+        }
+      ],
+      "tx": [
+        "222AB4"
+      ],
+      "rx": [
+        "622AB40000012000000000000A"
+      ],
+      "error": null
+    },
+    {
+      "did": "0x2AB5",
+      "label": "Estimated electric power reserve (CAN)",
+      "request": "222AB5",
+      "record_hex": "01200000012000000000",
+      "payload_len": 10,
+      "decoded": [
+        {
+          "key": "range_can",
+          "name": "Estimated range (CAN bus)",
+          "unit": "km",
+          "value": 288.0
+        }
+      ],
+      "tx": [
+        "222AB5"
+      ],
+      "rx": [
+        "622AB501200000012000000000"
+      ],
+      "error": null
+    },
+    {
+      "did": "0x2AB6",
+      "label": "Estimated electric power reserve (displayed)",
+      "request": "222AB6",
+      "record_hex": "00B300B3000001",
+      "payload_len": 7,
+      "decoded": [
+        {
+          "key": "range_displayed",
+          "name": "Estimated range (displayed)",
+          "unit": "km",
+          "value": 179.0
+        }
+      ],
+      "tx": [
+        "222AB6"
+      ],
+      "rx": [
+        "622AB600B300B3000001"
+      ],
+      "error": null
+    },
+    {
+      "did": "0x2AB7",
+      "label": "Average energy consumption by road category",
+      "request": "222AB7",
+      "record_hex": "0084005F007600710083008400000000000000000000000000000000",
+      "payload_len": 28,
+      "decoded": [
+        {
+          "key": "road_avg_consumption_0",
+          "name": "Avg consumption (roads cat 0)",
+          "unit": "kWh/100km",
+          "value": 13.200000000000001
+        },
+        {
+          "key": "road_avg_consumption_1",
+          "name": "Avg consumption (roads cat 1)",
+          "unit": "kWh/100km",
+          "value": 9.5
+        },
+        {
+          "key": "road_avg_consumption_2",
+          "name": "Avg consumption (roads cat 2)",
+          "unit": "kWh/100km",
+          "value": 11.8
+        },
+        {
+          "key": "road_avg_consumption_3",
+          "name": "Avg consumption (roads cat 3)",
+          "unit": "kWh/100km",
+          "value": 11.3
+        },
+        {
+          "key": "road_avg_consumption_4",
+          "name": "Avg consumption (roads cat 4)",
+          "unit": "kWh/100km",
+          "value": 13.100000000000001
+        },
+        {
+          "key": "road_avg_consumption_5",
+          "name": "Avg consumption (roads cat 5)",
+          "unit": "kWh/100km",
+          "value": 13.200000000000001
+        },
+        {
+          "key": "road_avg_consumption_6",
+          "name": "Avg consumption (roads cat 6)",
+          "unit": "kWh/100km",
+          "value": 0.0
+        }
+      ],
+      "tx": [
+        "222AB7"
+      ],
+      "rx": [
+        "622AB70084005F007600710083008400000000000000000000000000000000"
+      ],
+      "error": null
+    },
+    {
+      "did": "0x2AB8",
+      "label": "HV battery energy content",
+      "request": "222AB8",
+      "record_hex": "0000063E00000000",
+      "payload_len": 8,
+      "decoded": [
+        {
+          "key": "hv_energy_content",
+          "name": "HV energy content",
+          "unit": "Wh",
+          "value": 39950.0
+        }
+      ],
+      "tx": [
+        "222AB8"
+      ],
+      "rx": [
+        "622AB80000063E00000000"
+      ],
+      "error": null
+    },
+    {
+      "did": "0x2A53",
+      "label": "DC-DC converter low voltage / current",
+      "request": "222A53",
+      "record_hex": "94020F02FA",
+      "payload_len": 5,
+      "decoded": [
+        {
+          "key": "dcdc_gw_voltage",
+          "name": "DC-DC converter low voltage",
+          "unit": "V",
+          "value": 14.8
+        },
+        {
+          "key": "dcdc_gw_current",
+          "name": "DC-DC converter current",
+          "unit": "A",
+          "value": 16.0
+        },
+        {
+          "key": "dc_dc_converter_reserved_current",
+          "name": "DC-DC current complement (not an independent current)",
+          "unit": "",
+          "value": null
+        }
+      ],
+      "tx": [
+        "222A53"
+      ],
+      "rx": [
+        "622A5394020F02FA"
+      ],
+      "error": null
+    },
+    {
+      "did": "0x2AF7",
+      "label": "12 V battery block",
+      "request": "222AF7",
+      "record_hex": "2A55000007700C4835372525000033E700003147555431",
+      "payload_len": 23,
+      "decoded": [
+        {
+          "key": "aux_12v_voltage",
+          "name": "12V battery voltage (BMS)",
+          "unit": "V",
+          "value": 14.837
+        },
+        {
+          "key": "aux_12v_current",
+          "name": "12V battery current",
+          "unit": "A",
+          "value": 1.9040000000000001
+        },
+        {
+          "key": "aux_12v_soc",
+          "name": "12V battery state of charge",
+          "unit": "%",
+          "value": 72.0
+        },
+        {
+          "key": "aux_12v_temp",
+          "name": "12V battery temperature",
+          "unit": "degC",
+          "value": 13.0
+        },
+        {
+          "key": "aux_12v_sensor_temp",
+          "name": "12V battery sensor temperature",
+          "unit": "degC",
+          "value": 15.0
+        },
+        {
+          "key": "aux_12v_total_charge",
+          "name": "12V battery total charge",
+          "unit": "Ah",
+          "value": 1328.7
+        },
+        {
+          "key": "aux_12v_total_discharge",
+          "name": "12V battery total discharge",
+          "unit": "Ah",
+          "value": 1261.5
+        },
+        {
+          "key": "aux_12v_aging_capacity",
+          "name": "12V battery aging (capacity)",
+          "unit": "%",
+          "value": 85.0
+        },
+        {
+          "key": "aux_12v_aging_power",
+          "name": "12V battery aging (power)",
+          "unit": "%",
+          "value": 84.0
+        },
+        {
+          "key": "aux_12v_adapted_capacity",
+          "name": "12V battery adapted capacity",
+          "unit": "Ah",
+          "value": 49.0
+        }
+      ],
+      "tx": [
+        "222AF7"
+      ],
+      "rx": [
+        "622AF72A55000007700C4835372525000033E700003147555431"
+      ],
+      "error": null
+    },
+    {
+      "did": "0x15D1",
+      "label": "HV-EM power limitation / NV energy",
+      "request": "2215D1",
+      "record_hex": "0100001E33031F00000000000000000000000000",
+      "payload_len": 20,
+      "decoded": [
+        {
+          "key": "hv_em_power_limit",
+          "name": "HV-EM power limitation",
+          "unit": "W",
+          "value": 0.0
+        },
+        {
+          "key": "hv_em_nv_power_limitation",
+          "name": "HV-EM NV Power limitation",
+          "unit": "W",
+          "value": 1500.0
+        },
+        {
+          "key": "nv_energy_requirement",
+          "name": "NV Energy requirement",
+          "unit": "Wh",
+          "value": 2550.0
+        },
+        {
+          "key": "hv_em_hv_battery_energy_information",
+          "name": "HV-EM HV Battery energy information",
+          "unit": "Wh",
+          "value": 39950.0
+        }
+      ],
+      "tx": [
+        "2215D1"
+      ],
+      "rx": [
+        "6215D10100001E33031F00000000000000000000000000"
+      ],
+      "error": null
+    }
+  ]
+}

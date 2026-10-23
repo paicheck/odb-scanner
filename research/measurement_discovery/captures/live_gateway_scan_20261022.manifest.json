@@ -1,0 +1,29 @@
+{
+  "archive": "live_gateway_scan_20261022.json",
+  "archive_sha256": "05bf1e4a690c1ca88b38bc1e32ae59aa1d15ff3c39ec7e05b35ee5a9975f9595",
+  "archive_bytes": 8655,
+  "source": "data/logs/gateway_scan_20261022T203615Z.json",
+  "source_sha256": "05bf1e4a690c1ca88b38bc1e32ae59aa1d15ff3c39ec7e05b35ee5a9975f9595",
+  "captured_utc": "2026-10-22T20:35:57+00:00",
+  "vehicle": "VW ID.3 MY2021, 58 kWh",
+  "profile": "meb",
+  "path": "0x710 -> 0x77A",
+  "tool": "tools/scan_gateway.py",
+  "adapter": "ATI ELM327 v1.5",
+  "did_count": 9,
+  "positive_count": 9,
+  "error_count": 0,
+  "dids": [
+    "0x2AB2",
+    "0x2AB4",
+    "0x2AB5",
+    "0x2AB6",
+    "0x2AB7",
+    "0x2AB8",
+    "0x2A53",
+    "0x2AF7",
+    "0x15D1"
+  ],
+  "safety": "UDS 0x22 only; bounded allow-list; no session change, writes, routines, security access, or DTC clearing; production DB not opened by the scan",
+  "notes": "Sanitised live CAN/DID/payload evidence. Adapter identity only; no VIN, telephone, SMS, or raw btsnoop data. The source JSON is retained unchanged."
+}

@@ -1,8 +1,9 @@
 # Validation roadmap
 
 **Current state:** research only. Nothing in this roadmap may be executed
-against the vehicle without a separate, explicit owner approval. The present
-phase has made **no** connection and sent **no** diagnostic request.
+against the vehicle without a separate, explicit owner approval. The only
+approved live connection so far is the 2026-10-22 bounded gateway scan; every
+other V2/V3 test below remains blocked.
 
 The roadmap separates offline proof from vehicle tests. Most of the highest-value
 findings can be validated without touching the car.
@@ -140,6 +141,12 @@ reproduction, not a discovery.
 | V2.10 Windshield | `0x27C4` | Cold soak, then defroster | Byte 0 × 0.1 follows windshield/ambient in the expected direction; label decided | Low |
 | V2.11 Odometer | `0x5867`, `0x02BD`, `0x295A`, `0xF817`, `0x086D` | One drive of known distance | Increments reconcile at 10 km/LSB; the ~99,870 km offset stays constant unless the BMS was reset | Low |
 | V2.12 PTC/seat extras | `0x0801`, `0x3ADF`, `0x3AE0` | Off/on states | Raw length and scaling identified | Low/medium (unknown layout) |
+
+**2026-10-22 live result:** the gateway scan (V2.0) passed 9/9 DIDs with no NRC
+and only UDS `0x22`; evidence is archived in
+`captures/live_gateway_scan_20261022.json`. The V2.10 `0x27C4` attempt captured
+only a baseline (windshield 12.7 °C, outside 12.0 °C) before the session was
+stopped, so the windshield-vs-ambient label is still unresolved.
 
 ### ABS is not in V2
 
