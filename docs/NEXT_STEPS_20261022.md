@@ -131,6 +131,49 @@ python -m ruff check .
 
 ---
 
+## Charge + 200-mile drive plan (2026-10-23/24)
+
+This is an opportunistic read-only session; it does not authorize ABS or any
+session change.
+
+**Tonight, before plugging in**
+
+1. Start the collector and leave it running:
+   `python tools\start_scanner.py`
+2. Check it: `python tools\start_scanner.py --status`
+3. Charge normally to 100 %. The collector will poll `0x1E39`
+   (`bat_charging_voltage`), SoC, pack voltage/current, charge mode, and cell
+   data. The `0x1E39` evidence is a **positive, non-sentinel** value while
+   charging; `FFFF` must remain `None`, never 2,047.97 V.
+4. If the car or charger objects to the adapter, stop collection rather than
+   forcing it.
+
+**Morning, before driving**
+
+- Leave the collector running if practical.
+- Record the start odometer values (`0x295A` main, `0x5867` secondary,
+  `0x02BD` BMS copy, `0x086D` electric-drive copy) and SoC. The collector stores
+  them; no manual write is needed.
+- 200 miles is **321.9 km**. Expect `0x5867` to rise by about **32 LSB**
+  (10 km/LSB), while the main odometer rises by about **322 km**. The
+  `0x5867` offset should stay near **99,870 km**; if it does, the 10 km/LSB
+  scale and constant offset are both confirmed.
+- Do not use `0x5867` as an absolute odometer or for service intervals.
+
+**After the drive**
+
+- Record the same odometers and the lower SoC.
+- The cell sweep is read-only; compare cell 61 (persistent -13/-14 mV) and
+  cell 36 (drifting downward) at the lower SoC.
+- Stop collection with `python tools\start_scanner.py --stop` when done.
+
+**Range note:** the 2026-10-22 scan showed displayed range **179 km** and
+internal/CAN range **288 km** at **78.8 %** SoC. A 200-mile (322 km) trip is
+likely to need a charging stop, especially at highway speed or in cool weather;
+plan one rather than relying on a single full charge.
+
+---
+
 ## Recommended live-session order
 
 1. **Gateway scan first.** It is a bounded 9-DID read on `0x710 -> 0x77A`.
