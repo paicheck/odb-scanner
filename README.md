@@ -329,6 +329,7 @@ the scheme.
 | `python tools/elm_console.py` | Raw ELM327 console for live debugging (`--tcp` for simulator) |
 | `python tools/start_scanner.py` | Start/stop the simulated stack (`--status`, `--stop`) |
 | `python tools/import_carscanner.py "export.csv"` | Import a Car Scanner CSV as evidence labelled `imported` (`--dry-run` previews) |
+| `python tools/build_observations_db.py` | Build the normalised SQL analysis copy `data/observations.db` (`--force` rebuilds; see [docs/OBSERVATIONS_DB.md](docs/OBSERVATIONS_DB.md)) |
 | `python main.py seed` | Load the example 30-day dataset into its own database (`seed.db_path`) |
 | `python tools/purge_synthetic_data.py` | Report (then remove) simulator/demo rows that got into the car's database (`--apply`) |
 | `python main.py guard-test` | Verify the read-only UDS guard |
