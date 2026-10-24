@@ -133,4 +133,9 @@ class Repository(private val db: AppDatabase) {
     suspend fun vinFor(vehicleId: Long): String? = withContext(Dispatchers.IO) {
         (vehicles.getById(vehicleId) ?: vehicles.getFirst())?.vin
     }
+
+    /** The most recently used vehicle row, for the startup history view. */
+    suspend fun firstVehicleId(): Long? = withContext(Dispatchers.IO) {
+        vehicles.getFirst()?.id
+    }
 }

@@ -298,6 +298,22 @@ above) if you want a reproducible environment instead of the newest allowed.
 Only direct dependencies are pinned, so the same file is valid on Windows and
 on Linux/macOS, where the compiled wheels differ.
 
+### Versioning
+
+The application version is one string, stored once in `version.json` at the
+repo root and shared by both apps, so they cannot drift:
+
+* Python CLI: `python main.py --version` (and `tools/doctor.py --version`);
+  importable as `version.__version__`.
+* Android app: `android/app/build.gradle.kts` reads the same file for
+  `versionName`, and derives `versionCode` from it
+  (`MAJOR*10000 + MINOR*100 + PATCH`), so a release bump is a single edit.
+
+Two other version strings exist and are deliberately separate: `spec.json`'s
+`spec_version` (the data-schema / read-only allow-list) and
+`decoders/catalogue.py`'s `CATALOGUE_VERSION`. `tests/test_versioning.py` pins
+the scheme.
+
 ## Commands
 
 | Command | Purpose |

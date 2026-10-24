@@ -1,5 +1,5 @@
 {
-  "catalogue_version": "2026-10-15.2",
+  "catalogue_version": "2026-10-22.1",
   "ecus": [
     {
       "addressing": "29-bit",
@@ -226,7 +226,7 @@
       "tx29": "0x767"
     }
   ],
-  "generated_at": "2026-10-20T20:28:29+00:00",
+  "generated_at": "2026-10-24T19:15:03+00:00",
   "profiles": {
     "eup": {
       "cell_voltages": null,
@@ -2583,7 +2583,7 @@
           "unit": "m/s2"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -2601,7 +2601,7 @@
           "unit": "Nm"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -2619,7 +2619,7 @@
           "unit": "Nm"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -2637,7 +2637,7 @@
           "unit": "Nm"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -2967,18 +2967,8 @@
           "unit": "A"
         },
         {
-          "confidence": "UNKNOWN",
-          "decode": {
-            "addend": 0.0,
-            "byte_order": "big-endian",
-            "divisor": 1.0,
-            "formula": "u16be[0:2] unsigned x 0.03125",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 0.0312499784501336,
-            "signed": false
-          },
+          "confidence": "PROVISIONAL",
+          "decode": null,
           "did": "0x1E39",
           "doc_status": "experimentally determined",
           "ecu_key": "bat_mgmt",
@@ -3015,7 +3005,7 @@
           "unit": "degC"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "addend": 0.0,
             "byte_order": "big-endian",
@@ -3063,7 +3053,7 @@
           "unit": "degC"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "addend": 0.0,
             "byte_order": "big-endian",
@@ -3159,7 +3149,7 @@
           "unit": "V"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "trimmed ASCII",
             "kind": "special",
@@ -3299,9 +3289,13 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "formula": "scaled value @0 + raw index @dl",
+            "addend": 0.0,
+            "divisor": 1.0,
+            "formula": "u16be[0:2] x 0.01 / 1 + 0; raw index u16be[2:4]",
             "kind": "special",
-            "name": "pair"
+            "name": "pair",
+            "scale": 0.01,
+            "width": 2
           },
           "did": "0x1E2C",
           "doc_status": "experimentally determined",
@@ -3317,9 +3311,13 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "formula": "scaled value @0 + raw index @dl",
+            "addend": 0.0,
+            "divisor": 1.0,
+            "formula": "u16be[0:2] x 0.01 / 1 + 0; raw index u16be[2:4]",
             "kind": "special",
-            "name": "pair"
+            "name": "pair",
+            "scale": 0.01,
+            "width": 2
           },
           "did": "0x1E2D",
           "doc_status": "experimentally determined",
@@ -5733,7 +5731,7 @@
           "unit": "V"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "addend": 0.0,
             "byte_order": "big-endian",
@@ -5781,7 +5779,7 @@
           "unit": "V"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "addend": 0.0,
             "byte_order": "big-endian",
@@ -5847,7 +5845,7 @@
           "unit": "code"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "bit 2 of data byte 0",
             "kind": "special",
@@ -5865,7 +5863,7 @@
           "unit": ""
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "bit 3 of data byte 0",
             "kind": "special",
@@ -5884,22 +5882,12 @@
         },
         {
           "confidence": "UNKNOWN",
-          "decode": {
-            "addend": 0,
-            "byte_order": "big-endian",
-            "divisor": 1,
-            "formula": "u8be[1:2] unsigned x 100",
-            "kind": "scalar",
-            "length": 1,
-            "offset": 1,
-            "scale": 100,
-            "signed": false
-          },
+          "decode": null,
           "did": "0x42DB",
           "doc_status": "experimentally determined",
           "ecu_key": "climate",
           "key": "co2_content_interior",
-          "name": "CO2 content interior",
+          "name": "CO2 content interior (16-bit ppm; 0x03FE = not fitted)",
           "provenance": "reported",
           "request_bytes": "2242DB",
           "service": "0x22",
@@ -5998,30 +5986,20 @@
         },
         {
           "confidence": "UNKNOWN",
-          "decode": {
-            "addend": -511,
-            "byte_order": "big-endian",
-            "divisor": 1,
-            "formula": "u16be[3:5] unsigned x 1 + -511",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 3,
-            "scale": 1,
-            "signed": false
-          },
+          "decode": null,
           "did": "0x2A53",
           "doc_status": "experimentally determined",
           "ecu_key": "energy",
           "key": "dc_dc_converter_reserved_current",
-          "name": "DC-DC converter reserved current",
+          "name": "DC-DC current complement (not an independent current)",
           "provenance": "reported",
           "request_bytes": "222A53",
           "service": "0x22",
           "slow": false,
-          "unit": "A"
+          "unit": ""
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6039,7 +6017,7 @@
           "unit": "A"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6057,7 +6035,7 @@
           "unit": "V"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6171,7 +6149,7 @@
           "unit": "V"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6189,7 +6167,7 @@
           "unit": "V"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6207,7 +6185,7 @@
           "unit": "V"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6225,7 +6203,7 @@
           "unit": "V"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6243,7 +6221,7 @@
           "unit": "V"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6333,7 +6311,7 @@
           "unit": "A"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6351,7 +6329,7 @@
           "unit": "degC"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6393,7 +6371,7 @@
           "unit": "km"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6411,7 +6389,7 @@
           "unit": "degC"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6429,7 +6407,7 @@
           "unit": ""
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "four s32 fields: charge Ah @0, discharge Ah @4, charge kWh @8, discharge kWh @12; Ah x 0.001820444117116, kWh x 116508.398/1e9",
             "kind": "special",
@@ -6945,7 +6923,7 @@
           "unit": "degC"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6963,7 +6941,7 @@
           "unit": "W"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -6981,7 +6959,7 @@
           "unit": "W"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -7047,7 +7025,7 @@
           "unit": "V"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -7065,7 +7043,7 @@
           "unit": "A"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -7251,7 +7229,7 @@
           "unit": "A"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "addend": 0.0,
             "byte_order": "big-endian",
@@ -7267,7 +7245,7 @@
           "doc_status": "experimentally determined",
           "ecu_key": "bat_mgmt",
           "key": "odometer_2",
-          "name": "Odometer (BMS copy 2)",
+          "name": "Secondary distance counter (10 km/LSB; not the odometer)",
           "provenance": "reported",
           "request_bytes": "225867",
           "service": "0x22",
@@ -7395,7 +7373,7 @@
           "unit": "degC"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "addend": -1500.0,
             "byte_order": "big-endian",
@@ -7803,7 +7781,7 @@
           "unit": "bar"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "addend": 0,
             "byte_order": "big-endian",
@@ -7995,7 +7973,7 @@
           "unit": "kWh/100km"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -8133,7 +8111,7 @@
           "unit": "km/h"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -8151,7 +8129,7 @@
           "unit": ""
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -8217,7 +8195,7 @@
           "unit": "degC"
         },
         {
-          "confidence": "UNKNOWN",
+          "confidence": "PROVISIONAL",
           "decode": {
             "formula": "IEEE-754 big-endian float32 at offset 0",
             "kind": "special",
@@ -8278,17 +8256,7 @@
         },
         {
           "confidence": "UNKNOWN",
-          "decode": {
-            "addend": -39.5,
-            "byte_order": "big-endian",
-            "divisor": 1,
-            "formula": "u16be[0:2] unsigned x 15.625 + -39.5",
-            "kind": "scalar",
-            "length": 2,
-            "offset": 0,
-            "scale": 15.625,
-            "signed": false
-          },
+          "decode": null,
           "did": "0x27C4",
           "doc_status": "experimentally determined",
           "ecu_key": "climate",
@@ -8298,7 +8266,7 @@
           "request_bytes": "2227C4",
           "service": "0x22",
           "slow": false,
-          "unit": ""
+          "unit": "degC"
         }
       ]
     }

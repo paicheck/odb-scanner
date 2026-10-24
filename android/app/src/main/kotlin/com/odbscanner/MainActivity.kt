@@ -4,7 +4,12 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -16,6 +21,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,11 +67,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val spec = loadSpec()
+        // A bad or unreadable spec must show an error screen, not a crash with
+        // no explanation: the asset is generated, and a hand-edited or missing
+        // one would otherwise take the whole app down before the UI exists.
+        val (spec, error) = try {
+            loadSpec() to null as String?
+        } catch (e: Exception) {
+            null as Spec? to "${e.javaClass.simpleName}: ${e.message}"
+        }
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    CollectorScreen(spec)
+                    if (spec != null) CollectorScreen(spec) else ErrorScreen(error ?: "unknown")
                 }
             }
         }
@@ -75,12 +89,36 @@ class MainActivity : ComponentActivity() {
     )
 }
 
-private val BLUETOOTH_PERMISSIONS = arrayOf(
-    Manifest.permission.BLUETOOTH_CONNECT,
-    Manifest.permission.BLUETOOTH_SCAN,
-)
+@Composable
+private fun ErrorScreen(message: String) {
+    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+        Text(
+            "Failed to load the diagnostic spec",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.error,
+        )
+        Text(message, style = MaterialTheme.typography.bodyMedium)
+    }
+}
 
-private fun hasBluetoothPermission(context: android.content.Context): Boolean =
+/**
+ * Runtime Bluetooth permissions, by platform level.
+ *
+ * Android 12+ gates both the bonded-device lookup/RFCOMM connect and the
+ * discovery scan behind BLUETOOTH_CONNECT + BLUETOOTH_SCAN. Android 6-11 needs
+ * ACCESS_FINE_LOCATION to *discover* nearby classic devices (the BLUETOOTH /
+ * BLUETOOTH_ADMIN pair is install-time and auto-granted), so that is the only
+ * runtime permission asked there. Declaring neverForLocation on BLUETOOTH_SCAN
+ * means 12+ does not also need location.
+ */
+private val BLUETOOTH_PERMISSIONS: Array<String> =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
+    } else {
+        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
+
+private fun hasBluetoothPermission(context: Context): Boolean =
     BLUETOOTH_PERMISSIONS.all {
         ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
     }
@@ -89,9 +127,76 @@ private fun hasBluetoothPermission(context: android.content.Context): Boolean =
 private fun pairedDevices(): List<BluetoothDevice> =
     BluetoothAdapter.getDefaultAdapter()?.bondedDevices?.toList() ?: emptyList()
 
+/**
+ * Run one classic-Bluetooth discovery scan, feeding each found device to
+ * [onFound] and [onFinished] when the 12 s inquiry window closes. The receiver
+ * is unregistered and discovery cancelled on [stop], so the radio is never left
+ * scanning after the dialog closes.
+ */
+private class BluetoothScanner(
+    private val context: Context,
+    private val onFound: (BluetoothDevice) -> Unit,
+    private val onFinished: () -> Unit,
+    private val onBondChanged: (BluetoothDevice, Int) -> Unit = { _, _ -> },
+) {
+    private val adapter = BluetoothAdapter.getDefaultAdapter()
+    private var receiver: BroadcastReceiver? = null
+
+    fun start() {
+        stop()
+        val adapter = adapter ?: return
+        val filter = IntentFilter().apply {
+            addAction(BluetoothDevice.ACTION_FOUND)
+            addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+            addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+        }
+        val receiver = object : BroadcastReceiver() {
+            @SuppressLint("MissingPermission")
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    BluetoothDevice.ACTION_FOUND -> {
+                        @Suppress("DEPRECATION")
+                        val device = intent.getParcelableExtra<BluetoothDevice>(
+                            BluetoothDevice.EXTRA_DEVICE,
+                        )
+                        device?.let(onFound)
+                    }
+                    BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> onFinished()
+                    BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
+                        @Suppress("DEPRECATION")
+                        val device = intent.getParcelableExtra<BluetoothDevice>(
+                            BluetoothDevice.EXTRA_DEVICE,
+                        )
+                        val state = intent.getIntExtra(
+                            BluetoothDevice.EXTRA_BOND_STATE,
+                            BluetoothDevice.ERROR,
+                        )
+                        if (device != null) onBondChanged(device, state)
+                    }
+                }
+            }
+        }
+        this.receiver = receiver
+        context.registerReceiver(receiver, filter)
+        @SuppressLint("MissingPermission")
+        adapter.startDiscovery()
+    }
+
+    fun stop() {
+        receiver?.let {
+            try { context.unregisterReceiver(it) } catch (_: IllegalArgumentException) {}
+        }
+        receiver = null
+        @SuppressLint("MissingPermission")
+        try { adapter?.cancelDiscovery() } catch (_: SecurityException) {}
+    }
+}
+
 fun MeasurementEntity.toReading() = Reading(
     key = key,
-    value = value,
+    // A non-scalar decode (VIN, gear, pair/multi-field JSON) lives in
+    // text_value: Room's numeric column is a DOUBLE and cannot hold it.
+    value = value ?: textValue,
     raw = rawResponse,
     status = if (success) "ok" else (error ?: "no-response"),
 )
@@ -106,6 +211,16 @@ private fun CollectorScreen(spec: Spec) {
     var readings by remember { mutableStateOf(listOf<Reading>()) }
     var devices by remember { mutableStateOf(listOf<BluetoothDevice>()) }
     var showDeviceDialog by remember { mutableStateOf(false) }
+    // The vehicle the persisted rows belong to; the VIN read at connect moves
+    // this off its fallback, so the history shown is the car's, not row 1's.
+    var vehicleId by remember { mutableStateOf(1L) }
+    // One collection at a time: a second connect launched mid-pass would open a
+    // second RFCOMM socket, and the adapter answers only one of them.
+    var busy by remember { mutableStateOf(false) }
+    // Devices found by the discovery scan, plus a flag so the dialog can show a
+    // "searching" line. Bonded devices are read separately and merged below.
+    var discovered by remember { mutableStateOf(listOf<BluetoothDevice>()) }
+    var discovering by remember { mutableStateOf(false) }
 
     // Cloud upload settings live in SharedPreferences so the endpoint and token
     // can be changed on the device without rebuilding the app.
@@ -147,11 +262,21 @@ private fun CollectorScreen(spec: Spec) {
     // an app restart (the collector is not running in the background on Android).
     LaunchedEffect(Unit) {
         try {
-            val latest = repository.latestMeasurements(1L)
+            vehicleId = repository.firstVehicleId() ?: 1L
+            val latest = repository.latestMeasurements(vehicleId)
             readings = latest.map { it.toReading() }
             status = "Loaded ${readings.size} stored readings"
         } catch (e: Exception) {
             status = "DB error: ${e.message}"
+        }
+    }
+
+    fun reloadStored() {
+        // Reload from the persisted store without re-collecting.
+        scope.launch {
+            val latest = repository.latestMeasurements(vehicleId)
+            readings = latest.map { it.toReading() }
+            status = "Loaded ${readings.size} stored readings"
         }
     }
 
@@ -160,6 +285,7 @@ private fun CollectorScreen(spec: Spec) {
     ) { grants ->
         if (grants.values.all { it }) {
             devices = pairedDevices()
+            discovered = emptyList()
             showDeviceDialog = true
         } else {
             status = "Bluetooth permission denied"
@@ -169,9 +295,80 @@ private fun CollectorScreen(spec: Spec) {
     fun startConnectFlow() {
         if (hasBluetoothPermission(context)) {
             devices = pairedDevices()
+            discovered = emptyList()
             showDeviceDialog = true
         } else {
             permissionLauncher.launch(BLUETOOTH_PERMISSIONS)
+        }
+    }
+
+    /** Open the RFCOMM link to an already-paired adapter and run one pass. */
+    fun connectTo(device: BluetoothDevice) {
+        showDeviceDialog = false
+        status = "Connecting…"
+        scope.launch {
+            busy = true
+            try {
+                val collectedVehicle = runCollection(spec, device, repository) { msg, result ->
+                    status = msg
+                    if (result != null) readings = result
+                }
+                // The VIN read at connect may have pointed the rows at a
+                // different vehicle row; show that car's history, then push.
+                vehicleId = collectedVehicle
+                reloadStored()
+                if (cloudSettings.isUsable) syncCloud()
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    /** Ask the OS to pair an unpaired device (raises the PIN prompt). */
+    @SuppressLint("MissingPermission")
+    fun pairWith(device: BluetoothDevice) {
+        val started = try {
+            device.createBond()
+        } catch (_: SecurityException) {
+            false
+        }
+        status = if (started) {
+            "Pairing ${device.name ?: device.address}… enter the PIN on screen " +
+                "(ELM327 clones usually use 1234 or 0000)"
+        } else {
+            "Could not start pairing ${device.address}"
+        }
+    }
+
+    // Scan for nearby classic devices while the picker is open. This is what
+    // finds an ELM327 dongle that was never paired: bondedDevices alone cannot
+    // see it, and a dongle with no friendly name shows up as its MAC address.
+    DisposableEffect(showDeviceDialog) {
+        if (showDeviceDialog) {
+            val scanner = BluetoothScanner(
+                context,
+                onFound = { d ->
+                    if (discovered.none { it.address == d.address }) {
+                        discovered = discovered + d
+                    }
+                },
+                onFinished = { discovering = false },
+                onBondChanged = { d, state ->
+                    when (state) {
+                        BluetoothDevice.BOND_BONDED -> {
+                            devices = pairedDevices()
+                            status = "Paired ${d.name ?: d.address}"
+                        }
+                        BluetoothDevice.BOND_NONE ->
+                            status = "Pairing ${d.name ?: d.address} failed"
+                    }
+                },
+            )
+            discovering = true
+            scanner.start()
+            onDispose { scanner.stop() }
+        } else {
+            onDispose { }
         }
     }
 
@@ -189,23 +386,25 @@ private fun CollectorScreen(spec: Spec) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(vertical = 8.dp),
         ) {
-            Button(onClick = { startConnectFlow() }) { Text("Connect & collect") }
-            Button(onClick = {
-                // Reload from the persisted store without re-collecting.
-                scope.launch {
-                    val latest = repository.latestMeasurements(1L)
-                    readings = latest.map { it.toReading() }
-                    status = "Loaded ${readings.size} stored readings"
-                }
-            }) { Text("Reload") }
-            Button(onClick = { readings = emptyList(); status = "Idle" }) { Text("Clear") }
+            Button(
+                onClick = { startConnectFlow() },
+                enabled = !busy,
+            ) { Text("Connect & collect") }
+            Button(
+                onClick = { reloadStored() },
+                enabled = !busy,
+            ) { Text("Reload") }
+            Button(
+                onClick = { readings = emptyList(); status = "Idle" },
+                enabled = !busy,
+            ) { Text("Clear") }
         }
 
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(bottom = 8.dp),
         ) {
-            Button(onClick = { syncCloud() }) { Text("Sync to cloud") }
+            Button(onClick = { syncCloud() }, enabled = !busy) { Text("Sync to cloud") }
             Button(onClick = {
                 cloudEnabled = cloudSettings.enabled
                 cloudUrl = cloudSettings.apiUrl
@@ -232,38 +431,44 @@ private fun CollectorScreen(spec: Spec) {
             onDismissRequest = { showDeviceDialog = false },
             title = { Text("Choose adapter") },
             text = {
-                if (devices.isEmpty()) {
-                    Text("No paired devices. Pair the ELM327 in Android Bluetooth settings.")
-                } else {
-                    LazyColumn {
-                        items(devices, key = { it.address }) { d ->
-                            Text(
-                                "${d.name ?: d.address}\n${d.address}",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        showDeviceDialog = false
-                                        status = "Connecting…"
-                                        scope.launch {
-                                            runCollection(spec, d, repository) { msg, result ->
-                                                status = msg
-                                                result?.let { collected ->
-                                                    readings = collected
-                                                    // After collecting, reload from the store
-                                                    // so the UI shows the persisted
-                                                    // (deduplicated) state, then push the new
-                                                    // rows to the cloud if it is configured.
-                                                    scope.launch {
-                                                        val latest = repository.latestMeasurements(1L)
-                                                        readings = latest.map { it.toReading() }
-                                                        if (cloudSettings.isUsable) syncCloud()
-                                                    }
-                                                }
-                                            }
+                val bonded = devices
+                val combined = (bonded + discovered.filter { d ->
+                    bonded.none { it.address == d.address }
+                }).distinctBy { it.address }
+
+                Column {
+                    if (discovering) {
+                        Text(
+                            "Searching for nearby devices…",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Text(
+                        "Already-paired devices are listed first. Tap an unpaired " +
+                            "device to pair it (PIN is usually 1234 or 0000).",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (combined.isEmpty()) {
+                        Text(
+                            "Nothing found yet. Make sure the ELM327 is powered " +
+                                "on and in range, then wait for the scan to finish.",
+                            modifier = Modifier.padding(vertical = 8.dp),
+                        )
+                    } else {
+                        LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+                            items(combined, key = { it.address }) { d ->
+                                val isBonded = d.bondState == BluetoothDevice.BOND_BONDED
+                                Text(
+                                    "${d.name ?: d.address}\n${d.address}" +
+                                        if (isBonded) "" else "\n[tap to pair]",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            if (isBonded) connectTo(d) else pairWith(d)
                                         }
-                                    }
-                                    .padding(vertical = 10.dp),
-                            )
+                                        .padding(vertical = 10.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -341,7 +546,10 @@ private suspend fun runCollection(
     device: BluetoothDevice,
     repository: Repository,
     onUpdate: (String, List<Reading>?) -> Unit,
-) = withContext(Dispatchers.IO) {
+): Long = withContext(Dispatchers.IO) {
+    // The fallback row, used only until the VIN is known (or when the car does
+    // not answer it). The collector replaces it with the VIN's own row.
+    var vehicleId = 1L
     try {
         val port = BluetoothSpp.connect(device)
         try {
@@ -352,6 +560,15 @@ private suspend fun runCollection(
 
             val collector = Collector(spec, profile, protocol, guard, repository, 1L)
             collector.setSilentRetireThreshold(3)
+            // Identify first: every row this pass writes must belong to the
+            // right vehicle, and loadState() loads that vehicle's retired set.
+            val vin = collector.identifyVehicle()
+            vehicleId = collector.vehicleId
+            onUpdate(
+                if (vin != null) "Vehicle identified: $vin" else
+                    "VIN not readable; using the stored vehicle",
+                null,
+            )
             collector.loadState()
             val ecus = collector.discover()
             onUpdate("ECU discovery: $ecus", null)
@@ -363,4 +580,5 @@ private suspend fun runCollection(
     } catch (e: Exception) {
         onUpdate("Error: ${e.message}", null)
     }
+    vehicleId
 }

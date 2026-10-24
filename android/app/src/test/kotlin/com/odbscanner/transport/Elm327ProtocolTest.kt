@@ -3,15 +3,31 @@ package com.odbscanner.transport
 import com.odbscanner.spec.EcuSpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** An ELM327Port that records every line it is asked to send. */
-private class RecordingPort : Elm327Port {
+/**
+ * An ELM327Port that records every line it is asked to send.
+ *
+ * [answers] is consulted first so a test can script a response; a missing
+ * command falls back to "OK". [refuseOnce] answers "?" for the first
+ * occurrence of each listed command, which is how a clone behaves when a stale
+ * header survives a Bluetooth reconnect.
+ */
+private class RecordingPort(
+    private val answers: Map<String, List<String>> = emptyMap(),
+    private val refuseOnce: Set<String> = emptySet(),
+    private val alwaysRefuse: Set<String> = emptySet(),
+) : Elm327Port {
     val sent = mutableListOf<String>()
+    private val alreadyRefused = mutableSetOf<String>()
+
     override fun transact(line: String): List<String> {
         sent.add(line)
-        return listOf("OK")
+        if (line in alwaysRefuse) return listOf("?")
+        if (line in refuseOnce && alreadyRefused.add(line)) return listOf("?")
+        return answers[line] ?: listOf("OK")
     }
 }
 
@@ -53,10 +69,13 @@ class Elm327ProtocolTest {
         receiveFilter = true,
     )
 
+    /** No settle after ATZ: unit tests must not sleep. */
+    private fun protocol(port: Elm327Port) = Elm327Protocol(port, resetDelayMs = 0)
+
     @Test
     fun `29-bit preamble matches the captured wire form`() {
         val port = RecordingPort()
-        Elm327Protocol(port).apply {
+        protocol(port).apply {
             init()
             setModule(spec29Bit())
         }
@@ -75,7 +94,7 @@ class Elm327ProtocolTest {
     @Test
     fun `11-bit preamble matches the captured wire form`() {
         val port = RecordingPort()
-        Elm327Protocol(port).apply {
+        protocol(port).apply {
             init()
             setModule(spec11Bit())
         }
@@ -94,7 +113,7 @@ class Elm327ProtocolTest {
     @Test
     fun `read request goes out bare, never hand-framed`() {
         val port = RecordingPort()
-        Elm327Protocol(port).apply {
+        protocol(port).apply {
             init()
             setModule(spec29Bit())
             sendRead("221E3B")
@@ -104,5 +123,71 @@ class Elm327ProtocolTest {
             "a hand-framed 8-byte line was sent: ${port.sent}",
             port.sent.any { it.length == 16 && it.startsWith("03") },
         )
+    }
+
+    @Test
+    fun `returning to functional addressing clears the module filter`() {
+        // A pinned ATCRA is invisible while reading one module physically: the
+        // filter matches its answers. It only breaks the NEXT functional read,
+        // which then looks like a sleeping car instead of a stale filter. The
+        // bare ATCRA is the documented way to drop it.
+        val port = RecordingPort()
+        val p = protocol(port)
+        p.init()
+        p.setModule(spec29Bit())
+        port.sent.clear()
+
+        p.setModule(null)
+
+        assertTrue("bare ATCRA not sent: ${port.sent}", "ATCRA" in port.sent)
+        assertTrue("functional header not restored: ${port.sent}", "ATSH DB33F1" in port.sent)
+        assertFalse(
+            "a module-specific ATCRA survived: ${port.sent}",
+            port.sent.any { it.startsWith("ATCRA ") },
+        )
+    }
+
+    @Test
+    fun `a refused module preamble resets the adapter and retries once`() {
+        val port = RecordingPort(refuseOnce = setOf("ATSH FC007B"))
+        val p = protocol(port)
+
+        p.init()
+        p.setModule(spec29Bit())
+
+        assertEquals(
+            "one ATZ at init and one recovery ATZ expected: ${port.sent}",
+            2, port.sent.count { it == "ATZ" },
+        )
+        assertTrue("the preamble was not retried: ${port.sent}",
+            port.sent.count { it == "ATSH FC007B" } == 2)
+    }
+
+    @Test
+    fun `a preamble refused twice surfaces the refusal`() {
+        val port = RecordingPort(alwaysRefuse = setOf("ATSH FC007B"))
+        val p = protocol(port)
+        p.init()
+
+        assertThrows(Elm327RefusedError::class.java) { p.setModule(spec29Bit()) }
+        assertEquals("init ATZ + one recovery ATZ", 2,
+            port.sent.count { it == "ATZ" })
+    }
+
+    @Test
+    fun `a refused read is an error, not silence`() {
+        val port = RecordingPort(answers = mapOf("221E3B" to listOf("?")))
+        val p = protocol(port)
+        p.init()
+
+        // "?" means the adapter rejected the request, so the DID was never
+        // tried. Treating it as NO DATA would retire a working DID.
+        assertThrows(Elm327RefusedError::class.java) { p.sendRead("221E3B") }
+    }
+
+    @Test
+    fun `a refused critical init command is fatal`() {
+        val port = RecordingPort(alwaysRefuse = setOf("ATCAF1"))
+        assertThrows(Elm327RefusedError::class.java) { protocol(port).init() }
     }
 }

@@ -51,6 +51,7 @@ from diagnostic.interface import (  # noqa: E402
     AdapterNotFoundError,
     CommunicationError,
 )
+from version import __version__  # noqa: E402
 
 OK, WARN, FAIL, SKIP = "OK", "WARN", "FAIL", "SKIP"
 
@@ -709,6 +710,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Diagnose why the adapter is not connecting.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Every stage is read-only: no write can reach the vehicle.")
+    ap.add_argument("--version", action="version",
+                    version=f"%(prog)s {__version__}")
     ap.add_argument("--config", default=None, help="alternative config file")
     ap.add_argument("--port", default=None,
                     help="override adapter.port for this run")

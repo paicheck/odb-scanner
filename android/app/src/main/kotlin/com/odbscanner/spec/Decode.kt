@@ -20,7 +20,7 @@ object Decoder {
         return try {
             when (recipe) {
                 is Decode.Scalar -> decodeScalar(recipe, record)
-                is Decode.Special -> decodeSpecial(recipe.name, record)
+                is Decode.Special -> decodeSpecial(recipe, record)
             }
         } catch (_: IndexOutOfBoundsException) {
             null  // short record: preserve raw, decode as unknown
@@ -40,8 +40,8 @@ object Decoder {
         return v * r.scale / r.divisor + r.addend
     }
 
-    private fun decodeSpecial(name: String, record: ByteArray): Any? {
-        return when (name) {
+    private fun decodeSpecial(r: Decode.Special, record: ByteArray): Any? {
+        return when (r.name) {
             "cell_voltage" -> {
                 val v = u16(record, 0) ?: return null
                 if (v == CELL_UNUSED) null else v / 1000.0 + 1.0
@@ -83,8 +83,20 @@ object Decoder {
                 )
             }
             "pair" -> {
-                // scaled value at byte 0, raw index at byte `dl` (see _cs_pair_decoder)
-                null  // reserved: the two-field decode is not yet needed on the car
+                // Two values in one DID: a scaled field at byte 0 and a raw
+                // index at byte `width` (Python: _cs_pair_decoder). Both halves
+                // are read from the same length check on purpose -- a truncated
+                // answer must be a failed decode, not a partial one recorded as
+                // complete. The field width comes from the spec, never a
+                // constant here: 0x1E2C/0x1E2D are dl=2 with scale 0.01 today,
+                // and a client that hard-coded those would silently mislabel
+                // any future pair DID.
+                val width = r.width
+                if (width <= 0 || record.size < 2 * width) return null
+                mapOf(
+                    "value" to uint(record, 0, width) * r.scale / r.divisor + r.addend,
+                    "index" to uint(record, width, width),
+                )
             }
             "gear" -> record.getOrNull(1)?.toInt()?.let { gearCode(it) }
             "vin" -> record.toString(Charsets.US_ASCII).trim('\u0000', ' ')
@@ -103,6 +115,13 @@ object Decoder {
             ((b[off + 2].toLong() and 0xFF) shl 8) or
             (b[off + 3].toLong() and 0xFF)
         else null
+
+    /** Big-endian unsigned integer of [len] bytes at [off]; caller bounds-checks. */
+    private fun uint(b: ByteArray, off: Int, len: Int): Long {
+        var v = 0L
+        for (i in off until off + len) v = (v shl 8) or (b[i].toLong() and 0xFF)
+        return v
+    }
 
     /** Signed 32-bit big-endian at off. */
     private fun s32(b: ByteArray, off: Int): Long {

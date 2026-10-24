@@ -29,7 +29,20 @@ sealed class Decode {
     ) : Decode()
 
     /** A decoder that is not simple arithmetic; implement by name. */
-    data class Special(val name: String, val formula: String?) : Decode()
+    data class Special(
+        val name: String,
+        val formula: String?,
+        /**
+         * Bytes per field, for the "pair" recipe only. Zero means the recipe
+         * does not take parameters, and a client must not guess them: the
+         * export carries [width]/[scale]/[divisor]/[addend] explicitly so the
+         * phone cannot disagree with the Python closure about them.
+         */
+        val width: Int = 0,
+        val scale: Double = 1.0,
+        val divisor: Double = 1.0,
+        val addend: Double = 0.0,
+    ) : Decode()
 }
 
 data class EcuSpec(
@@ -53,14 +66,14 @@ data class MeasurementSpec(
     val did: Int?,
     val slow: Boolean,
     val decode: Decode?,
-)
-
-data class CellVoltages(
-    val ecuKey: String,
-    val didBase: Int,
-    val slots: Int,
-    val unusedMarker: Int,
-    val decode: Decode,
+    /**
+     * Where the number came from, straight from the shared spec. Python records
+     * this, and the phone must not flatten it to "reported": a calculated or
+     * simulated value stored as reported is a data-integrity bug once both
+     * platforms meet in the cloud table.
+     */
+    val provenance: String = "reported",
+    val docStatus: String? = null,
 )
 
 data class ReadOnlyGuard(
@@ -72,9 +85,18 @@ data class ReadOnlyGuard(
     val nrcNames: Map<Int, String>,
 )
 
+/**
+ * One profile's DID map.
+ *
+ * There is deliberately no separate `cell_voltages` sweep here: the spec's
+ * `measurements` already carry every cell DID (`cell_v_000`..) with the
+ * `cell_voltage` decoder that maps the 0x0FFE "sensor absent" marker to null.
+ * Reading them through the normal poll path keeps the raw bytes, retirement
+ * and the unused-marker handling in exactly one place -- the Python collector
+ * skipped its cell keys in the slow pass for the same reason.
+ */
 data class ProfileSpec(
     val measurements: List<MeasurementSpec>,
-    val cellVoltages: CellVoltages?,
 )
 
 data class Spec(
@@ -110,6 +132,10 @@ private fun parseDecode(obj: JSONObject?): Decode? {
         "special" -> Decode.Special(
             name = obj.getString("name"),
             formula = obj.optString("formula").ifBlank { null },
+            width = obj.optInt("width", 0),
+            scale = obj.optDouble("scale", 1.0),
+            divisor = obj.optDouble("divisor", 1.0),
+            addend = obj.optDouble("addend", 0.0),
         )
         else -> null
     }
@@ -189,26 +215,13 @@ object SpecLoader {
                     did = hex(m.opt("did")),
                     slow = m.optBoolean("slow", false),
                     decode = parseDecode(m.optJSONObject("decode")),
+                    provenance = m.optString("provenance").ifBlank { "reported" },
+                    docStatus = m.optString("doc_status").ifBlank { null },
                 )
             }
         }
-        val cv = obj.optJSONObject("cell_voltages")
-        val cellVoltages = cv?.let {
-            val d = parseDecode(it.getJSONObject("decode"))
-            if (d == null) {
-                // A malformed cell_voltages entry must not crash the app; just
-                // skip the per-cell sweep.
-                null
-            } else {
-                CellVoltages(
-                    ecuKey = it.getString("ecu_key"),
-                    didBase = hex(it.getString("did_base"))!!,
-                    slots = it.getInt("slots"),
-                    unusedMarker = hex(it.getString("unused_marker"))!!,
-                    decode = d,
-                )
-            }
-        }
-        return ProfileSpec(measurements, cellVoltages)
+        // `cell_voltages` is intentionally not read: its DIDs are ordinary
+        // measurements in the same list, with the same decoder. See ProfileSpec.
+        return ProfileSpec(measurements)
     }
 }

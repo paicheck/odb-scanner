@@ -37,6 +37,7 @@ LOG_BACKUP_COUNT = 3
 from config import load_config
 from database.repository import Repository
 from diagnostic.interface import AdapterNotFoundError, CommunicationError
+from version import __version__
 from web.auth import is_loopback, resolve_token
 
 
@@ -571,6 +572,8 @@ def _db_size_mb(path: str) -> float:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Read-only ID.3 diagnostics")
+    parser.add_argument("--version", action="version",
+                        version=f"%(prog)s {__version__}")
     parser.add_argument("command",
                         choices=["discover", "collect", "analyze", "report",
                                  "serve", "simulate", "seed", "guard-test",

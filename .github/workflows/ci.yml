@@ -64,3 +64,42 @@ jobs:
       # the test suite to keep covering it.
       - name: Read-only guard
         run: python main.py guard-test
+
+  android:
+    # The phone speaks the same wire protocol as the Python transport and
+    # carries the same generated spec, so it needs the same kind of gate. The
+    # JVM tests are the transport/decoder/guard parity checks; the spec check
+    # is what stops the bundled asset from silently drifting from the
+    # registry (it did exactly that in October 2026).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python (spec drift check)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-lock.txt
+          python -m pip install pytest
+
+      - name: Bundled spec matches the registry
+        run: python -m pytest -q tests/test_spec_export_in_sync.py
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Unit tests
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:testDebugUnitTest

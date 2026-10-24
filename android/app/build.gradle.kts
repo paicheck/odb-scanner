@@ -1,9 +1,22 @@
+import groovy.json.JsonSlurper
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
 }
+
+// The product version is a single source of truth shared with the Python CLI:
+// version.json at the repo root. Both apps read it, so they cannot drift and a
+// release bump is one edit. `versionName` is that string verbatim; `versionCode`
+// is derived from it (MAJOR*10000 + MINOR*100 + PATCH) so it stays monotonic
+// without ever being hand-maintained.
+val versionFile = file("../../version.json")
+val appVersion: String = (JsonSlurper().parse(versionFile) as Map<String, Any>)["version"] as String
+val semver = appVersion.substringBefore("-").substringBefore("+").split(".")
+require(semver.size == 3) { "version.json must be MAJOR.MINOR.PATCH, got '$appVersion'" }
+val appVersionCode = semver[0].toInt() * 10000 + semver[1].toInt() * 100 + semver[2].toInt()
 
 android {
     namespace = "com.odbscanner"
@@ -13,8 +26,8 @@ android {
         applicationId = "com.odbscanner"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersion
     }
 
     buildFeatures {

@@ -28,7 +28,7 @@ response is preserved by the collector regardless, so no data is lost by
 deferring a decode.
 
 Usage:
-    python tools/export_spec.py [--out spec/odb_scanner.json]
+    python tools/export_spec.py [--out spec/odb_scanner.json] [--sync-android]
 """
 from __future__ import annotations
 
@@ -145,9 +145,16 @@ def _scalar(offset, length, signed, scale, divisor, addend, formula=None) -> dic
     }
 
 
-def _special(name, formula) -> dict:
-    """A decoder that is not simple arithmetic; the client implements it by name."""
-    return {"kind": "special", "name": name, "formula": formula}
+def _special(name, formula, **extra) -> dict:
+    """A decoder that is not simple arithmetic; the client implements it by name.
+
+    ``extra`` carries the closure's own parameters when the decoder cannot be
+    described by its name alone (currently the ``pair`` field widths). Without
+    them a client would have to hard-code constants that the Python side keeps
+    next to the registration, which is exactly the drift the spec exists to
+    prevent.
+    """
+    return {"kind": "special", "name": name, "formula": formula, **extra}
 
 
 # Module-level decoders that are simple arithmetic, keyed by function __name__.
@@ -230,7 +237,17 @@ def _decode_recipe(key: str, decode) -> dict | None:
                            args.get("mul", 1.0), args.get("div", 1.0),
                            args.get("ofs", 0.0))
         if "first_mul" in args:  # _cs_pair_decoder: two values in one DID
-            return _special("pair", "scaled value @0 + raw index @dl")
+            dl = args["dl"]
+            return _special(
+                "pair",
+                f"u16be[0:{dl}] x {args['first_mul']:g} / "
+                f"{args['first_div']:g} + {args['first_ofs']:g}; "
+                f"raw index u16be[{dl}:{2 * dl}]",
+                width=dl,
+                scale=args["first_mul"],
+                divisor=args["first_div"],
+                addend=args["first_ofs"],
+            )
     name = getattr(decode, "__name__", "")
     if name in _FUNCTION_RECIPES:
         off, ln, signed, sc, dv, ad = _FUNCTION_RECIPES[name]
@@ -314,6 +331,13 @@ def build_spec() -> dict:
     }
 
 
+def _write(path: str, spec: dict) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(spec, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Export the shared diagnostic spec as JSON")
@@ -321,17 +345,25 @@ def main(argv: list[str] | None = None) -> int:
                         help="destination file (default spec/odb_scanner.json)")
     parser.add_argument("--profile", default=None,
                         help="restrict to one profile (meb|eup) for a quick look")
+    parser.add_argument("--sync-android", action="store_true",
+                        help="also refresh android/app/src/main/assets/spec.json "
+                             "(byte-identical to --out)")
     args = parser.parse_args(argv)
+    if args.profile and args.sync_android:
+        parser.error("--sync-android needs the full spec; drop --profile")
 
     spec = build_spec()
     if args.profile:
         spec["profiles"] = {args.profile: spec["profiles"][args.profile]}
 
     out = args.out
-    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    with open(out, "w", encoding="utf-8") as fh:
-        json.dump(spec, fh, indent=2, sort_keys=True)
-        fh.write("\n")
+    _write(out, spec)
+    if args.sync_android:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        dest = os.path.join(root, "android", "app", "src", "main", "assets",
+                            "spec.json")
+        _write(dest, spec)
+        print(f"Synced {dest}")
 
     nm = len(spec["profiles"]["meb"]["measurements"])
     ne = len(spec["profiles"]["eup"]["measurements"])

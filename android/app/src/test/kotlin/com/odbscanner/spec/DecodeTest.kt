@@ -70,4 +70,45 @@ class DecodeTest {
         assertEquals(1, decode("bit3", "08"))
         assertEquals(0, decode("bit3", "00"))
     }
+
+    @Test
+    fun pairMatchesPython() {
+        // _cs_pair_decoder: value = u16be[0:2] * 0.01, index = u16be[2:4].
+        // 0x04D2 = 1234 -> 12.34 %; index 0x0007.
+        val out = Decoder.decode(
+            Decode.Special("pair", null, width = 2, scale = 0.01),
+            hex("04D20007"),
+        ) as Map<*, *>
+        assertEquals(12.34, out["value"] as Double, 1e-9)
+        assertEquals(7L, out["index"])
+    }
+
+    @Test
+    fun pairWithoutWidthIsNotGuessed() {
+        // The spec must carry the field layout; an old asset without it cannot
+        // be decoded by assuming a two-byte field.
+        assertNull(Decoder.decode(Decode.Special("pair", null), hex("04D20007")))
+        assertNull(
+            Decoder.decode(
+                Decode.Special("pair", null, width = 2, scale = 0.01),
+                hex("04D2"),
+            ),
+        )
+    }
+
+    @Test
+    fun cellVoltageUnusedMarkerIsNull() {
+        // 0x0FFE means "sensor absent", not 5.094 V.
+        assertNull(decode("cell_voltage", "0FFE"))
+        assertEquals(3.7, decode("cell_voltage", "0A8C") as Double, 1e-9)
+    }
+
+    @Test
+    fun scalarArithmeticMatchesTheRecipe() {
+        val recipe = Decode.Scalar(
+            offset = 0, length = 2, signed = false,
+            scale = 1.0, divisor = 10.0, addend = -40.0, formula = null,
+        )
+        assertEquals(30.0, Decoder.decode(recipe, hex("02BC")) as Double, 1e-9)
+    }
 }
