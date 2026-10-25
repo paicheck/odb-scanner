@@ -1,5 +1,6 @@
 package com.odbscanner.collect
 
+import android.util.Log
 import com.odbscanner.db.Repository
 import com.odbscanner.spec.Decoder
 import com.odbscanner.spec.MeasurementSpec
@@ -10,6 +11,7 @@ import com.odbscanner.uds.NegativeResponseError
 import com.odbscanner.uds.NoResponseError
 import com.odbscanner.uds.ReadOnlyGuardImpl
 import com.odbscanner.uds.Uds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.time.Instant
@@ -153,12 +155,22 @@ class Collector(
         tsNow = Instant.now().toString()
         val slowDue = slowPhaseDue()
         val readings = mutableListOf<Reading>()
-        for (m in profile.measurements) {
-            currentCoroutineContext().ensureActive()
-            val did = m.did ?: continue
-            if (m.slow && !slowDue) continue
-            if (retired.contains(m.ecuKey to did)) continue
-            readings.add(poll(m, did))
+        // The spec lists DIDs alphabetically, so reading it as-is makes almost
+        // every DID belong to a different module than the one before it -- the
+        // ELM327 would be told to switch addressing ~287 times a pass, and this
+        // clone stalls on the repeated ATCP/ATSH/ATCRA churn (that is how the
+        // whole 29-bit tail after one stalled DID went unread). Group by module
+        // so the preamble is sent once per module instead of once per DID.
+        val byEcu = profile.measurements.groupBy { it.ecuKey }
+        for (ecuKey in spec.ecus.keys) {
+            val measurements = byEcu[ecuKey] ?: continue
+            for (m in measurements) {
+                currentCoroutineContext().ensureActive()
+                val did = m.did ?: continue
+                if (m.slow && !slowDue) continue
+                if (retired.contains(m.ecuKey to did)) continue
+                readings.add(poll(m, did))
+            }
         }
         // Readings were persisted per-DID inside poll() (and retired DIDs inside
         // retire()), so the data survives an app restart.
@@ -216,6 +228,16 @@ class Collector(
         } catch (e: NoResponseError) {
             logTx("RX", m.ecuKey, e.toString(), "response")
             throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A timeout (Elm327TimeoutError), a refused request, or a dropped
+            // link. Record the real reason in tx_log and fold it into "no
+            // response": one stuck DID must not abort the whole pass, which is
+            // how every DID after it used to go unread.
+            Log.w("odbscanner", "DID 0x${hex4(did)} (${m.key}) unreadable: $e")
+            logTx("RX", m.ecuKey, e.toString(), "response")
+            throw NoResponseError(did)
         }
     }
 

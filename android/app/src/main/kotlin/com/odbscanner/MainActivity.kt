@@ -11,6 +11,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -59,7 +60,10 @@ import com.odbscanner.spec.SpecLoader
 import com.odbscanner.transport.BluetoothSpp
 import com.odbscanner.transport.Elm327Protocol
 import com.odbscanner.uds.ReadOnlyGuardImpl
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -117,6 +121,8 @@ private val BLUETOOTH_PERMISSIONS: Array<String> =
     } else {
         arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
     }
+
+private const val LOG_TAG = "odbscanner"
 
 private fun hasBluetoothPermission(context: Context): Boolean =
     BLUETOOTH_PERMISSIONS.all {
@@ -229,6 +235,8 @@ private fun CollectorScreen(spec: Spec) {
     var cloudEnabled by remember { mutableStateOf(false) }
     var cloudUrl by remember { mutableStateOf("") }
     var cloudToken by remember { mutableStateOf("") }
+    // The running collection session, so the Stop button can cancel it.
+    var collectJob by remember { mutableStateOf<Job?>(null) }
 
     // Upload whatever Room has not yet sent. Safe to call any time: it is
     // idempotent, and a failure only sets the status line.
@@ -302,26 +310,38 @@ private fun CollectorScreen(spec: Spec) {
         }
     }
 
-    /** Open the RFCOMM link to an already-paired adapter and run one pass. */
+    /** Open the RFCOMM link and collect continuously until stopped. */
     fun connectTo(device: BluetoothDevice) {
         showDeviceDialog = false
         status = "Connecting…"
-        scope.launch {
+        collectJob?.cancel()
+        collectJob = scope.launch {
             busy = true
             try {
-                val collectedVehicle = runCollection(spec, device, repository) { msg, result ->
-                    status = msg
-                    if (result != null) readings = result
-                }
-                // The VIN read at connect may have pointed the rows at a
-                // different vehicle row; show that car's history, then push.
-                vehicleId = collectedVehicle
-                reloadStored()
-                if (cloudSettings.isUsable) syncCloud()
+                runContinuousCollection(
+                    spec = spec,
+                    device = device,
+                    repository = repository,
+                    pollIntervalMs = 5_000L,
+                    onVehicleId = { vehicleId = it },
+                    onStatus = { status = it },
+                    onReadings = { batch -> readings = mergeReadings(readings, batch) },
+                )
+            } catch (e: CancellationException) {
+                status = "Collection stopped"
+            } catch (e: Exception) {
+                status = "Error: ${e.message}"
             } finally {
                 busy = false
             }
         }
+    }
+
+    /** Stop the running collection session and push anything pending. */
+    fun stopCollection() {
+        collectJob?.cancel()
+        collectJob = null
+        if (cloudSettings.isUsable) syncCloud()
     }
 
     /** Ask the OS to pair an unpaired device (raises the PIN prompt). */
@@ -372,58 +392,79 @@ private fun CollectorScreen(spec: Spec) {
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
         Text(
-            "ODB Scanner (read-only) — MEB profile ${spec.specVersion}",
+            "ODB Scanner (read-only) — MEB ${spec.specVersion}",
             style = MaterialTheme.typography.titleMedium,
-        )
-        Text(
-            "${spec.ecus.size} ECUs, ${spec.profiles["meb"]?.measurements?.size ?: 0} DIDs",
-            style = MaterialTheme.typography.bodySmall,
         )
 
         Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(vertical = 6.dp),
         ) {
             Button(
                 onClick = { startConnectFlow() },
                 enabled = !busy,
-            ) { Text("Connect & collect") }
+                modifier = Modifier.weight(1f),
+            ) { Text("Connect") }
+            Button(
+                onClick = { stopCollection() },
+                enabled = busy,
+                modifier = Modifier.weight(1f),
+            ) { Text("Stop") }
             Button(
                 onClick = { reloadStored() },
                 enabled = !busy,
+                modifier = Modifier.weight(1f),
             ) { Text("Reload") }
             Button(
                 onClick = { readings = emptyList(); status = "Idle" },
                 enabled = !busy,
+                modifier = Modifier.weight(1f),
             ) { Text("Clear") }
         }
 
         Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(bottom = 4.dp),
         ) {
-            Button(onClick = { syncCloud() }, enabled = !busy) { Text("Sync to cloud") }
-            Button(onClick = {
-                cloudEnabled = cloudSettings.enabled
-                cloudUrl = cloudSettings.apiUrl
-                cloudToken = cloudSettings.token
-                showCloudDialog = true
-            }) { Text("Cloud settings") }
+            Button(
+                onClick = { syncCloud() },
+                enabled = !busy,
+                modifier = Modifier.weight(1f),
+            ) { Text("Sync") }
+            Button(
+                onClick = {
+                    cloudEnabled = cloudSettings.enabled
+                    cloudUrl = cloudSettings.apiUrl
+                    cloudToken = cloudSettings.token
+                    showCloudDialog = true
+                },
+                modifier = Modifier.weight(1f),
+            ) { Text("Cloud") }
         }
 
-        Text("Status: $status", style = MaterialTheme.typography.bodyMedium)
-        Text("Decoded ${readings.count { it.status == "ok" }} of ${readings.size} readings")
+        Text(
+            "$status · ${readings.count { it.status == "ok" }}/${readings.size} ok",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            modifier = Modifier.padding(bottom = 4.dp),
+        )
 
-        LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            items(readings) { r ->
-                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                    Text("${r.key}: ", modifier = Modifier.weight(0.45f))
-                    Text("${r.value ?: "—"}  [${r.status}]", modifier = Modifier.weight(0.55f))
-                }
-            }
-        }
+        ReadoutScreen(
+            spec = spec,
+            readings = readings,
+            repository = repository,
+            vehicleId = vehicleId,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+        )
     }
 
     if (showDeviceDialog) {
@@ -540,45 +581,85 @@ private fun CollectorScreen(spec: Spec) {
     }
 }
 
-/** Run one collection pass on a background thread against [device]. */
-private suspend fun runCollection(
+/**
+ * Run a continuous collection session against [device]: connect once, identify
+ * the vehicle, discover the ECUs, then poll every [pollIntervalMs] until the
+ * coroutine is cancelled. The RFCOMM socket is closed in `finally` whether the
+ * loop ends by cancellation or by an error, so a dead adapter cannot leak the
+ * port or leave the next connect hanging on a stale socket.
+ */
+private suspend fun runContinuousCollection(
     spec: Spec,
     device: BluetoothDevice,
     repository: Repository,
-    onUpdate: (String, List<Reading>?) -> Unit,
-): Long = withContext(Dispatchers.IO) {
-    // The fallback row, used only until the VIN is known (or when the car does
-    // not answer it). The collector replaces it with the VIN's own row.
-    var vehicleId = 1L
+    pollIntervalMs: Long,
+    onVehicleId: (Long) -> Unit,
+    onStatus: (String) -> Unit,
+    onReadings: (List<Reading>) -> Unit,
+) = withContext(Dispatchers.IO) {
+    val port = BluetoothSpp.connect(device)
     try {
-        val port = BluetoothSpp.connect(device)
-        try {
-            val protocol = Elm327Protocol(port)
-            protocol.init()
-            val guard = ReadOnlyGuardImpl(spec.guard)
-            val profile = spec.profiles["meb"] ?: error("no meb profile")
+        val protocol = Elm327Protocol(port)
+        protocol.init()
+        val guard = ReadOnlyGuardImpl(spec.guard)
+        val profile = spec.profiles["meb"] ?: error("no meb profile")
 
-            val collector = Collector(spec, profile, protocol, guard, repository, 1L)
-            collector.setSilentRetireThreshold(3)
-            // Identify first: every row this pass writes must belong to the
-            // right vehicle, and loadState() loads that vehicle's retired set.
-            val vin = collector.identifyVehicle()
-            vehicleId = collector.vehicleId
-            onUpdate(
-                if (vin != null) "Vehicle identified: $vin" else
-                    "VIN not readable; using the stored vehicle",
-                null,
-            )
-            collector.loadState()
-            val ecus = collector.discover()
-            onUpdate("ECU discovery: $ecus", null)
-            val readings = collector.collectOnce()
-            onUpdate("Collected ${readings.size} readings", readings)
-        } finally {
-            port.close()
+        val collector = Collector(spec, profile, protocol, guard, repository, 1L)
+        collector.setSilentRetireThreshold(3)
+        // Identify first: every row this pass writes must belong to the
+        // right vehicle, and loadState() loads that vehicle's retired set.
+        val vin = collector.identifyVehicle()
+        onVehicleId(collector.vehicleId)
+        onStatus(
+            if (vin != null) "Vehicle identified: $vin" else
+                "VIN not readable; using the stored vehicle",
+        )
+        Log.i(LOG_TAG, "Vehicle identified: $vin")
+        collector.loadState()
+        val ecus = collector.discover()
+        onStatus("ECU discovery: $ecus")
+        Log.i(LOG_TAG, "ECU discovery: $ecus")
+
+        var pass = 0
+        while (true) {
+            try {
+                val batch = collector.collectOnce()
+                pass += 1
+                val ok = batch.count { it.status == "ok" }
+                onReadings(batch)
+                onStatus(
+                    "Pass $pass: $ok of ${batch.size} DIDs answered " +
+                        "(next poll in ${pollIntervalMs / 1000}s)",
+                )
+                Log.i(LOG_TAG, "Pass $pass: $ok of ${batch.size} DIDs answered")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                pass += 1
+                onStatus("Pass $pass failed: ${e.message} — retrying")
+                Log.w(LOG_TAG, "Pass $pass failed: ${e.message}")
+            }
+            delay(pollIntervalMs)
         }
-    } catch (e: Exception) {
-        onUpdate("Error: ${e.message}", null)
+    } finally {
+        port.close()
     }
-    vehicleId
+}
+
+/**
+ * Fold one pass's readings into the running display.
+ *
+ * The newest value for a key wins, except a failed read does not clobber a
+ * value that answered before: a transient NO DATA keeps the last good number on
+ * screen rather than briefly showing "—". New keys are appended in arrival
+ * order; the readout re-groups by module anyway.
+ */
+private fun mergeReadings(current: List<Reading>, batch: List<Reading>): List<Reading> {
+    val byKey = LinkedHashMap<String, Reading>()
+    for (r in current) byKey[r.key] = r
+    for (b in batch) {
+        val prev = byKey[b.key]
+        if (prev == null || b.status == "ok" || prev.status != "ok") byKey[b.key] = b
+    }
+    return byKey.values.toList()
 }

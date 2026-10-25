@@ -16,6 +16,17 @@ interface MeasurementDao {
     @Query("SELECT * FROM measurements WHERE vehicleId = :vehicleId AND key = :key ORDER BY id DESC LIMIT 1")
     suspend fun latestByKey(vehicleId: Long, key: String): MeasurementEntity?
 
+    /**
+     * The newest [limit] successful numeric values for one key, oldest first.
+     * Feeds the trend charts; `value IS NOT NULL` keeps out the text-only rows
+     * (VIN, gear) that have no y-axis to plot.
+     */
+    @Query(
+        "SELECT * FROM measurements WHERE vehicleId = :vehicleId AND key = :key " +
+            "AND success = 1 AND value IS NOT NULL ORDER BY id ASC LIMIT :limit"
+    )
+    suspend fun valueHistory(vehicleId: Long, key: String, limit: Int): List<MeasurementEntity>
+
     @Query("SELECT COUNT(*) FROM measurements WHERE vehicleId = :vehicleId")
     suspend fun count(vehicleId: Long): Int
 

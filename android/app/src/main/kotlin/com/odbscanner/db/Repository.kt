@@ -138,4 +138,10 @@ class Repository(private val db: AppDatabase) {
     suspend fun firstVehicleId(): Long? = withContext(Dispatchers.IO) {
         vehicles.getFirst()?.id
     }
+
+    /** Newest [limit] numeric values for one key, oldest first (for charts). */
+    suspend fun valueHistory(vehicleId: Long, key: String, limit: Int = 600): List<Double> =
+        withContext(Dispatchers.IO) {
+            measurements.valueHistory(vehicleId, key, limit).mapNotNull { it.value }
+        }
 }
