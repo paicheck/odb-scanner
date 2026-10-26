@@ -9,7 +9,7 @@ store) and used to derive the DID maps in `decoders/`.
   — the primary reverse-engineering document. §14 records the 2026-10-15
   resource-classification audit and is the authority on what each embedded
   resource actually contains.
-- [`../CAR_SCANNER_AUDIT_REPORT.md`](../CAR_SCANNER_AUDIT_REPORT.md) — earlier
+- [`car_scanner_audit_report.md`](car_scanner_audit_report.md) — earlier
   pass; its "modulo-18 distribution" finding correctly undermined the flat-record
   reading of `vag.micro.vag`, though its replacement schema (flat 3-byte ints)
   is itself superseded — see §14.2 of the reverse-engineering document.

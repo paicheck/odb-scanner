@@ -351,7 +351,7 @@ Every remaining item is blocked on **hardware or approval**, not on code:
 |---|---|---|
 | Live validation capture | 2026-10-21 session archived (35/35 plausibility); strict archive 5/5 with independent values | Next capture, then `export_validation_capture.py` → `validate_measurement_capture.py`; add `expected` only from an independent display |
 | Gateway `[19.Gate]` scan | **Done 2026-10-22: 9/9 positive, 0 NRC**; live evidence archived | No longer blocked; keep `python tools/scan_gateway.py` as the repeatable bounded scan |
-| Known-state payload tests (`0x27C4`, `0x42DB`, `0x5867`, `0xF449`) | `0x27C4` attempted but incomplete (baseline only); others blocked | Car + safe states; exact commands in `docs/NEXT_STEPS_20261022.md` |
+| Known-state payload tests (`0x27C4`, `0x42DB`, `0x5867`, `0xF449`) | `0x27C4` attempted but incomplete (baseline only); others blocked | Car + safe states; exact commands in `docs/investigation/next_steps_20261022.md` |
 | ABS wheel speeds `0x1800–0x1803` | Decoders + approval-gated reader ready; **not executed** | Separate approval for `0x10 03` on `0x713`; run `--dry-run` first, then `--execute --approve-session-change` |
 | Gateway `0x2A26`/`0x2A28`/`0x2A2F` | Payloads recovered and archived; no profile layout/scale | A documented layout or a controlled test that proves a scale; do not blind-probe |
 | Quarantined keys (`co2_content_interior`, `windshield_temperature`) | Decoders implemented; keys still invalid | Fresh-air/occupied and cold-soak/defroster tests |
@@ -386,7 +386,7 @@ report, so a PASS is visibly tied to it.
   implementation status.
 - `tools/audit_payload_findings.py` — read-only replay of the payload findings
   against `data/odb_scanner.db` (opened `mode=ro`; never touches the car).
-- `docs/NEXT_STEPS_20261022.md` — the 20 prioritized steps, with done/blocked
+- `docs/investigation/next_steps_20261022.md` — the 20 prioritized steps, with done/blocked
   status and the exact commands for the next car session.
 - `docs/investigation/meb_gateway_energy_passive_capture_20261015.md` — the
   passive HCI capture that confirmed gateway energy addressing/scales, plus the
