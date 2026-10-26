@@ -377,10 +377,11 @@ class Collector(
 
         // Legislated OBD-II DTCs.
         try {
-            guard.validate(byteArrayOf(0x03.toByte()))
-            logTx("TX", null, "03", "OBD mode 03 - read emissions DTCs (read-only)")
+            // The bytes logged are the bytes sendRead validates and sends.
+            val request = byteArrayOf(0x03)
+            logTx("TX", null, toHex(request), "OBD mode 03 - read emissions DTCs (read-only)")
             protocol.setModule(null)
-            val lines = protocol.sendRead("03")
+            val lines = protocol.sendRead(request)
             logTx("RX", null, lines.joinToString(" | "), "response")
             for (payload in Uds.parsePayloadsBySource(lines).values) {
                 payload ?: continue
@@ -396,11 +397,10 @@ class Collector(
         // UDS DTCs: one functional read, attributed per responding ECU.
         try {
             val request = byteArrayOf(0x19, 0x02, 0x8F.toByte())
-            guard.validate(request)
-            logTx("TX", null, "19028F",
+            logTx("TX", null, toHex(request),
                 "UDS 0x19 0x02 ReadDTCInformation (mask 0x8F) - functional, read-only")
             protocol.setModule(null)
-            val lines = protocol.sendRead("19028F")
+            val lines = protocol.sendRead(request)
             logTx("RX", null, lines.joinToString(" | "), "response")
             for ((src, payload) in Uds.parsePayloadsBySource(lines)) {
                 payload ?: continue

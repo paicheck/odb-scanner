@@ -34,9 +34,9 @@ internal suspend fun runContinuousCollection(
 ) = withContext(Dispatchers.IO) {
     val port = BluetoothSpp.connect(device)
     try {
-        val protocol = Elm327Protocol(port)
-        protocol.init()
         val guard = ReadOnlyGuardImpl(spec.guard)
+        val protocol = Elm327Protocol(port, guard)
+        protocol.init()
         val profile = spec.profiles["meb"] ?: error("no meb profile")
 
         val collector = Collector(spec, profile, protocol, guard, repository, 1L)

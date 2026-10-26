@@ -1,6 +1,7 @@
 package com.odbscanner.transport
 
 import com.odbscanner.spec.EcuSpec
+import com.odbscanner.uds.ReadOnlyGuardImpl
 
 /**
  * A raw ELM327 link: send one line, receive the response lines back (the
@@ -43,9 +44,17 @@ class Elm327RefusedError(val command: String) : Exception(
  *     wrong place and report the silence as "no data".
  *
  * [port] is injected so this class is unit-testable without Bluetooth.
+ *
+ * THE TRANSMIT CHOKE POINT. [port] is private and this class is the only code
+ * that calls [Elm327Port.transact]: AT commands are built here from constants
+ * and numeric ids, and the one way to send a vehicle request is [sendRead],
+ * which runs [guard] over the exact bytes it then transmits. Callers used to
+ * validate one byte array and pass a separately typed hex string, so the two
+ * could disagree. Anything that needs to reach the car must go through here.
  */
 class Elm327Protocol(
     private val port: Elm327Port,
+    private val guard: ReadOnlyGuardImpl,
     /** Pause after ATZ, mirroring the Python transport's 0.3 s settle. */
     private val resetDelayMs: Long = 300,
 ) {
@@ -149,14 +158,17 @@ class Elm327Protocol(
     }
 
     /**
-     * Send one read request. [body] is the bare UDS request hex (e.g. "222AB2").
+     * Send one read request: the bare UDS request bytes (e.g. 22 2A B2).
      * Returns the raw response lines (headers on, ISO-TP PCI included).
      *
-     * The request always goes out bare: the adapter is left in ATCAF1 and adds
-     * the ISO-TP PCI byte, header and flow control itself.
+     * [request] is validated by the read-only guard and then those same bytes
+     * are hex-encoded and sent -- nothing else can reach the vehicle. The
+     * request always goes out bare: the adapter is left in ATCAF1 and adds the
+     * ISO-TP PCI byte, header and flow control itself.
      */
-    fun sendRead(body: String): List<String> {
-        require(body.length % 2 == 0 && body.length / 2 <= 7)
+    fun sendRead(request: ByteArray): List<String> {
+        guard.validate(request)
+        val body = request.joinToString("") { "%02X".format(it.toInt() and 0xFF) }
         val lines = port.transact(body)
         if (refused(lines)) throw Elm327RefusedError(body)
         return lines

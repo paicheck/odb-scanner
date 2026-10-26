@@ -139,7 +139,7 @@ class CollectorTest {
         now: () -> Long = { 0L },
         slowIntervalMs: Long = 60_000L,
     ): Collector {
-        val protocol = Elm327Protocol(port, resetDelayMs = 0)
+        val protocol = Elm327Protocol(port, ReadOnlyGuardImpl(guard()), resetDelayMs = 0)
         protocol.init()
         return Collector(
             spec = spec(measurements),

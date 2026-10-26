@@ -1,6 +1,9 @@
 package com.odbscanner.transport
 
 import com.odbscanner.spec.EcuSpec
+import com.odbscanner.spec.ReadOnlyGuard
+import com.odbscanner.uds.ReadOnlyGuardImpl
+import com.odbscanner.uds.ReadOnlyViolation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -69,8 +72,40 @@ class Elm327ProtocolTest {
         receiveFilter = true,
     )
 
+    private fun guard() = ReadOnlyGuardImpl(ReadOnlyGuard(
+        allowedServices = mapOf(0x22 to "read data by identifier", 0x03 to "mode 03"),
+        blockedServices = mapOf(0x2E to "write data by identifier", 0x14 to "clear DTCs"),
+        readSubfunctions = emptyMap(),
+        minRequestBytes = mapOf(0x22 to 3),
+        maxRequestBytes = 7,
+        nrcNames = emptyMap(),
+    ))
+
     /** No settle after ATZ: unit tests must not sleep. */
-    private fun protocol(port: Elm327Port) = Elm327Protocol(port, resetDelayMs = 0)
+    private fun protocol(port: Elm327Port) = Elm327Protocol(port, guard(), resetDelayMs = 0)
+
+    private val read1E3B = byteArrayOf(0x22, 0x1E, 0x3B)
+
+    @Test
+    fun `sendRead validates the bytes it sends and transmits nothing it refuses`() {
+        // The protocol is the choke point: callers used to validate one byte
+        // array and hand sendRead a separately typed string.
+        val port = RecordingPort()
+        val p = protocol(port)
+        p.init()
+        val before = port.sent.size
+        for (write in listOf(
+            byteArrayOf(0x2E, 0xF1.toByte(), 0x90.toByte(), 0x00),
+            byteArrayOf(0x14, 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()),
+            byteArrayOf(0x22, 0x1E),                       // too short
+            ByteArray(8) { 0x22 },                          // too long
+        )) {
+            assertThrows(ReadOnlyViolation::class.java) { p.sendRead(write) }
+        }
+        assertEquals("nothing may be transmitted", before, port.sent.size)
+        p.sendRead(read1E3B)
+        assertEquals("221E3B", port.sent.last())
+    }
 
     @Test
     fun `29-bit preamble matches the captured wire form`() {
@@ -116,7 +151,7 @@ class Elm327ProtocolTest {
         protocol(port).apply {
             init()
             setModule(spec29Bit())
-            sendRead("221E3B")
+            sendRead(read1E3B)
         }
         assertEquals("221E3B", port.sent.last())
         assertFalse(
@@ -182,7 +217,7 @@ class Elm327ProtocolTest {
 
         // "?" means the adapter rejected the request, so the DID was never
         // tried. Treating it as NO DATA would retire a working DID.
-        assertThrows(Elm327RefusedError::class.java) { p.sendRead("221E3B") }
+        assertThrows(Elm327RefusedError::class.java) { p.sendRead(read1E3B) }
     }
 
     @Test

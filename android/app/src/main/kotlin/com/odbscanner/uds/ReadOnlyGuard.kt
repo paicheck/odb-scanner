@@ -14,7 +14,11 @@ import com.odbscanner.spec.ReadOnlyGuard
  *   * a service with a sub-function list may only send an allow-listed
  *     sub-function (bit 7, suppressPosRspMsgIndicationBit, is masked).
  *
- * There is deliberately no API that transmits an arbitrary payload.
+ * Where it is enforced: [com.odbscanner.transport.Elm327Protocol.sendRead] is
+ * the only way a vehicle request reaches the Bluetooth link, and it calls
+ * [validate] on the exact bytes it then sends. The protocol holds the port
+ * privately and builds every AT command itself. So the guarantee holds as long
+ * as nothing else calls Elm327Port.transact -- keep it that way.
  */
 class ReadOnlyViolation(message: String) : IllegalStateException(message)
 

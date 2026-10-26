@@ -25,7 +25,7 @@ object Uds {
     ): ByteArray {
         val request = guard.buildReadDidRequest(did)
         protocol.setModule(ecu)
-        val lines = protocol.sendRead(toHex(request))
+        val lines = protocol.sendRead(request)
         val payload = parsePayload(lines) ?: throw NoResponseError(did)
 
         return when (payload[0].toInt() and 0xFF) {

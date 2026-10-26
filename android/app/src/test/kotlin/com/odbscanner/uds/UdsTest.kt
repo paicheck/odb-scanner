@@ -59,7 +59,7 @@ class UdsTest {
     private fun read(did: Int, lines: List<String>): ByteArray {
         val request = "22" + did.toString(16).uppercase().padStart(4, '0')
         val port = ScriptedPort(mapOf(request to lines))
-        val protocol = Elm327Protocol(port, resetDelayMs = 0)
+        val protocol = Elm327Protocol(port, ReadOnlyGuardImpl(guard()), resetDelayMs = 0)
         protocol.init()
         return Uds.readDid(protocol, ReadOnlyGuardImpl(guard()), ecu(), did)
     }
