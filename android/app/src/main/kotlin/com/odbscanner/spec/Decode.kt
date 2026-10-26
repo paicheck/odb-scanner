@@ -98,7 +98,7 @@ object Decoder {
                     "index" to uint(record, width, width),
                 )
             }
-            "gear" -> record.getOrNull(1)?.toInt()?.let { gearCode(it) }
+            "gear" -> gearCode(record)
             "vin" -> record.toString(Charsets.US_ASCII).trim('\u0000', ' ')
             else -> null
         }
@@ -129,11 +129,22 @@ object Decoder {
         return if (u and 0x8000_0000L != 0L) u - 0x1_0000_0000L else u
     }
 
-    private fun gearCode(code: Int): String = when (code) {
-        0x08 -> "P"
-        0x04 -> "R"
-        0x10 -> "N"
-        0x20 -> "D"
-        else -> "raw $code"
+    private fun gearCode(record: ByteArray): String {
+        // Mirrors decoders/meb.py::_gear raw[1] exactly: data byte 1, read
+        // unsigned (a Kotlin Byte is signed), and the whole record in the
+        // fallback. The two maps were once different -- 0x04/0x10/0x20 here vs
+        // 5/6/7/8/12 in Python -- so a parked car could report "raw 12" for B.
+        val fallback = "raw " + record.joinToString("") {
+            "%02X".format(it.toInt() and 0xFF)
+        }
+        if (record.size <= 1) return fallback
+        return when (record[1].toInt() and 0xFF) {
+            8 -> "P"
+            7 -> "R"
+            6 -> "N"
+            5 -> "D"
+            12 -> "B"
+            else -> fallback
+        }
     }
 }

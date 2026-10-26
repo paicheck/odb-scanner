@@ -1,0 +1,1528 @@
+{
+  "lab": [
+    {
+      "db": "data/real_car.db",
+      "vehicles": [
+        {
+          "vehicle_id": 2,
+          "counts": {
+            "FAIL": 5,
+            "INDETERMINATE": 142,
+            "PASS": 142
+          },
+          "fails": [
+            {
+              "key": "bat_charging_voltage",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 0,
+              "issues": [
+                "known-invalid decode: profile declares signed; unsigned 0xFFFF became 2,047.97 V. Sentinel/negative values now decode to None, not a voltage"
+              ],
+              "verification": "invalid",
+              "evidence_kind": "vehicle_response",
+              "examples": []
+            },
+            {
+              "key": "co2_content_interior",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 0,
+              "issues": [
+                "known-invalid decode: 40/40 responses are 03FE; byte 1 x 100 gives 25,400 ppm, whole u16 gives 1,022 ppm, and 03FE is also the BMS not-fitted sentinel. 03FE now decodes to None; a non-sentinel 16-bit scale is still unconfirmed"
+              ],
+              "verification": "invalid",
+              "evidence_kind": "vehicle_response",
+              "examples": []
+            },
+            {
+              "key": "dc_dc_converter_reserved_current",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 0,
+              "issues": [
+                "known-invalid decode: bytes 3-4 are the complement of the real current in bytes 1-2 (sum ~0x0508), not an independent current; raw-only, use dcdc_gw_current"
+              ],
+              "verification": "invalid",
+              "evidence_kind": "vehicle_response",
+              "examples": []
+            },
+            {
+              "key": "odometer_2",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 0,
+              "issues": [
+                "known-invalid decode: 10 km/LSB secondary distance counter, not the odometer: x10 matched a ~10.5 km drive and x100 is refuted. It equals the main odometer minus 99,869-99,871 km on this car, consistent with a BMS reset at ~99,870 km; service history is unavailable, so the absolute zero is still not usable for distance/SoH"
+              ],
+              "verification": "invalid",
+              "evidence_kind": "vehicle_response",
+              "examples": []
+            },
+            {
+              "key": "windshield_temperature",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 0,
+              "issues": [
+                "known-invalid decode: the profile u16[0:2] x 15.625 - 39.5 read ~483476 degC; the decoder now uses byte 0 x 0.1 (11-13 degC, ~1.17 degC MAE versus outside) but windshield-vs-ambient still needs a cold-soak/defroster test"
+              ],
+              "verification": "invalid",
+              "evidence_kind": "vehicle_response",
+              "examples": []
+            }
+          ],
+          "indeterminate": 142,
+          "pass": 142
+        }
+      ]
+    },
+    {
+      "db": "data/odb_scanner.db",
+      "vehicles": [
+        {
+          "vehicle_id": 1,
+          "counts": {
+            "FAIL": 30,
+            "INDETERMINATE": 103,
+            "PASS": 156
+          },
+          "fails": [
+            {
+              "key": "actual_mechanical_torque_calculated",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "3D8BEA4E",
+                  "stored": 1576.5,
+                  "redecoded": 0.06831799447536469,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "BBAD907B",
+                  "stored": 4805.5,
+                  "redecoded": -0.005296764429658651,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "3CF4D1FE",
+                  "stored": 1561.4,
+                  "redecoded": 0.029885288327932358,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "3D9748E0",
+                  "stored": 1577.7,
+                  "redecoded": 0.07386946678161621,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "BCE27D47",
+                  "stored": 4836.4,
+                  "redecoded": -0.027647627517580986,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "actual_mechanical_torque_commanded_value",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "actual_possible_maximum_torque",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "3D55BC68",
+                  "stored": 1571.1,
+                  "redecoded": 0.052181631326675415,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "BBA8615D",
+                  "stored": 4805.0,
+                  "redecoded": -0.005138559732586145,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "3D450ADA",
+                  "stored": 1569.5,
+                  "redecoded": 0.04810605198144913,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "3D7E98B2",
+                  "stored": 1575.2,
+                  "redecoded": 0.062157340347766876,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "BBA127F1",
+                  "stored": 4804.3,
+                  "redecoded": -0.004918091464787722,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "actual_possible_minimum_torque",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "17/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "BD8D1BD9",
+                  "stored": 4853.5,
+                  "redecoded": -0.06890077143907547,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "3C0A4C81",
+                  "stored": 1538.0,
+                  "redecoded": 0.008441091515123844,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "3CC9F13C",
+                  "stored": 1557.1,
+                  "redecoded": 0.024651162326335907,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "3B3513B6",
+                  "stored": 1516.7,
+                  "redecoded": 0.0027630156837403774,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "3C0C66B6",
+                  "stored": 1538.2,
+                  "redecoded": 0.00856941007077694,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "bat_charging_voltage",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 18,
+              "issues": [
+                "known-invalid decode: profile declares signed; unsigned 0xFFFF became 2,047.97 V. Sentinel/negative values now decode to None, not a voltage"
+              ],
+              "verification": "invalid",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-24T14:30:06+00:00",
+                  "raw": "0001",
+                  "value": 0.0312499784501336,
+                  "why": "profile declares signed; unsigned 0xFFFF became 2,047.97 V. Sentinel/negative values now decode to None, not a voltage"
+                },
+                {
+                  "ts": "2026-10-24T14:26:09+00:00",
+                  "raw": "0000",
+                  "value": 0.0,
+                  "why": "profile declares signed; unsigned 0xFFFF became 2,047.97 V. Sentinel/negative values now decode to None, not a voltage"
+                },
+                {
+                  "ts": "2026-10-24T14:22:15+00:00",
+                  "raw": "0000",
+                  "value": 0.0,
+                  "why": "profile declares signed; unsigned 0xFFFF became 2,047.97 V. Sentinel/negative values now decode to None, not a voltage"
+                },
+                {
+                  "ts": "2026-10-22T20:37:55+00:00",
+                  "raw": "0008",
+                  "value": 0.2499998276010688,
+                  "why": "profile declares signed; unsigned 0xFFFF became 2,047.97 V. Sentinel/negative values now decode to None, not a voltage"
+                },
+                {
+                  "ts": "2026-10-21T20:45:37+00:00",
+                  "raw": "0000",
+                  "value": 0.0,
+                  "why": "profile declares signed; unsigned 0xFFFF became 2,047.97 V. Sentinel/negative values now decode to None, not a voltage"
+                }
+              ]
+            },
+            {
+              "key": "co2_content_interior",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 0,
+              "issues": [
+                "known-invalid decode: 40/40 responses are 03FE; byte 1 x 100 gives 25,400 ppm, whole u16 gives 1,022 ppm, and 03FE is also the BMS not-fitted sentinel. 03FE now decodes to None; a non-sentinel 16-bit scale is still unconfirmed"
+              ],
+              "verification": "invalid",
+              "evidence_kind": "vehicle_response",
+              "examples": []
+            },
+            {
+              "key": "dc_dc_converter_reserved_current",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "known-invalid decode: bytes 3-4 are the complement of the real current in bytes 1-2 (sum ~0x0508), not an independent current; raw-only, use dcdc_gw_current"
+              ],
+              "verification": "invalid",
+              "evidence_kind": "vehicle_response",
+              "examples": []
+            },
+            {
+              "key": "dc_link_current",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "dc_link_voltage",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "43D897DE",
+                  "stored": 1737.8,
+                  "redecoded": 433.18646240234375,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "43D89A0A",
+                  "stored": 1737.8,
+                  "redecoded": 433.20343017578125,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "43D8A679",
+                  "stored": 1737.8,
+                  "redecoded": 433.3005676269531,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "43D89CED",
+                  "stored": 1737.8,
+                  "redecoded": 433.2259826660156,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "43D8D8DE",
+                  "stored": 1737.8,
+                  "redecoded": 433.69427490234375,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "dc_link_voltage_reserve",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "43D8B85D",
+                  "stored": 1737.8,
+                  "redecoded": 433.4403381347656,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "43D8C6CB",
+                  "stored": 1737.8,
+                  "redecoded": 433.5530700683594,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "43D91872",
+                  "stored": 1737.9,
+                  "redecoded": 434.19097900390625,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "43D8CC4F",
+                  "stored": 1737.8,
+                  "redecoded": 433.5961608886719,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "43D914CA",
+                  "stored": 1737.9,
+                  "redecoded": 434.16241455078125,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "desired_link_voltage",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "00000000",
+                  "stored": 1.0,
+                  "redecoded": 0.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "dmcm_stator_voltage_d_direction_actual_value",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "342BFA77",
+                  "stored": 1336.5,
+                  "redecoded": 1.6016734605273086e-07,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "35AFD19D",
+                  "stored": 1375.3,
+                  "redecoded": 1.3099521538606496e-06,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "B615EA80",
+                  "stored": 4662.3,
+                  "redecoded": -2.233922714367509e-06,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "B603CF0F",
+                  "stored": 4660.5,
+                  "redecoded": -1.9641045128082624e-06,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "B6349358",
+                  "stored": 4665.4,
+                  "redecoded": -2.690785549930297e-06,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "dmcm_stator_voltage_d_direction_commanded_value",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "AFABECFB",
+                  "stored": 4498.1,
+                  "redecoded": -3.127310355122148e-10,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "B111613C",
+                  "stored": 4533.9,
+                  "redecoded": -2.1155548424189874e-09,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "B0BEF09F",
+                  "stored": 4525.6,
+                  "redecoded": -1.3892708095042394e-09,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "B25BB56E",
+                  "stored": 4566.9,
+                  "redecoded": -1.2788730074930754e-08,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "B2255858",
+                  "stored": 4561.5,
+                  "redecoded": -9.62435109386206e-09,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "dmcm_stator_voltage_q_direction_actual_value",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "B9AB8454",
+                  "stored": 4754.1,
+                  "redecoded": -0.0003271425375714898,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "39788437",
+                  "stored": 1472.2,
+                  "redecoded": 0.00023700376914348453,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "BA190532",
+                  "stored": 4765.1,
+                  "redecoded": -0.0005837260978296399,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "B9C07F7B",
+                  "stored": 4756.2,
+                  "redecoded": -0.0003671607410069555,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "3A809BD8",
+                  "stored": 1498.6,
+                  "redecoded": 0.0009812070056796074,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "dmcm_stator_voltage_q_direction_commanded_value",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "393EE4EE",
+                  "stored": 1466.4,
+                  "redecoded": 0.00018205094966106117,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "3A009799",
+                  "stored": 1485.8,
+                  "redecoded": 0.0004905402311123908,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "B95C722D",
+                  "stored": 4746.2,
+                  "redecoded": -0.00021023368753958493,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "BA1C9C99",
+                  "stored": 4765.4,
+                  "redecoded": -0.00059742626035586,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "B969B117",
+                  "stored": 4747.5,
+                  "redecoded": -0.00022286582679953426,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "ecu_pcb_temperature_1",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "41A7DEC4",
+                  "stored": 1681.7,
+                  "redecoded": 20.98377227783203,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "41A62EBC",
+                  "stored": 1681.6,
+                  "redecoded": 20.77281951904297,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "41A412B2",
+                  "stored": 1681.4,
+                  "redecoded": 20.50912857055664,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "41A154A4",
+                  "stored": 1681.1,
+                  "redecoded": 20.16632843017578,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "419CB08D",
+                  "stored": 1680.6,
+                  "redecoded": 19.586206436157227,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "ecu_pcb_temperature_2",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "41B30CFB",
+                  "stored": 1682.9,
+                  "redecoded": 22.381338119506836,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "41B04EEE",
+                  "stored": 1682.6,
+                  "redecoded": 22.03853988647461,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "41ADFCE2",
+                  "stored": 1682.3,
+                  "redecoded": 21.748477935791016,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "41AA9CD2",
+                  "stored": 1682.0,
+                  "redecoded": 21.32657241821289,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "41A73CC1",
+                  "stored": 1681.7,
+                  "redecoded": 20.904664993286133,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "electric_drive_inflow_coolant_temperature",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "41816D8E",
+                  "stored": 1677.9,
+                  "redecoded": 16.17849349975586,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "41805EA7",
+                  "stored": 1677.8,
+                  "redecoded": 16.04621696472168,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "417C8928",
+                  "stored": 1677.4,
+                  "redecoded": 15.783485412597656,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "417852E0",
+                  "stored": 1677.0,
+                  "redecoded": 15.520233154296875,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "417A6BD1",
+                  "stored": 1677.2,
+                  "redecoded": 15.651322364807129,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "electric_drive_motor_speed_rad_sec",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "39BC5DC0",
+                  "stored": 1479.0,
+                  "redecoded": 0.0003592800348997116,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "B92A6B60",
+                  "stored": 4741.2,
+                  "redecoded": -0.00016252463683485985,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "3B5E1934",
+                  "stored": 1520.8,
+                  "redecoded": 0.0033889533951878548,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "BC1A1100",
+                  "stored": 4816.4,
+                  "redecoded": -0.009403467178344727,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "3B7D72EA",
+                  "stored": 1523.9,
+                  "redecoded": 0.0038673230446875095,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "inverter_power_loss_phase_u",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "3D989726",
+                  "stored": 103341035.2,
+                  "redecoded": 0.07450704276561737,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "3E8C003E",
+                  "stored": 104936250.4,
+                  "redecoded": 0.27343934774398804,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "3F01F94C",
+                  "stored": 105709397.4,
+                  "redecoded": 0.5077102184295654,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "3DCB519A",
+                  "stored": 103673488.4,
+                  "redecoded": 0.09927673637866974,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "3E23B3CF",
+                  "stored": 104252719.3,
+                  "redecoded": 0.159865602850914,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "inverter_power_loss_phase_v",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "3EFB3E5A",
+                  "stored": 105665290.0,
+                  "redecoded": 0.4907100796699524,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "3F8172EB",
+                  "stored": 106544818.1,
+                  "redecoded": 1.0113195180892944,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "3F29E7B8",
+                  "stored": 105971091.4,
+                  "redecoded": 0.6636919975280762,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "3F13C191",
+                  "stored": 105825935.5,
+                  "redecoded": 0.5771723389625549,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "3F404097",
+                  "stored": 106117545.7,
+                  "redecoded": 0.7509855628013611,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "inverter_power_loss_phase_w",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "3F691DBF",
+                  "stored": 106385351.3,
+                  "redecoded": 0.9106101393699646,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "3F6921FB",
+                  "stored": 106385459.7,
+                  "redecoded": 0.9106747508049011,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "3EF4CE6D",
+                  "stored": 105623103.1,
+                  "redecoded": 0.47813740372657776,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "3F3CE9DA",
+                  "stored": 106095664.4,
+                  "redecoded": 0.7379432916641235,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "3F7F7752",
+                  "stored": 106531823.6,
+                  "redecoded": 0.9979144334793091,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "motor_maximum_current",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "44164000",
+                  "stored": 1744.0,
+                  "redecoded": 601.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "44164000",
+                  "stored": 1744.0,
+                  "redecoded": 601.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "4415E000",
+                  "stored": 1743.9,
+                  "redecoded": 599.5,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "4415C000",
+                  "stored": 1743.9,
+                  "redecoded": 599.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "44164000",
+                  "stored": 1744.0,
+                  "redecoded": 601.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "motor_minimum_current",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "C3260000",
+                  "stored": 4996.8,
+                  "redecoded": -166.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "C3260000",
+                  "stored": 4996.8,
+                  "redecoded": -166.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "C3250000",
+                  "stored": 4996.7,
+                  "redecoded": -165.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "C3250000",
+                  "stored": 4996.7,
+                  "redecoded": -165.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "C3240000",
+                  "stored": 4996.6,
+                  "redecoded": -164.0,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "odometer_2",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 19,
+              "issues": [
+                "known-invalid decode: 10 km/LSB secondary distance counter, not the odometer: x10 matched a ~10.5 km drive and x100 is refuted. It equals the main odometer minus 99,869-99,871 km on this car, consistent with a BMS reset at ~99,870 km; service history is unavailable, so the absolute zero is still not usable for distance/SoH"
+              ],
+              "verification": "invalid",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-24T14:30:06+00:00",
+                  "raw": "0005045B00000000",
+                  "value": 11150.0,
+                  "why": "10 km/LSB secondary distance counter, not the odometer: x10 matched a ~10.5 km drive and x100 is refuted. It equals the main odometer minus 99,869-99,871 km on this car, consistent with a BMS reset at ~99,870 km; service history is unavailable, so the absolute zero is still not usable for distance/SoH"
+                },
+                {
+                  "ts": "2026-10-24T14:26:09+00:00",
+                  "raw": "0005045B00000000",
+                  "value": 11150.0,
+                  "why": "10 km/LSB secondary distance counter, not the odometer: x10 matched a ~10.5 km drive and x100 is refuted. It equals the main odometer minus 99,869-99,871 km on this car, consistent with a BMS reset at ~99,870 km; service history is unavailable, so the absolute zero is still not usable for distance/SoH"
+                },
+                {
+                  "ts": "2026-10-24T14:22:15+00:00",
+                  "raw": "0005045B00000000",
+                  "value": 11150.0,
+                  "why": "10 km/LSB secondary distance counter, not the odometer: x10 matched a ~10.5 km drive and x100 is refuted. It equals the main odometer minus 99,869-99,871 km on this car, consistent with a BMS reset at ~99,870 km; service history is unavailable, so the absolute zero is still not usable for distance/SoH"
+                },
+                {
+                  "ts": "2026-10-22T20:37:55+00:00",
+                  "raw": "0005045B00000000",
+                  "value": 11150.0,
+                  "why": "10 km/LSB secondary distance counter, not the odometer: x10 matched a ~10.5 km drive and x100 is refuted. It equals the main odometer minus 99,869-99,871 km on this car, consistent with a BMS reset at ~99,870 km; service history is unavailable, so the absolute zero is still not usable for distance/SoH"
+                },
+                {
+                  "ts": "2026-10-21T20:45:37+00:00",
+                  "raw": "0005045B00000000",
+                  "value": 11150.0,
+                  "why": "10 km/LSB secondary distance counter, not the odometer: x10 matched a ~10.5 km drive and x100 is refuted. It equals the main odometer minus 99,869-99,871 km on this car, consistent with a BMS reset at ~99,870 km; service history is unavailable, so the absolute zero is still not usable for distance/SoH"
+                }
+              ]
+            },
+            {
+              "key": "rotor_temperature_model",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "415656F0",
+                  "stored": 1673.6,
+                  "redecoded": 13.396224975585938,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "41547496",
+                  "stored": 1673.4,
+                  "redecoded": 13.278463363647461,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "4152B6D1",
+                  "stored": 1673.2,
+                  "redecoded": 13.169632911682129,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "415103C6",
+                  "stored": 1673.1,
+                  "redecoded": 13.063421249389648,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "414F66A1",
+                  "stored": 1672.9,
+                  "redecoded": 12.962555885314941,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "stator_electrical_frequency_rad_sec",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "3B53FBC4",
+                  "stored": 1519.7,
+                  "redecoded": 0.003234610892832279,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "BADE2330",
+                  "stored": 4784.8,
+                  "redecoded": -0.001694774255156517,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "BB92ABC8",
+                  "stored": 4802.8,
+                  "redecoded": -0.004476044327020645,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "BC2E5ECC",
+                  "stored": 4818.4,
+                  "redecoded": -0.010642718523740768,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "3C806A44",
+                  "stored": 1549.8,
+                  "redecoded": 0.01567567139863968,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "stator_temperature",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "16/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "415C90A2",
+                  "stored": 1674.2,
+                  "redecoded": 13.785310745239258,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "415AC1CF",
+                  "stored": 1674.0,
+                  "redecoded": 13.672316551208496,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "4156B074",
+                  "stored": 1673.6,
+                  "redecoded": 13.418079376220703,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "41546DEC",
+                  "stored": 1673.4,
+                  "redecoded": 13.276836395263672,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "41529F19",
+                  "stored": 1673.2,
+                  "redecoded": 13.16384220123291,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "torque_calculated_from_measured_currents",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "15/25 rows where the stored value differs from a fresh decode of the same bytes"
+              ],
+              "verification": "provisional",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "3BB6B0F3",
+                  "stored": 1528.6,
+                  "redecoded": 0.005575293209403753,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "3CD842CE",
+                  "stored": 1557.6,
+                  "redecoded": 0.026399042457342148,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "3B0CE9FF",
+                  "stored": 1511.6,
+                  "redecoded": 0.0021501777227967978,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:21:16+00:00",
+                  "raw": "3D1634D6",
+                  "stored": 1563.8,
+                  "redecoded": 0.036671482026576996,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:17:33+00:00",
+                  "raw": "3C89F555",
+                  "stored": 1549.7,
+                  "redecoded": 0.01684061624109745,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            },
+            {
+              "key": "windshield_temperature",
+              "verdict": "FAIL",
+              "method": "offline_replay",
+              "n_samples": 25,
+              "issues": [
+                "known-invalid decode: the profile u16[0:2] x 15.625 - 39.5 read ~483476 degC; the decoder now uses byte 0 x 0.1 (11-13 degC, ~1.17 degC MAE versus outside) but windshield-vs-ambient still needs a cold-soak/defroster test"
+              ],
+              "verification": "invalid",
+              "evidence_kind": "vehicle_response",
+              "examples": [
+                {
+                  "ts": "2026-10-21T20:49:29+00:00",
+                  "raw": "729FD1988D",
+                  "stored": 458444.875,
+                  "redecoded": 11.4,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-21T20:45:37+00:00",
+                  "raw": "719F619091",
+                  "stored": 454444.875,
+                  "redecoded": 11.3,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:32:25+00:00",
+                  "raw": "7A2321C07D",
+                  "stored": 488507.375,
+                  "redecoded": 12.200000000000001,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:28:42+00:00",
+                  "raw": "7A62C1BC81",
+                  "stored": 489491.75,
+                  "redecoded": 12.200000000000001,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                },
+                {
+                  "ts": "2026-10-19T19:24:59+00:00",
+                  "raw": "79E261B886",
+                  "stored": 487491.75,
+                  "redecoded": 12.100000000000001,
+                  "why": "stored value differs from a fresh decode of the same bytes -- the decoder changed after the row was written"
+                }
+              ]
+            }
+          ],
+          "indeterminate": 103,
+          "pass": 156
+        }
+      ]
+    }
+  ],
+  "integrity": [
+    {
+      "db": "data/real_car.db",
+      "columns": [
+        "id",
+        "vehicle_id",
+        "ts",
+        "ecu",
+        "service",
+        "pid",
+        "key",
+        "value",
+        "text_value",
+        "unit",
+        "provenance",
+        "decoding_method",
+        "doc_status",
+        "raw_response",
+        "success",
+        "error"
+      ],
+      "rows": 4057,
+      "success_rows": 923,
+      "success_without_raw": 3,
+      "success_keys_without_raw": [
+        "cell_delta_mv"
+      ],
+      "json_valued_keys": [
+        "coolant_temps"
+      ]
+    },
+    {
+      "db": "data/odb_scanner.db",
+      "columns": [
+        "id",
+        "vehicle_id",
+        "ts",
+        "ecu",
+        "service",
+        "pid",
+        "key",
+        "value",
+        "text_value",
+        "unit",
+        "provenance",
+        "decoding_method",
+        "doc_status",
+        "raw_response",
+        "success",
+        "error"
+      ],
+      "rows": 20798,
+      "success_rows": 11067,
+      "success_without_raw": 150,
+      "success_keys_without_raw": [
+        "aux_12v_power_w",
+        "battery_temp_spread_c",
+        "cell_delta_mv",
+        "cell_soc_spread_pct",
+        "dcdc_gw_power_kw",
+        "dcdc_power_kw",
+        "pack_power_kw",
+        "soh_pct"
+      ],
+      "json_valued_keys": [
+        "cell_soc_max",
+        "cell_soc_min",
+        "coolant_temps",
+        "energy_counters"
+      ]
+    }
+  ]
+}

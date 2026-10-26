@@ -83,6 +83,19 @@ def test_data_kinds_are_classified():
     assert quality_for("meb", "aux_12v_power_w").data_kind.value == "derived"
 
 
+def test_did_backed_cell_voltage_sum_is_not_labelled_derived():
+    """0x1E3C is read from the car, not calculated in collector.py.
+
+    `cell_voltage_sum` was in _DERIVED_KEYS, so the decoder lab skipped it and
+    no stored payload for a real DID was ever structurally checked.  The plural
+    `cells_voltage_sum` is the imported Car Scanner alias and stays derived.
+    """
+    from decoders.quality import DataKind, quality_for
+
+    assert quality_for("meb", "cell_voltage_sum").data_kind is DataKind.NUMERIC
+    assert quality_for("meb", "cells_voltage_sum").data_kind is DataKind.DERIVED
+
+
 def test_low_voltage_power_is_derived_from_voltage_and_current(repo):
     """The 12 V / DC-DC power the low-voltage investigation needed is recorded
     as a CALCULATED row, not presented as a DID reading."""

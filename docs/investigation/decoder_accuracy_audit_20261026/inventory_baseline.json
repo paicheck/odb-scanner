@@ -1,0 +1,832 @@
+﻿{
+  "counts": {
+    "specs": 287,
+    "unique_ecu_did": 253,
+    "distinct_dids": 253,
+    "decoded_specs": 286,
+    "raw_only_specs": 1,
+    "catalogue_keys": 287,
+    "catalogue_with_layout": 43,
+    "catalogue_without_layout": 244,
+    "catalogue_without_unit": 12,
+    "catalogue_not_verified": 285,
+    "catalogue_verified": 2,
+    "derived_keys": 10,
+    "invalid_keys": [
+      "bat_charging_voltage",
+      "co2_content_interior",
+      "dc_dc_converter_reserved_current",
+      "odometer_2",
+      "windshield_temperature"
+    ],
+    "excluded_keys": 5,
+    "uncertain_scale_keys": 41,
+    "overlay_entries": 50,
+    "dids_with_multiple_keys": {
+      "0x028C": [
+        "soc_abs",
+        "soc_normal"
+      ],
+      "0x15D1": [
+        "hv_em_power_limit",
+        "hv_em_nv_power_limitation",
+        "nv_energy_requirement",
+        "hv_em_hv_battery_energy_information"
+      ],
+      "0x1E0E": [
+        "bat_temp_max",
+        "bat_temp_max_sensor"
+      ],
+      "0x1E0F": [
+        "bat_temp_min",
+        "bat_temp_min_sensor"
+      ],
+      "0x1E33": [
+        "cell_voltage_max",
+        "cell_voltage_max_cell"
+      ],
+      "0x1E34": [
+        "cell_voltage_min",
+        "cell_voltage_min_cell"
+      ],
+      "0x2431": [
+        "number_of_visible_satellites",
+        "number_of_tracked_satellites"
+      ],
+      "0x261E": [
+        "fresh_air_recirculation_flap_actual_value_steps",
+        "fresh_air_recirculation_flap_actual_value"
+      ],
+      "0x27C4": [
+        "windshield_temperature",
+        "cabin_humidity"
+      ],
+      "0x2A53": [
+        "dcdc_gw_voltage",
+        "dcdc_gw_current",
+        "dc_dc_converter_reserved_current"
+      ],
+      "0x2AB4": [
+        "range_internal",
+        "average_battery_consumption_internal_value"
+      ],
+      "0x2AB7": [
+        "road_avg_consumption_0",
+        "road_avg_consumption_1",
+        "road_avg_consumption_2",
+        "road_avg_consumption_3",
+        "road_avg_consumption_4",
+        "road_avg_consumption_5",
+        "road_avg_consumption_6"
+      ],
+      "0x2AF7": [
+        "aux_12v_voltage",
+        "aux_12v_current",
+        "aux_12v_soc",
+        "aux_12v_temp",
+        "aux_12v_sensor_temp",
+        "aux_12v_total_charge",
+        "aux_12v_total_discharge",
+        "aux_12v_aging_capacity",
+        "aux_12v_aging_power",
+        "aux_12v_adapted_capacity"
+      ],
+      "0x4EEF": [
+        "a_c_refrigerant_pressure_and_temperature_sensor_1_pressure",
+        "a_c_refrigerant_pressure_and_temperature_sensor_1_temperature",
+        "a_c_refrigerant_pressure_and_temperature_sensor_1_interior_temperature"
+      ],
+      "0x7448": [
+        "charge_mode",
+        "op_mode",
+        "charge_port_normal",
+        "charge_port_rapid"
+      ]
+    },
+    "validation_problems": []
+  },
+  "conflicting_units": [
+    {
+      "ecu": "bat_mgmt",
+      "did": "0x1E33",
+      "keys": [
+        "cell_voltage_max",
+        "cell_voltage_max_cell"
+      ],
+      "units": [
+        "",
+        "V"
+      ]
+    },
+    {
+      "ecu": "bat_mgmt",
+      "did": "0x1E34",
+      "keys": [
+        "cell_voltage_min",
+        "cell_voltage_min_cell"
+      ],
+      "units": [
+        "",
+        "V"
+      ]
+    },
+    {
+      "ecu": "bat_mgmt",
+      "did": "0x1E0E",
+      "keys": [
+        "bat_temp_max",
+        "bat_temp_max_sensor"
+      ],
+      "units": [
+        "",
+        "degC"
+      ]
+    },
+    {
+      "ecu": "bat_mgmt",
+      "did": "0x1E0F",
+      "keys": [
+        "bat_temp_min",
+        "bat_temp_min_sensor"
+      ],
+      "units": [
+        "",
+        "degC"
+      ]
+    },
+    {
+      "ecu": "bat_mgmt",
+      "did": "0x7448",
+      "keys": [
+        "charge_mode",
+        "op_mode",
+        "charge_port_normal",
+        "charge_port_rapid"
+      ],
+      "units": [
+        "",
+        "code"
+      ]
+    },
+    {
+      "ecu": "energy",
+      "did": "0x2AF7",
+      "keys": [
+        "aux_12v_voltage",
+        "aux_12v_current",
+        "aux_12v_soc",
+        "aux_12v_temp",
+        "aux_12v_sensor_temp",
+        "aux_12v_total_charge",
+        "aux_12v_total_discharge",
+        "aux_12v_aging_capacity",
+        "aux_12v_aging_power",
+        "aux_12v_adapted_capacity"
+      ],
+      "units": [
+        "%",
+        "A",
+        "Ah",
+        "V",
+        "degC"
+      ]
+    },
+    {
+      "ecu": "energy",
+      "did": "0x2AB4",
+      "keys": [
+        "range_internal",
+        "average_battery_consumption_internal_value"
+      ],
+      "units": [
+        "A",
+        "km"
+      ]
+    },
+    {
+      "ecu": "energy",
+      "did": "0x2A53",
+      "keys": [
+        "dcdc_gw_voltage",
+        "dcdc_gw_current",
+        "dc_dc_converter_reserved_current"
+      ],
+      "units": [
+        "",
+        "A",
+        "V"
+      ]
+    },
+    {
+      "ecu": "energy",
+      "did": "0x15D1",
+      "keys": [
+        "hv_em_power_limit",
+        "hv_em_nv_power_limitation",
+        "nv_energy_requirement",
+        "hv_em_hv_battery_energy_information"
+      ],
+      "units": [
+        "W",
+        "Wh"
+      ]
+    },
+    {
+      "ecu": "climate",
+      "did": "0x261E",
+      "keys": [
+        "fresh_air_recirculation_flap_actual_value_steps",
+        "fresh_air_recirculation_flap_actual_value"
+      ],
+      "units": [
+        "",
+        "%"
+      ]
+    },
+    {
+      "ecu": "climate",
+      "did": "0x27C4",
+      "keys": [
+        "windshield_temperature",
+        "cabin_humidity"
+      ],
+      "units": [
+        "%",
+        "degC"
+      ]
+    },
+    {
+      "ecu": "climate",
+      "did": "0x4EEF",
+      "keys": [
+        "a_c_refrigerant_pressure_and_temperature_sensor_1_pressure",
+        "a_c_refrigerant_pressure_and_temperature_sensor_1_temperature",
+        "a_c_refrigerant_pressure_and_temperature_sensor_1_interior_temperature"
+      ],
+      "units": [
+        "bar",
+        "degC"
+      ]
+    }
+  ],
+  "sentinel_rules": [
+    {
+      "file": "decoders/meb.py",
+      "rule": "cell slot unused marker",
+      "occurrences": 1
+    },
+    {
+      "file": "decoders/meb.py",
+      "rule": "cell temperature absent guard",
+      "occurrences": 1
+    },
+    {
+      "file": "decoders/meb.py",
+      "rule": "0x1E39 sentinel",
+      "occurrences": 1
+    },
+    {
+      "file": "decoders/meb.py",
+      "rule": "CO2 not-fitted sentinel",
+      "occurrences": 1
+    },
+    {
+      "file": "decoders/meb.py",
+      "rule": "negative invalid (0x1E39)",
+      "occurrences": 1
+    },
+    {
+      "file": "android/app/src/main/kotlin/com/odbscanner/spec/Decode.kt",
+      "rule": "cell slot unused marker",
+      "occurrences": 1
+    },
+    {
+      "file": "android/app/src/main/kotlin/com/odbscanner/spec/Decode.kt",
+      "rule": "cell temperature absent guard",
+      "occurrences": 1
+    }
+  ],
+  "databases": {
+    "data/odb_scanner.db": {
+      "tables": [
+        "meta",
+        "vehicles",
+        "ecus",
+        "measurements",
+        "battery_measurements",
+        "cell_voltages",
+        "charging_sessions",
+        "charging_samples",
+        "dtcs",
+        "dtc_occurrences",
+        "diagnostic_events",
+        "analysis_results",
+        "llm_reports",
+        "anomalies",
+        "tx_log",
+        "measurement_definitions",
+        "definition_evidence",
+        "captured_frames",
+        "definition_evaluations",
+        "unsupported_dids",
+        "baselines",
+        "investigations",
+        "investigation_evidence"
+      ],
+      "measurements_columns": [
+        "id",
+        "vehicle_id",
+        "ts",
+        "ecu",
+        "service",
+        "pid",
+        "key",
+        "value",
+        "text_value",
+        "unit",
+        "provenance",
+        "decoding_method",
+        "doc_status",
+        "raw_response",
+        "success",
+        "error"
+      ],
+      "measurements_rows": 20798,
+      "distinct_keys": 329,
+      "success_rows": 11067,
+      "rows_with_raw": 10917,
+      "provenance": {
+        "calculated": 112,
+        "estimated": 38,
+        "imported: Car Scanner CSV": 266,
+        "reported": 20382
+      }
+    },
+    "data/real_car.db": {
+      "tables": [
+        "meta",
+        "vehicles",
+        "ecus",
+        "measurements",
+        "battery_measurements",
+        "cell_voltages",
+        "charging_sessions",
+        "charging_samples",
+        "dtcs",
+        "dtc_occurrences",
+        "diagnostic_events",
+        "analysis_results",
+        "llm_reports",
+        "anomalies",
+        "tx_log",
+        "measurement_definitions",
+        "definition_evidence",
+        "captured_frames",
+        "definition_evaluations"
+      ],
+      "measurements_columns": [
+        "id",
+        "vehicle_id",
+        "ts",
+        "ecu",
+        "service",
+        "pid",
+        "key",
+        "value",
+        "text_value",
+        "unit",
+        "provenance",
+        "decoding_method",
+        "doc_status",
+        "raw_response",
+        "success",
+        "error"
+      ],
+      "measurements_rows": 4057,
+      "distinct_keys": 219,
+      "success_rows": 923,
+      "rows_with_raw": 920,
+      "provenance": {
+        "calculated": 3,
+        "imported: Car Scanner CSV": 266,
+        "reported": 3788
+      }
+    },
+    "data/observations.db": {
+      "tables": [
+        "meta",
+        "vehicle",
+        "module",
+        "signal",
+        "data_source",
+        "observation",
+        "cell_voltage",
+        "battery_snapshot",
+        "charging_session",
+        "charging_sample",
+        "dtc",
+        "dtc_occurrence",
+        "diagnostic_event",
+        "tx_log",
+        "frame",
+        "capture",
+        "capture_record",
+        "expectation_check"
+      ]
+    }
+  },
+  "gear": {
+    "rows": [
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-18T13:53:18+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-18T13:57:05+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-18T14:00:48+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-18T14:04:31+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-18T14:08:13+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-18T14:12:09+00:00"
+      ],
+      [
+        "000C",
+        "B",
+        null,
+        "2026-10-18T18:15:05+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-18T18:19:05+00:00"
+      ],
+      [
+        "000C",
+        "B",
+        null,
+        "2026-10-18T18:22:50+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-18T18:26:30+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-19T19:10:00+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-19T19:13:50+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-19T19:17:33+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-19T19:21:16+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-19T19:24:59+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-19T19:28:42+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-19T19:32:25+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-21T20:45:37+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-21T20:49:29+00:00"
+      ],
+      [
+        "0008",
+        "P",
+        null,
+        "2026-10-22T20:37:55+00:00"
+      ]
+    ]
+  },
+  "test_coverage": {
+    "tested": 78,
+    "untested": 209,
+    "untested_keys": [
+      "a_c_compressor_load",
+      "a_c_compressor_power_consumption_actual_value",
+      "a_c_compressor_speed",
+      "a_c_refrigerant_pressure_and_temperature_sensor_1_interior_temperature",
+      "a_c_refrigerant_pressure_and_temperature_sensor_1_pressure",
+      "a_c_refrigerant_pressure_and_temperature_sensor_1_temperature",
+      "acceleration",
+      "actual_mechanical_torque_calculated",
+      "actual_mechanical_torque_commanded_value",
+      "actual_possible_maximum_torque",
+      "actual_possible_minimum_torque",
+      "additional_high_voltage_consumers_total_current",
+      "air_polution_level_0_clean_air",
+      "aux_12v_adapted_capacity",
+      "aux_12v_aging_capacity",
+      "aux_12v_aging_power",
+      "aux_12v_sensor_temp",
+      "aux_12v_soc",
+      "aux_12v_temp",
+      "aux_12v_total_charge",
+      "aux_12v_total_discharge",
+      "average_battery_consumption_internal_value",
+      "bat_v_after_contacts_2",
+      "battery_soc_normalized",
+      "brake_booster_pressure",
+      "cabin_humidity",
+      "cell_t_01",
+      "cell_t_02",
+      "cell_t_03",
+      "cell_t_04",
+      "cell_t_05",
+      "cell_t_06",
+      "cell_t_07",
+      "cell_t_08",
+      "cell_t_09",
+      "cell_t_10",
+      "cell_t_11",
+      "cell_t_12",
+      "cell_t_13",
+      "cell_t_14",
+      "cell_t_15",
+      "cell_t_16",
+      "cell_t_17",
+      "cell_v_004",
+      "cell_v_005",
+      "cell_v_006",
+      "cell_v_007",
+      "cell_v_008",
+      "cell_v_009",
+      "cell_v_010",
+      "cell_v_011",
+      "cell_v_012",
+      "cell_v_013",
+      "cell_v_014",
+      "cell_v_015",
+      "cell_v_016",
+      "cell_v_017",
+      "cell_v_018",
+      "cell_v_019",
+      "cell_v_020",
+      "cell_v_021",
+      "cell_v_022",
+      "cell_v_023",
+      "cell_v_024",
+      "cell_v_025",
+      "cell_v_026",
+      "cell_v_027",
+      "cell_v_028",
+      "cell_v_029",
+      "cell_v_030",
+      "cell_v_031",
+      "cell_v_032",
+      "cell_v_033",
+      "cell_v_034",
+      "cell_v_035",
+      "cell_v_036",
+      "cell_v_037",
+      "cell_v_038",
+      "cell_v_039",
+      "cell_v_040",
+      "cell_v_041",
+      "cell_v_042",
+      "cell_v_043",
+      "cell_v_044",
+      "cell_v_045",
+      "cell_v_046",
+      "cell_v_047",
+      "cell_v_048",
+      "cell_v_049",
+      "cell_v_050",
+      "cell_v_051",
+      "cell_v_052",
+      "cell_v_053",
+      "cell_v_054",
+      "cell_v_055",
+      "cell_v_056",
+      "cell_v_057",
+      "cell_v_058",
+      "cell_v_059",
+      "cell_v_060",
+      "cell_v_061",
+      "cell_v_062",
+      "cell_v_063",
+      "cell_v_064",
+      "cell_v_065",
+      "cell_v_066",
+      "cell_v_067",
+      "cell_v_068",
+      "cell_v_069",
+      "cell_v_070",
+      "cell_v_071",
+      "cell_v_072",
+      "cell_v_073",
+      "cell_v_074",
+      "cell_v_075",
+      "cell_v_076",
+      "cell_v_077",
+      "cell_v_078",
+      "cell_v_079",
+      "cell_v_080",
+      "cell_v_081",
+      "cell_v_082",
+      "cell_v_083",
+      "cell_v_084",
+      "cell_v_085",
+      "cell_v_086",
+      "cell_v_087",
+      "cell_v_088",
+      "cell_v_089",
+      "cell_v_090",
+      "cell_v_091",
+      "cell_v_092",
+      "cell_v_093",
+      "cell_v_094",
+      "cell_v_095",
+      "cell_v_096",
+      "cell_v_097",
+      "cell_v_098",
+      "cell_v_099",
+      "cell_v_100",
+      "cell_v_101",
+      "cell_v_102",
+      "cell_v_103",
+      "cell_v_104",
+      "charge_port_normal",
+      "charge_port_rapid",
+      "coolant_circulation_pump_duty",
+      "coolant_pump",
+      "dc_dc_converter_coolant_temperature_calculated",
+      "dc_link_current",
+      "dc_link_voltage_reserve",
+      "desired_link_voltage",
+      "dmcm_stator_voltage_d_direction_actual_value",
+      "dmcm_stator_voltage_d_direction_commanded_value",
+      "dmcm_stator_voltage_q_direction_actual_value",
+      "dmcm_stator_voltage_q_direction_commanded_value",
+      "driver_requested_torque",
+      "ecu_pcb_temperature_2",
+      "electric_drive_motor_speed_rad_sec",
+      "fresh_air_recirculation_flap_actual_value",
+      "fresh_air_recirculation_flap_actual_value_steps",
+      "fresh_air_recirculation_flap_specified_value_steps",
+      "fresh_air_recirculation_flap_stop_for_fresh_air",
+      "fresh_air_recirculation_flap_stop_for_recirculated_air",
+      "front_drive_actual_torque",
+      "front_left_deflector_temperature",
+      "front_left_temperature_flap_actual_value",
+      "front_rear_torque_difference",
+      "front_right_deflector_temperature",
+      "front_right_temperature_flap_actual_value",
+      "hv_battery_current",
+      "hv_em_hv_battery_energy_information",
+      "hv_em_nv_power_limitation",
+      "hv_em_power_limit",
+      "hv_output_voltage",
+      "inverter_power_loss_phase_v",
+      "inverter_power_loss_phase_w",
+      "max_charge_voltage",
+      "min_discharge_voltage",
+      "motor_rpm_2",
+      "number_of_tracked_satellites",
+      "number_of_visible_satellites",
+      "nv_energy_requirement",
+      "outside_temperature_calculated_from_cabin",
+      "power_electronics_voltage_in_traction_mode",
+      "ptc_medium_temp_1",
+      "ptc_medium_temp_2",
+      "radiator_fan_commanded_duty",
+      "radiator_fan_duty",
+      "range_can",
+      "range_displayed",
+      "range_internal",
+      "rated_torque_on_the_front_axle",
+      "rear_deflector_temperature",
+      "rear_drive_actual_torque",
+      "refrigerant_pressure",
+      "road_avg_consumption_0",
+      "road_avg_consumption_1",
+      "road_avg_consumption_2",
+      "road_avg_consumption_3",
+      "road_avg_consumption_4",
+      "road_avg_consumption_5",
+      "road_avg_consumption_6",
+      "rotor_temperature_model",
+      "stator_electrical_frequency_rad_sec",
+      "steering_wheel_angle",
+      "temperature_after_evaporator",
+      "torque_calculated_from_measured_currents",
+      "total_distance_travelled_lifetime"
+    ]
+  },
+  "ast": {
+    "functions": 50,
+    "names": [
+      "_soc_bms",
+      "_soc_display",
+      "_pack_voltage",
+      "_pack_current",
+      "_cell_voltage",
+      "_cell_voltage_scaled",
+      "_battery_temp",
+      "_temp_scaled",
+      "_cell_temp",
+      "_energy_counters",
+      "_u16_over",
+      "_charge_mode",
+      "_op_mode",
+      "_byte",
+      "_byte_over",
+      "_coolant_temps",
+      "_amb_12v",
+      "_aux_12v_current",
+      "_outdoor_temp",
+      "_cabin_temp",
+      "_cs_field",
+      "_cs_scaled",
+      "_cs_field_decoder",
+      "_bat_charging_voltage",
+      "_windshield_temperature",
+      "_co2_content_interior",
+      "_f32be",
+      "_index_u16",
+      "_ascii",
+      "_bit2",
+      "_bit3",
+      "_cs_pair_decoder",
+      "_cs_note",
+      "_max_energy_wh",
+      "_energy_content_wh_refuted",
+      "_energy_max_wh",
+      "_energy_content_wh",
+      "_odometer_km",
+      "_gear",
+      "_vin",
+      "register_abs",
+      "register_meb",
+      "_register_profile_fields",
+      "_register_bms",
+      "_register_cells",
+      "_register_modules",
+      "_register_profile_extras",
+      "s32",
+      "decode",
+      "decode"
+    ]
+  }
+}

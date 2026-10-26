@@ -1,0 +1,568 @@
+{
+  "spec": {
+    "measurements": 289,
+    "decode_kinds": {
+      "scalar": 118,
+      "special": 167,
+      "null": 4
+    },
+    "special_usage": {
+      "float32": 25,
+      "ascii": 1,
+      "pair": 2,
+      "cell_temp": 24,
+      "cell_voltage": 108,
+      "charge_mode": 1,
+      "bit2": 1,
+      "bit3": 1,
+      "coolant_temps": 1,
+      "energy_counters": 1,
+      "gear": 1,
+      "vin": 1
+    },
+    "decode_null": [
+      "bat_charging_voltage",
+      "co2_content_interior",
+      "dc_dc_converter_reserved_current",
+      "windshield_temperature"
+    ],
+    "scalars": 118,
+    "scalar_byte_orders": {
+      "big-endian": 118
+    },
+    "scalar_lengths": {
+      "1": 41,
+      "2": 67,
+      "4": 8,
+      "3": 2
+    },
+    "scalar_signed": {
+      "false": 103,
+      "true": 15
+    },
+    "scale_shapes": [
+      {
+        "scale": 1,
+        "divisor": 1,
+        "addend": 0,
+        "count": 30
+      },
+      {
+        "scale": 0.1,
+        "divisor": 1,
+        "addend": 0,
+        "count": 22
+      },
+      {
+        "scale": 0.5,
+        "divisor": 1,
+        "addend": 0,
+        "count": 7
+      },
+      {
+        "scale": 0.01,
+        "divisor": 1,
+        "addend": 0,
+        "count": 5
+      },
+      {
+        "scale": 50,
+        "divisor": 1,
+        "addend": 0,
+        "count": 5
+      },
+      {
+        "scale": 0.333,
+        "divisor": 1,
+        "addend": 0,
+        "count": 4
+      },
+      {
+        "scale": 0.001,
+        "divisor": 1,
+        "addend": 0,
+        "count": 3
+      },
+      {
+        "scale": 1.0,
+        "divisor": 1.0,
+        "addend": -50.0,
+        "count": 3
+      },
+      {
+        "scale": 0.2,
+        "divisor": 1.0,
+        "addend": 0.0,
+        "count": 3
+      },
+      {
+        "scale": 10,
+        "divisor": 100,
+        "addend": -40,
+        "count": 2
+      },
+      {
+        "scale": 1.0,
+        "divisor": 1.0,
+        "addend": -40.0,
+        "count": 2
+      },
+      {
+        "scale": 0.015625,
+        "divisor": 1.0,
+        "addend": 0.0,
+        "count": 2
+      },
+      {
+        "scale": 0.0312499784501336,
+        "divisor": 1.0,
+        "addend": 0.0,
+        "count": 2
+      },
+      {
+        "scale": 0.000244140625,
+        "divisor": 1.0,
+        "addend": 0.0,
+        "count": 2
+      },
+      {
+        "scale": 0.5,
+        "divisor": 1.0,
+        "addend": -50.0,
+        "count": 2
+      },
+      {
+        "scale": 0.01,
+        "divisor": 1.0,
+        "addend": -1500.0,
+        "count": 2
+      },
+      {
+        "scale": 0.25,
+        "divisor": 1.0,
+        "addend": 0.0,
+        "count": 2
+      },
+      {
+        "scale": 0.4,
+        "divisor": 1,
+        "addend": 0,
+        "count": 2
+      },
+      {
+        "scale": 100,
+        "divisor": 1,
+        "addend": 0,
+        "count": 1
+      },
+      {
+        "scale": 88,
+        "divisor": 10000,
+        "addend": 0,
+        "count": 1
+      },
+      {
+        "scale": 0.001,
+        "divisor": 1.0,
+        "addend": 4.0,
+        "count": 1
+      },
+      {
+        "scale": 2.0,
+        "divisor": 10.0,
+        "addend": 0.0,
+        "count": 1
+      },
+      {
+        "scale": 1.0,
+        "divisor": 5.0,
+        "addend": 0.0,
+        "count": 1
+      },
+      {
+        "scale": 0.5,
+        "divisor": 1.0,
+        "addend": -1000.0,
+        "count": 1
+      },
+      {
+        "scale": 0.5,
+        "divisor": 1.0,
+        "addend": -40.0,
+        "count": 1
+      },
+      {
+        "scale": 244140.625,
+        "divisor": 1000000000.0,
+        "addend": 0.0,
+        "count": 1
+      },
+      {
+        "scale": 0.0625,
+        "divisor": 1.0,
+        "addend": 0.0,
+        "count": 1
+      },
+      {
+        "scale": 1.0,
+        "divisor": 1.0,
+        "addend": -511.0,
+        "count": 1
+      },
+      {
+        "scale": 0.001953125,
+        "divisor": 1.0,
+        "addend": 0.0,
+        "count": 1
+      },
+      {
+        "scale": 25.0,
+        "divisor": 1.0,
+        "addend": 0.0,
+        "count": 1
+      },
+      {
+        "scale": 0.2,
+        "divisor": 1.0,
+        "addend": -40.0,
+        "count": 1
+      },
+      {
+        "scale": 1.0,
+        "divisor": 4.0,
+        "addend": 0.0,
+        "count": 1
+      },
+      {
+        "scale": 10.0,
+        "divisor": 1.0,
+        "addend": 0.0,
+        "count": 1
+      },
+      {
+        "scale": 1,
+        "divisor": 2.55,
+        "addend": 0,
+        "count": 1
+      },
+      {
+        "scale": 0.4425,
+        "divisor": 1.0,
+        "addend": -6.1947,
+        "count": 1
+      },
+      {
+        "scale": 0.1,
+        "divisor": 1.0,
+        "addend": -55.0,
+        "count": 1
+      }
+    ]
+  },
+  "numeric": {
+    "odd_scale_constants": {
+      "scale=0.0312499784501336": [
+        "bat_v_after_contacts_2",
+        "bat_v_before_contacts"
+      ]
+    },
+    "range_disjoint_from_encoding": [],
+    "range_extends_beyond_encoding": [
+      {
+        "key": "aux_12v_voltage",
+        "encoding": [
+          4.0,
+          69.535
+        ],
+        "plausible": [
+          0.0,
+          16.0
+        ]
+      },
+      {
+        "key": "bat_temp_max",
+        "encoding": [
+          0.0,
+          1023.984375
+        ],
+        "plausible": [
+          -30.0,
+          70.0
+        ]
+      },
+      {
+        "key": "bat_temp_min",
+        "encoding": [
+          0.0,
+          1023.984375
+        ],
+        "plausible": [
+          -30.0,
+          70.0
+        ]
+      },
+      {
+        "key": "odometer_2",
+        "encoding": [
+          0.0,
+          655350.0
+        ],
+        "plausible": [
+          0.0,
+          2000000.0
+        ]
+      },
+      {
+        "key": "speed_kmh",
+        "encoding": [
+          0.0,
+          255.0
+        ],
+        "plausible": [
+          0.0,
+          260.0
+        ]
+      }
+    ],
+    "unit_name_review": [
+      {
+        "key": "a_c_compressor_power_consumption_actual_value",
+        "name": "A/C compressor power consumption: actual value",
+        "unit": "W",
+        "word": "consumption"
+      },
+      {
+        "key": "a_c_refrigerant_pressure_and_temperature_sensor_1_interior_temperature",
+        "name": "A/C refrigerant pressure and temperature sensor 1: Interior Temperature",
+        "unit": "degC",
+        "word": "pressure"
+      },
+      {
+        "key": "a_c_refrigerant_pressure_and_temperature_sensor_1_pressure",
+        "name": "A/C refrigerant pressure and temperature sensor 1: Pressure",
+        "unit": "bar",
+        "word": "temperature"
+      },
+      {
+        "key": "a_c_refrigerant_pressure_and_temperature_sensor_1_temperature",
+        "name": "A/C refrigerant pressure and temperature sensor 1: Temperature",
+        "unit": "degC",
+        "word": "pressure"
+      },
+      {
+        "key": "additional_high_voltage_consumers_total_current",
+        "name": "Additional high-voltage consumers, total current",
+        "unit": "A",
+        "word": "voltage"
+      },
+      {
+        "key": "average_battery_consumption_internal_value",
+        "name": "Average battery consumption (internal value)",
+        "unit": "A",
+        "word": "consumption"
+      },
+      {
+        "key": "bat_internal_resistance_raw",
+        "name": "HV battery internal resistance (raw)",
+        "unit": "",
+        "word": "resistance"
+      },
+      {
+        "key": "bat_temp_max_sensor",
+        "name": "Temperature sensor with max reading",
+        "unit": "",
+        "word": "temperature"
+      },
+      {
+        "key": "bat_temp_min_sensor",
+        "name": "Temperature sensor with min reading",
+        "unit": "",
+        "word": "temperature"
+      },
+      {
+        "key": "cell_voltage_max_cell",
+        "name": "Cell number with max voltage",
+        "unit": "",
+        "word": "voltage"
+      },
+      {
+        "key": "cell_voltage_min_cell",
+        "name": "Cell number with min voltage",
+        "unit": "",
+        "word": "voltage"
+      },
+      {
+        "key": "dc_dc_converter_reserved_current",
+        "name": "DC-DC current complement (not an independent current)",
+        "unit": "",
+        "word": "current"
+      },
+      {
+        "key": "electric_drive_motor_speed_rad_sec",
+        "name": "Electric drive motor speed (rad/sec)",
+        "unit": "",
+        "word": "speed"
+      },
+      {
+        "key": "front_left_temperature_flap_actual_value",
+        "name": "Front left temperature flap actual value",
+        "unit": "%",
+        "word": "temperature"
+      },
+      {
+        "key": "front_right_temperature_flap_actual_value",
+        "name": "Front right temperature flap actual value",
+        "unit": "%",
+        "word": "temperature"
+      },
+      {
+        "key": "power_electronics_voltage_in_traction_mode",
+        "name": "Power electronics: voltage in traction mode",
+        "unit": "V",
+        "word": "power"
+      },
+      {
+        "key": "torque_calculated_from_measured_currents",
+        "name": "Torque, calculated from measured currents",
+        "unit": "Nm",
+        "word": "current"
+      }
+    ],
+    "scalar_without_unit": [
+      "air_polution_level_0_clean_air",
+      "bat_internal_resistance_raw",
+      "bat_temp_max_sensor",
+      "bat_temp_min_sensor",
+      "cell_voltage_max_cell",
+      "cell_voltage_min_cell",
+      "fresh_air_recirculation_flap_actual_value_steps",
+      "fresh_air_recirculation_flap_specified_value_steps",
+      "fresh_air_recirculation_flap_stop_for_fresh_air",
+      "fresh_air_recirculation_flap_stop_for_recirculated_air",
+      "number_of_tracked_satellites",
+      "number_of_visible_satellites"
+    ]
+  },
+  "parity": {
+    "spec_keys": 289,
+    "asset_keys": 289,
+    "keys_only_in_spec": [],
+    "keys_only_in_asset": [],
+    "measurements_differing": [],
+    "python_special_names": [
+      "ascii",
+      "bit2",
+      "bit3",
+      "cell_temp",
+      "cell_voltage",
+      "charge_mode",
+      "coolant_temps",
+      "energy_counters",
+      "float32",
+      "gear",
+      "pair",
+      "vin"
+    ],
+    "kotlin_special_cases": [
+      "ascii",
+      "bit2",
+      "bit3",
+      "cell_temp",
+      "cell_voltage",
+      "charge_mode",
+      "coolant_temps",
+      "energy_counters",
+      "float32",
+      "gear",
+      "pair",
+      "vin"
+    ],
+    "special_names_without_kotlin_case": [],
+    "decode_null_keys": [
+      "bat_charging_voltage",
+      "co2_content_interior",
+      "dc_dc_converter_reserved_current",
+      "windshield_temperature"
+    ],
+    "gear_mapping_kotlin": "private fun gearCode(record: ByteArray): String {\n        // Mirrors decoders/meb.py::_gear raw[1] exactly: data byte 1, read\n        // unsigned (a Kotlin Byte is signed), and the whole record in the\n        // fallback. The two maps were once different -- 0x04/0x10/0x20 here vs\n        // 5/6/7/8/12 in Python -- so a parked car could report \"raw 12\" for B.\n        val fallback = \"raw \" + record.joinToString(\"\") {\n            \"%02X\".format(it.toInt() and 0xFF)\n        }\n        if (record.size <= 1) return fallback\n        return when (record[1].toInt() and 0xFF) {\n            8 -> \"P\"\n            7 -> \"R\"\n            6 -> \"N\"\n            5 -> \"D\"\n            12 -> \"B\"\n            else -> fallback\n        }\n    }"
+  },
+  "catalogue": {
+    "keys": 289,
+    "with_layout": 45,
+    "without_layout": 244
+  },
+  "databases": [
+    {
+      "db": "data/real_car.db",
+      "rows": 4057,
+      "success_rows": 923,
+      "success_rows_with_raw": 920,
+      "raw_lengths_bytes": {
+        "1": 110,
+        "2": 529,
+        "4": 15
+      },
+      "non_hex_vehicle_raw": [],
+      "non_hex_vehicle_raw_count": 0,
+      "imported_carscanner_text_rows": 266,
+      "odd_length_hex": [],
+      "odd_length_hex_count": 0,
+      "duplicate_key_ts_with_different_raw": [],
+      "text_valued_keys": [
+        {
+          "key": "coolant_temps",
+          "n": 3
+        }
+      ],
+      "failed_rows_with_raw": 0
+    },
+    {
+      "db": "data/odb_scanner.db",
+      "rows": 20798,
+      "success_rows": 11067,
+      "success_rows_with_raw": 10917,
+      "raw_lengths_bytes": {
+        "1": 1109,
+        "2": 6426,
+        "3": 283,
+        "4": 1076,
+        "5": 283,
+        "7": 50,
+        "8": 61,
+        "10": 308,
+        "11": 49,
+        "15": 24,
+        "16": 62,
+        "17": 22,
+        "20": 191,
+        "23": 428,
+        "28": 279
+      },
+      "non_hex_vehicle_raw": [],
+      "non_hex_vehicle_raw_count": 0,
+      "imported_carscanner_text_rows": 266,
+      "odd_length_hex": [],
+      "odd_length_hex_count": 0,
+      "duplicate_key_ts_with_different_raw": [],
+      "text_valued_keys": [
+        {
+          "key": "cell_soc_max",
+          "n": 19
+        },
+        {
+          "key": "cell_soc_min",
+          "n": 19
+        },
+        {
+          "key": "coolant_temps",
+          "n": 52
+        },
+        {
+          "key": "energy_counters",
+          "n": 35
+        }
+      ],
+      "failed_rows_with_raw": 0
+    }
+  ]
+}

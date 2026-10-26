@@ -353,13 +353,21 @@ def observations_from_measurements(rows: Iterable, source_label: str,
         ts = r["ts"] if hasattr(r, "keys") else ""
         if value is None:
             continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            # `measurements.value` is TEXT and also holds non-numeric decodes
+            # (`gear` is "P", `vin` is a VIN string). An Observation is numeric
+            # by contract, so a text row cannot constrain a scale; skip it
+            # instead of aborting the whole replay on the first one.
+            continue
         kind = (EvidenceKind.THIRD_PARTY_REPORTED_VALUE
                 if method == "carscanner-export"
                 else EvidenceKind.VEHICLE_RESPONSE)
         hexed = raw if (raw and raw_is_hex
                         and all(c in "0123456789abcdefABCDEF" for c in raw)) else None
         out.append(Observation(key=r["key"] if hasattr(r, "keys") else "",
-                               value=float(value), evidence_kind=kind,
+                               value=numeric, evidence_kind=kind,
                                source=f"{source_label} {ts}".strip(),
                                ts=ts, raw_hex=hexed))
     return out

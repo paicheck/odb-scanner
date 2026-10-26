@@ -104,6 +104,22 @@ class DecodeTest {
     }
 
     @Test
+    fun gearMatchesPython() {
+        // decoders/meb.py::_gear reads data byte 1 and maps
+        // 8=P, 7=R, 6=N, 5=D, 12=B. The old Kotlin map (0x04/0x10/0x20) was
+        // incompatible: captured 000C (B) decoded as "raw 12".
+        assertEquals("P", decode("gear", "0008"))
+        assertEquals("R", decode("gear", "0007"))
+        assertEquals("N", decode("gear", "0006"))
+        assertEquals("D", decode("gear", "0005"))
+        assertEquals("B", decode("gear", "000C"))
+        // byte 0 is ignored, and byte 1 is unsigned even when its top bit is set
+        assertEquals("P", decode("gear", "FF08"))
+        assertEquals("raw 1234FF09", decode("gear", "1234FF09"))
+        assertEquals("raw 09", decode("gear", "09"))
+    }
+
+    @Test
     fun scalarArithmeticMatchesTheRecipe() {
         val recipe = Decode.Scalar(
             offset = 0, length = 2, signed = false,

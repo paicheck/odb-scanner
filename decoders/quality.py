@@ -128,7 +128,7 @@ _JSON_KEYS = {
 
 _DERIVED_KEYS = {"cell_delta_mv", "cell_soc_spread_pct",
                  "battery_temp_spread_c", "pack_power_kw", "soh_pct",
-                 "cell_voltage_sum", "cells_voltage_sum",
+                 "cells_voltage_sum",
                  "aux_12v_power_w", "dcdc_power_kw", "dcdc_gw_power_kw"}
 
 

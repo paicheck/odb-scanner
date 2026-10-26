@@ -438,6 +438,31 @@ def test_none_valued_rows_are_dropped():
     assert observations_from_measurements(rows, "db") == []
 
 
+def test_text_valued_rows_are_skipped_not_crashed_on():
+    """`measurements.value` is TEXT: gear is "P", VIN is a string.
+
+    Observation.value is a float, so a text row cannot constrain a scale. It
+    must be skipped -- historically `float("P")` aborted the whole replay, so
+    tools/replay_validate.py never finished on real_car.db.
+    """
+    class Row(dict):
+        pass
+
+    rows = [
+        Row(key="gear", ts="2026-10-12T10:00:00+00:00", value="P",
+            raw_response="0008", decoding_method="builtin"),
+        Row(key="vin", ts="2026-10-12T10:00:01+00:00", value="WVWZZZ1KZMW000001",
+            raw_response="5756575A5A5A314B5A4D57303030303031",
+            decoding_method="builtin"),
+        Row(key="pack_voltage", ts="2026-10-12T10:00:02+00:00", value=357.0625,
+            raw_response="5944", decoding_method="builtin"),
+    ]
+    obs = observations_from_measurements(rows, "db")
+    assert [o.key for o in obs] == ["pack_voltage"]
+    assert obs[0].value == 357.0625
+    assert obs[0].raw_hex == "5944"
+
+
 # ------------------------------------------------------------------- export
 def test_csv_export_has_a_row_per_result_and_the_expected_columns():
     obs = [_cs(41325.0)]
