@@ -3,10 +3,16 @@
 The database is replaced by a fake store, so these run with no MySQL and no
 Docker. What is covered is the API's own contract: authentication, the
 duplicate count, batch limits, and all-or-nothing rejection of a bad batch.
+
+Every test that takes the `client` fixture runs twice: against the FastAPI app
+(cloud/api.py, the Docker/VPS deploy) and against the plain-WSGI app
+(cloud/wsgi.py, the cPanel deploy). The two implement the same HTTP contract
+separately, so this is what keeps them from drifting apart.
 """
 import os
 import sys
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cloud.api import MAX_BATCH, IngestRequest, create_app  # noqa: E402
 from cloud.client import build_payload  # noqa: E402
+from cloud.wsgi import make_application  # noqa: E402
 
 TOKEN = "test-token-value"
 
@@ -49,9 +56,12 @@ def store():
     return FakeStore()
 
 
-@pytest.fixture()
-def client(store):
-    return TestClient(create_app(store=store, token=TOKEN))
+@pytest.fixture(params=["fastapi", "wsgi"])
+def client(request, store):
+    if request.param == "fastapi":
+        return TestClient(create_app(store=store, token=TOKEN))
+    transport = httpx.WSGITransport(app=make_application(store=store, token=TOKEN))
+    return httpx.Client(transport=transport, base_url="http://testserver")
 
 
 def measurement(**over):
@@ -200,6 +210,37 @@ def test_android_style_timestamps_and_extra_fields_are_accepted(client):
                                           source="android")),
                     headers=auth_header())
     assert r.status_code == 200
+
+
+@pytest.mark.parametrize("field,limit", [("source_id", 120), ("kind", 16),
+                                         ("label", 200)])
+def test_every_overlong_source_field_is_refused(client, store, field, limit):
+    payload = body(measurement())
+    payload["source"][field] = "x" * (limit + 1)
+    r = client.post("/ingest/measurements", json=payload, headers=auth_header())
+    assert r.status_code == 422
+    assert store.sources_touched == [] and store.seen == set()
+
+
+@pytest.mark.parametrize("payload", [
+    {"measurements": [measurement()]},                       # no source
+    {"source": "python:host", "measurements": [measurement()]},
+    {"source": {"kind": "python"}, "measurements": [measurement()]},
+    {"source": {"source_id": 7}, "measurements": [measurement()]},
+    {"source": {"source_id": "a"}, "measurements": "not a list"},
+    {"source": {"source_id": "a"}, "measurements": ["not an object"]},
+    [1, 2, 3],
+])
+def test_a_malformed_body_is_a_422_not_a_500(client, store, payload):
+    r = client.post("/ingest/measurements", json=payload, headers=auth_header())
+    assert r.status_code == 422
+    assert store.seen == set()
+
+
+def test_invalid_json_is_a_422(client):
+    r = client.post("/ingest/measurements", content=b"{not json",
+                    headers={**auth_header(), "Content-Type": "application/json"})
+    assert r.status_code == 422
 
 
 def test_the_python_clients_payload_validates_against_the_api_model():
