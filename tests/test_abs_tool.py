@@ -12,6 +12,7 @@ from diagnostic.connection import DiagnosticConnection
 from diagnostic.uds import (
     ABS_APPROVAL_TOKEN,
     NegativeResponseError,
+    ProtocolError,
     ReadOnlyViolationError,
     validate_approved_extended_session,
     validate_request,
@@ -182,3 +183,44 @@ def test_live_requires_the_explicit_session_change_opt_in(capsys):
     err = capsys.readouterr().err
     assert "REFUSED" in err
     assert "No adapter access attempted" in err
+
+
+# -- the approved session must stay physical ---------------------------------
+# Falling back to functional addressing sent 1003 on the broadcast header,
+# asking every ECU to change session, and the first 0x50 from ANY ECU was
+# reported as the ABS module's answer.
+
+class _NoMebTransport(_RecordingTransport):
+    meb_addressing = False
+
+
+class _RefusingTransport(_RecordingTransport):
+    def set_module(self, tx, rx=None):
+        self.module = (tx, rx)
+        return tx is None          # the module setup is refused
+
+
+def test_approved_session_refused_without_meb_addressing():
+    t = _NoMebTransport(["7E8065003001E01E5"])
+    with pytest.raises(ReadOnlyViolationError):
+        DiagnosticConnection(t).approved_extended_session(
+            ABS, approval=ABS_APPROVAL_TOKEN, purpose="test")
+    assert "1003" not in t.written
+
+
+def test_approved_session_refused_when_module_setup_is_refused():
+    t = _RefusingTransport(["7E8065003001E01E5"])
+    logged = []
+    conn = DiagnosticConnection(t, tx_logger=lambda **kw: logged.append(kw))
+    with pytest.raises(ReadOnlyViolationError):
+        conn.approved_extended_session(ABS, approval=ABS_APPROVAL_TOKEN,
+                                       purpose="test")
+    assert "1003" not in t.written
+    assert not any(e.get("payload") == "1003" for e in logged)
+
+
+def test_approved_session_rejects_a_foreign_responder():
+    t = _RecordingTransport(["7E8065003001E01E5"])      # 0x7E8, not ABS 0x77D
+    with pytest.raises(ProtocolError):
+        DiagnosticConnection(t).approved_extended_session(
+            ABS, approval=ABS_APPROVAL_TOKEN, purpose="test")

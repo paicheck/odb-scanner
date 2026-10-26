@@ -37,7 +37,8 @@ class DiagnosticConnection:
 
     # -- core transmit -------------------------------------------------------
     def _transmit(self, hexcmd: str, ecu: ECUSpec | None, purpose: str,
-                  *, validator=uds.validate_request) -> list[str]:
+                  *, validator=uds.validate_request,
+                  require_module: bool = False) -> list[str]:
         # The single choke point for every request that reaches the vehicle.
         # validate_request raises ReadOnlyViolationError for anything off the
         # read-only allow-list, so no caller -- including the ones that build
@@ -66,7 +67,21 @@ class DiagnosticConnection:
         target = getattr(ecu, "tx29", None) if ecu is not None else None
         meb = bool(getattr(self.t, "meb_addressing", False)) and target is not None
         wire = hexcmd
-        if callable(set_module) and getattr(self.t, "meb_addressing", False):
+        if require_module:
+            # A request that must reach ONE module (the approved 0x10 0x03)
+            # may not fall back to functional addressing: on the broadcast
+            # header it asks every ECU on the bus to change session. Refuse
+            # before anything is logged or sent.
+            if not (callable(set_module) and meb
+                    and getattr(ecu, "rx29", None) is not None
+                    and set_module(target, ecu.rx29)):
+                raise uds.ReadOnlyViolationError(
+                    f"Refusing {hexcmd}: it may only be sent physically to "
+                    f"{ecu.key if ecu else 'a module'}, and physical "
+                    "addressing to it could not be confirmed (no MEB "
+                    "addressing, no module address, or the adapter refused "
+                    "the setup). It is never sent functionally.")
+        elif callable(set_module) and getattr(self.t, "meb_addressing", False):
             if not (meb and set_module(target, getattr(ecu, "rx29", None))):
                 set_module(None)
         # Record what goes on the wire, not merely what was asked for. tx_log is
@@ -95,6 +110,13 @@ class DiagnosticConnection:
         `validate_request` path still refuses 0x10 0x03; the narrow validator
         accepted here refuses every other request. The caller must supply the
         same token the CLI required, and the TX/RX pair is written to tx_log.
+
+        Physical only. The request is refused unless the transport confirms
+        it is addressed to `ecu` alone (require_module), so it can never go
+        out on the functional header and switch every ECU's session. And only
+        `ecu`'s own response id counts as an answer: any other responder means
+        the request was not physical after all, which is an error rather than
+        a success to report under the ABS module's name.
         """
         lines = self._transmit(
             "1003", ecu,
@@ -102,10 +124,17 @@ class DiagnosticConnection:
             validator=lambda command: uds.validate_approved_extended_session(
                 command, approval
             ),
+            require_module=True,
         )
-        for payload in uds.payloads_by_source(lines).values():
+        expected = getattr(ecu, "rx29", None)
+        for src, payload in uds.payloads_by_source(lines).items():
             if not payload:
                 continue
+            if src != expected:
+                raise ProtocolError(
+                    f"0x10 0x03 answered by {uds.source_label(src)}, not by "
+                    f"{ecu.key} ({uds.source_label(expected)}): the request "
+                    "did not stay physical. Treating it as a failure.")
             if payload[0] == 0x50:
                 if len(payload) < 2 or payload[1] != 0x03:
                     raise ProtocolError(
