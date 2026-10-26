@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from collector import Collector
 from config import load_config
 from database.repository import Repository
+from diagnostic.ecus import ECUS
 
 
 async def main() -> int:
@@ -51,9 +52,14 @@ async def main() -> int:
         for did, name in ((0x2AB2, "hv_energy_max"), (0x2AB8, "hv_energy_content")):
             print(f"\nReading DID 0x{did:04X} ({name})...")
             try:
-                # Use the transport directly with the gateway sequence already set
-                # We need to send the raw UDS request through the transport
-                lines = c.conn.t.send_command(f"22{did:04X}")
+                # Through the connection, not transport.send_command(): that
+                # is what validates the request and writes it to tx_log. The
+                # energy spec carries the same 0x710/0x77A module address the
+                # sequence above set, so the addressing is unchanged.
+                lines = c.conn.request_lines(
+                    f"22{did:04X}", ECUS["energy"],
+                    f"UDS 0x22 DID 0x{did:04X} ({name}) from the gateway, "
+                    "Car Scanner 11-bit sequence (read-only)")
                 print(f"  RAW LINES: {lines}")
 
                 from diagnostic import uds

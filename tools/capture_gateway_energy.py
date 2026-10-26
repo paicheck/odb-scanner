@@ -44,7 +44,10 @@ async def main() -> int:
         for did in (0x2AB2, 0x2AB8):
             print(f"\nReading DID 0x{did:04X}...")
             try:
-                resp = await c.conn.read_did(gate, did)
+                # read_did is synchronous. This line used to `await` it, so
+                # the request went out and the TypeError raised on the
+                # returned bytes threw the answer away.
+                resp = c.conn.read_did(gate, did)
             except Exception as e:
                 print(f"  ERROR: {e}")
                 continue

@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from config import load_config
+from diagnostic import uds
 from diagnostic.elm327 import PINNED_PROTOCOL, Elm327Transport
 from diagnostic.uds import (
     payloads_by_source,
@@ -110,8 +111,59 @@ def finish() -> None:
     _current = None
 
 
+# Whether ATCAF0 (no ISO-TP formatting) is in effect. Under it the adapter
+# sends typed bytes as-is, so the first byte is the PCI byte the ECU parses,
+# and what must be validated is the payload inside the frame, not the line.
+_raw_framing = False
+
+
+def check_raw(cmd: str) -> str:
+    """Validate one line this harness is about to send; return the wire form.
+
+    The experiments configure the adapter by hand (ATCAF0, flow control,
+    headers), so this cannot be a plain validate_request: under ATCAF0 a
+    validated "0104" is a single frame whose PCI byte is 0x01 and whose
+    payload is 0x04 -- mode 04, clear emissions DTCs. So AT lines are
+    tracked for framing, flow-control data must be a flow-control frame, and
+    a vehicle line is validated as what the ECU will actually receive.
+    Raises ReadOnlyViolationError rather than sending.
+    """
+    global _raw_framing
+    norm = "".join(cmd.split()).upper()
+    if norm.startswith("AT"):
+        if norm == "ATCAF0":
+            _raw_framing = True
+        elif norm in ("ATCAF1", "ATZ", "ATD", "ATWS"):
+            _raw_framing = False
+        elif norm.startswith("ATFCSD") and not norm[6:7] == "3":
+            raise uds.ReadOnlyViolationError(
+                f"Refusing {cmd!r}: flow-control data must be a flow-control "
+                "frame (first nibble 3); anything else is an arbitrary "
+                "message the adapter would send on the next multi-frame read.")
+        return cmd
+    wire = uds.canonical_request(cmd)
+    if _raw_framing:
+        frame = bytes.fromhex(wire)
+        length = frame[0] & 0x0F if frame else 0
+        if (not frame or frame[0] >> 4 != 0 or not 1 <= length <= 7
+                or len(frame) < 1 + length):
+            raise uds.ReadOnlyViolationError(
+                f"Refusing {cmd!r} under ATCAF0: not a single ISO-TP frame, so "
+                "the bytes the ECU receives cannot be validated.")
+        uds.validate_request(frame[1:1 + length])
+    else:
+        uds.validate_request(wire)
+    return wire
+
+
 def send_raw(t: Elm327Transport, cmd: str, desc: str = "") -> list[str]:
-    """Send raw command, print result."""
+    """Validate (check_raw), send, print result.
+
+    Requests are validated but not written to the database's tx_log: this
+    harness never opens the car's database. Its record of what was sent is the
+    TX/RX transcript printed here and the experiment record it writes.
+    """
+    cmd = check_raw(cmd)
     log(f"TX: {cmd}  ({desc})")
     try:
         lines = t.send_command(cmd)
@@ -798,7 +850,9 @@ def _write_record(cfg, tcp) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Systematically test how this ID.3's MEB modules answer. "
-                    "Every request is read-only; see uds.py.")
+                    "Every vehicle line is checked by uds.validate_request "
+                    "(the payload inside the frame under ATCAF0), and "
+                    "flow-control data must be a flow-control frame.")
     ap.add_argument("--tcp", nargs=2, metavar=("HOST", "PORT"),
                     help="run against the built-in simulator instead of the "
                          "car. Verifies this harness itself before it is "

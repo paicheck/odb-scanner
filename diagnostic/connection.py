@@ -101,6 +101,17 @@ class DiagnosticConnection:
                        purpose="response")
         return lines
 
+    def request_lines(self, hexcmd: str, ecu: ECUSpec | None,
+                      purpose: str) -> list[str]:
+        """Send one validated request and return the adapter's raw lines.
+
+        For diagnostic tools that need the raw response (headers included)
+        rather than a parsed payload. It is _transmit itself, so the request
+        is validated, addressed and written to tx_log like every other one --
+        a tool calling transport.send_command() directly gets none of that.
+        """
+        return self._transmit(hexcmd, ecu, purpose)
+
     # -- explicitly approved ABS session ------------------------------------
     def approved_extended_session(self, ecu: ECUSpec, *, approval: str,
                                   purpose: str) -> bytes:
