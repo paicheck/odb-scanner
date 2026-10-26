@@ -855,10 +855,14 @@ class Collector:
                     payloads.setdefault(src, payload)
         uds_items: list[tuple[int | None, str, dict]] = []
         seen_items: set[tuple[str, str, int | None]] = set()
+        # ECUs that gave a positive 0x59 this cycle, even an empty list. Only
+        # their codes can be judged "no longer reported" below.
+        answered: set[str] = set()
         for src, payload in payloads.items():
             if not payload or payload[0] != 0x59:
                 continue
             label = self._ecu_label_for_source(src)
+            answered.add(label)
             for item in obd2.parse_uds_dtc_response(payload):
                 sig = (label, item["code"], item.get("status_byte"))
                 if sig in seen_items:
@@ -903,6 +907,13 @@ class Collector:
         # masquerade as "the lamp went out"; the first successful read only sets
         # the baseline so a collector restart does not replay a lamp that was
         # already on when it booted.
+        #
+        # Absence only counts for an ECU that answered THIS cycle. read_ok is
+        # true when any ECU answered, and the electric drive is read with a
+        # separate physical request whose failure is skipped silently -- so an
+        # ECU that missed one cycle used to have every code logged as cleared
+        # (or "warning lamp off") and then reappear. Codes of an ECU that did
+        # not answer are carried forward unjudged.
         if read_ok:
             curr = {(label, item["code"]): item.get("status_byte")
                     for _, label, item in uds_items}
@@ -912,6 +923,9 @@ class Collector:
             else:
                 for key, was in prev.items():
                     if key in curr:
+                        continue
+                    if key[0] not in answered:
+                        curr[key] = was
                         continue
                     was_warning = bool(was) and bool(was & 0x80)
                     desc = (

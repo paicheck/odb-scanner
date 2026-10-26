@@ -4319,3 +4319,62 @@ def test_doctor_main_accepts_explicit_argv(monkeypatch, capsys):
     from tools import doctor
     assert doctor.main(["--only-config"]) == 0
     assert "adapter.port" in capsys.readouterr().out
+
+
+def test_dtc_cleared_only_for_an_ecu_that_answered(repo, tmp_path):
+    """A module that misses one cycle must not have its codes logged as cleared.
+
+    read_ok is true as soon as any ECU answers the functional read, and the
+    physically-read electric drive's failure is skipped silently, so its codes
+    used to vanish from the diff -- "DTC cleared" / "warning lamp off" -- and
+    reappear the next cycle.
+    """
+    from collector import Collector
+    from diagnostic.ecus import ECUS
+    from diagnostic.interface import CommunicationError
+
+    cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
+                                "max_value_age_s": 900.0, "dtc_status_mask": "8F",
+                                "dtc_ecu_keys": ["eldrive"]},
+                  "database": {"path": str(tmp_path / "c.db")}})
+    eldrive_rx = ECUS["eldrive"].rx29
+    state = {"bms_code": True, "eldrive": "code"}   # code | silent | empty
+
+    class _Conn:
+        def functional_probe(self, hexcmd, purpose, ecu=None):
+            if ecu is not None:                      # physical eldrive read
+                if state["eldrive"] == "silent":
+                    raise CommunicationError("NO DATA")
+                body = [0xD1, 0x23, 0x00, 0x8B] if state["eldrive"] == "code" else []
+                return {eldrive_rx: bytes([0x59, 0x02, 0xFF] + body)}
+            body = [0xC1, 0x11, 0x00, 0x08] if state["bms_code"] else []
+            return {0x18DAF10A: bytes([0x59, 0x02, 0xFF] + body)}
+
+        def read_dtcs_obd2(self):
+            return []
+
+        def read_dtc_snapshots(self, code):
+            return {}
+
+    col = Collector(cfg, repo)
+    col.conn = _Conn()
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+
+    def cleared():
+        return [r["description"] for r in repo.conn.execute(
+            "SELECT description FROM diagnostic_events WHERE vehicle_id=? "
+            "AND kind='dtc-cleared' ORDER BY id", (col.vehicle_id,))]
+
+    col.read_and_store_dtcs()                 # baseline: both codes present
+    state["eldrive"] = "silent"
+    col.read_and_store_dtcs()                 # eldrive missed a cycle
+    assert cleared() == []
+    state["eldrive"] = "code"
+    col.read_and_store_dtcs()                 # back, still reporting
+    assert cleared() == []
+    state["eldrive"] = "empty"
+    state["bms_code"] = False
+    col.read_and_store_dtcs()                 # both answered, both cleared
+    events = cleared()
+    assert len(events) == 2
+    assert any("eldrive" in e for e in events)
