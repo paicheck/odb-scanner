@@ -1,0 +1,91 @@
+# Production cloud stack: MariaDB + ingest API + Caddy (automatic HTTPS).
+#
+# Unlike cloud/docker-compose.yml (the loopback-only local trial), this is what
+# you run on a VPS so the collector and the Android app can reach it from the
+# internet. Three services on one internal network:
+#
+#   Caddy (:443, TLS)  ->  ingest API (:8080)  ->  MariaDB (:3306)
+#
+# Neither MariaDB nor the API publish a port on the host. The ONLY thing
+# reachable from outside is Caddy, over HTTPS, which is the point: the database
+# is never on the internet, and the bearer token only ever travels encrypted.
+#
+# Secrets come from cloud/.env (gitignored), which docker compose reads
+# automatically because it sits beside this file. Copy cloud/.env.example to
+# cloud/.env and fill it in first; compose fails fast if a required value is
+# missing. See cloud/DEPLOY.md for the full walkthrough.
+#
+#   docker compose -f cloud/docker-compose.prod.yml up -d --build
+
+name: odb-cloud-prod
+
+services:
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in cloud/.env}
+      MARIADB_DATABASE: ${DB_NAME:-odb_cloud}
+      MARIADB_USER: ${DB_USER:-odb_ingest}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in cloud/.env}
+    volumes:
+      - odb-cloud-data:/var/lib/mysql
+    # No ports: reachable only from the internal network.
+    networks: [internal]
+    healthcheck:
+      # The API waits for this so the first request does not race the database
+      # still initialising its data directory.
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      # Built from the repository root so the `cloud` package is on the path.
+      context: ..
+      dockerfile: cloud/Dockerfile
+    restart: unless-stopped
+    environment:
+      ODB_CLOUD_API_TOKEN: ${API_TOKEN:?set API_TOKEN in cloud/.env}
+      ODB_CLOUD_DB_HOST: db
+      ODB_CLOUD_DB_PORT: "3306"
+      ODB_CLOUD_DB_USER: ${DB_USER:-odb_ingest}
+      ODB_CLOUD_DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in cloud/.env}
+      ODB_CLOUD_DB_NAME: ${DB_NAME:-odb_cloud}
+    networks: [internal]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in cloud/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [internal]
+    depends_on:
+      - api
+
+volumes:
+  odb-cloud-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:
+    driver: bridge

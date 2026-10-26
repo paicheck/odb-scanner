@@ -1,0 +1,36 @@
+# Caddy reverse proxy for the odb_scanner cloud ingest API.
+#
+# Automatic HTTPS (Let's Encrypt) is the whole reason Caddy is here: the ingest
+# API's bearer token is a credential, and it must never travel in the clear.
+# Caddy obtains and renews a certificate for {$DOMAIN} on its own.
+#
+# Requirements for automatic HTTPS to work:
+#   * cloud/.env sets DOMAIN to a hostname (e.g. cloud.example.com).
+#   * That hostname has an A/AAAA record pointing at this VPS's public IP.
+#   * Ports 80 and 443 are open on the firewall / security group.
+#
+# {$DOMAIN} is substituted by Caddy from the container's environment (set in
+# cloud/docker-compose.prod.yml).
+
+{$DOMAIN} {
+	reverse_proxy api:8080
+
+	encode zstd gzip
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# ---------------------------------------------------------------------------
+# No domain yet? You can start on the bare VPS IP with a self-signed cert, but
+# then every client must set cloud.verify_tls: false (config.local.yaml) and
+# accept an untrusted certificate, which is only safe as a throwaway test.
+# Replace the block above with this one:
+#
+# :443 {
+# 	tls internal
+# 	reverse_proxy api:8080
+# }
+# ---------------------------------------------------------------------------

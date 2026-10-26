@@ -119,6 +119,11 @@ Every default in the compose file is a development value. Override any of them
 
 ## Deploying the API
 
+> **One-command VPS deploy:** `cloud/docker-compose.prod.yml` + `cloud/Caddyfile`
+> run MariaDB, the API and automatic HTTPS as a single stack. See
+> [`cloud/DEPLOY.md`](DEPLOY.md) for the full walkthrough. The manual steps below
+> describe the same pieces individually (useful on a PaaS or a managed database).
+
 ### 1. Create the database
 
 Any managed MySQL/MariaDB works (PlanetScale, Azure Database for MySQL, AWS RDS,
