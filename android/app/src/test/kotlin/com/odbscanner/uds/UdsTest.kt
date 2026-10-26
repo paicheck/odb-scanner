@@ -143,4 +143,21 @@ class UdsTest {
             ),
         )
     }
+
+    @Test
+    fun `functional responses are grouped by source`() {
+        // Two ECUs answer one functional request with distinct 29-bit headers;
+        // their frames must not be reassembled into one corrupted payload.
+        val bySource = Uds.parsePayloadsBySource(
+            listOf(
+                "18DAF17B 05 62 1E 2C 0B B8",
+                "17FE007B 05 62 1E 2C 0A A0",
+            ),
+        )
+        assertEquals(2, bySource.size)
+        val a = bySource[0x18DAF17B]!!
+        val b = bySource[0x17FE007B]!!
+        assertArrayEquals(byteArrayOf(0x62, 0x1E, 0x2C, 0x0B, 0xB8.toByte()), a)
+        assertArrayEquals(byteArrayOf(0x62, 0x1E, 0x2C, 0x0A, 0xA0.toByte()), b)
+    }
 }

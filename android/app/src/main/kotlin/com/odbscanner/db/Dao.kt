@@ -97,3 +97,57 @@ interface VehicleDao {
     @Query("SELECT * FROM vehicles LIMIT 1")
     suspend fun getFirst(): VehicleEntity?
 }
+
+@Dao
+interface DtcDao {
+    @Query("SELECT * FROM dtcs WHERE vehicleId = :vehicleId AND ecu = :ecu AND code = :code LIMIT 1")
+    suspend fun find(vehicleId: Long, ecu: String, code: String): DtcEntity?
+
+    @Insert
+    suspend fun insert(d: DtcEntity): Long
+
+    @Query(
+        "UPDATE dtcs SET lastSeen = :lastSeen, occurrenceCount = :occurrenceCount, " +
+            "status = :status WHERE id = :id"
+    )
+    suspend fun update(id: Long, lastSeen: String, occurrenceCount: Int, status: String)
+
+    @Query("SELECT * FROM dtcs WHERE vehicleId = :vehicleId ORDER BY lastSeen DESC")
+    suspend fun getAll(vehicleId: Long): List<DtcEntity>
+}
+
+@Dao
+interface ChargingSessionDao {
+    @Insert
+    suspend fun insert(s: ChargingSessionEntity): Long
+
+    @Query("SELECT * FROM charging_sessions WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): ChargingSessionEntity?
+
+    @Query(
+        "SELECT * FROM charging_sessions WHERE vehicleId = :vehicleId " +
+            "AND status = 'open' ORDER BY startedAt DESC LIMIT 1"
+    )
+    suspend fun openSession(vehicleId: Long): ChargingSessionEntity?
+
+    @Query(
+        "UPDATE charging_sessions SET endedAt = :endedAt, endSoc = :endSoc, " +
+            "status = 'completed' WHERE id = :id"
+    )
+    suspend fun close(id: Long, endedAt: String, endSoc: Double?)
+
+    @Query("SELECT * FROM charging_sessions WHERE vehicleId = :vehicleId ORDER BY startedAt DESC")
+    suspend fun getAll(vehicleId: Long): List<ChargingSessionEntity>
+}
+
+@Dao
+interface DiagnosticEventDao {
+    @Insert
+    suspend fun insert(e: DiagnosticEventEntity): Long
+
+    @Query(
+        "SELECT * FROM diagnostic_events WHERE vehicleId = :vehicleId " +
+            "ORDER BY id DESC LIMIT :limit"
+    )
+    suspend fun recent(vehicleId: Long, limit: Int): List<DiagnosticEventEntity>
+}

@@ -1,6 +1,7 @@
 package com.odbscanner.db
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
@@ -70,4 +71,51 @@ data class VehicleEntity(
     val model: String = "ID.3",
     val variant: String = "",
     val year: Int = 0,
+)
+
+/**
+ * One stored DTC, mirroring `database/models.py`'s `dtcs`. The raw code and its
+ * ISO 14229 status are kept; the human description and category list live only
+ * in the Python analysis layer for now, so `code` + `status` are the source of
+ * truth the phone shows.
+ */
+@Entity(
+    tableName = "dtcs",
+    indices = [Index(value = ["vehicleId", "ecu", "code"], unique = true)],
+)
+data class DtcEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val vehicleId: Long,
+    val ecu: String,
+    val code: String,
+    val status: String,          // warning | active | pending | confirmed | stored | unknown
+    val firstSeen: String,
+    val lastSeen: String,
+    val occurrenceCount: Int = 1,
+)
+
+/** One charging session, mirroring `charging_sessions` (minus the sample table). */
+@Entity(tableName = "charging_sessions")
+data class ChargingSessionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val vehicleId: Long,
+    val chargeType: String?,     // AC | DC
+    val startedAt: String,
+    val endedAt: String? = null,
+    val startSoc: Double? = null,
+    val endSoc: Double? = null,
+    val status: String = "open", // open | completed
+    val notes: String? = null,
+)
+
+/** One diagnostic event, mirroring `diagnostic_events`. */
+@Entity(tableName = "diagnostic_events")
+data class DiagnosticEventEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val vehicleId: Long,
+    val ts: String,
+    val kind: String,            // adapter | charge-start | charge-end | note | dtc-cleared
+    val ecu: String?,
+    val description: String,
+    val data: String? = null,    // JSON
 )

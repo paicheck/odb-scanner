@@ -14,6 +14,9 @@ class Repository(private val db: AppDatabase) {
     val unsupported: UnsupportedDidDao get() = db.unsupportedDidDao()
     val txLog: TxLogDao get() = db.txLogDao()
     val vehicles: VehicleDao get() = db.vehicleDao()
+    val dtcs: DtcDao get() = db.dtcDao()
+    val chargingSessions: ChargingSessionDao get() = db.chargingSessionDao()
+    val diagnosticEvents: DiagnosticEventDao get() = db.diagnosticEventDao()
 
     suspend fun ensureVehicle(
         vin: String,
@@ -144,4 +147,67 @@ class Repository(private val db: AppDatabase) {
         withContext(Dispatchers.IO) {
             measurements.valueHistory(vehicleId, key, limit).mapNotNull { it.value }
         }
+
+    // -- DTCs ----------------------------------------------------------------
+
+    /**
+     * Record one sighting of a DTC. First sighting inserts the row; later
+     * sightings refresh `lastSeen`/`status` and bump the occurrence count. Read
+     * once per slow phase (not per poll), so the count stays a count of
+     * sightings, not of polls.
+     */
+    suspend fun upsertDtc(
+        vehicleId: Long, ts: String, ecu: String, code: String, status: String,
+    ) = withContext(Dispatchers.IO) {
+        val existing = dtcs.find(vehicleId, ecu, code)
+        if (existing == null) {
+            dtcs.insert(
+                DtcEntity(
+                    vehicleId = vehicleId, ecu = ecu, code = code, status = status,
+                    firstSeen = ts, lastSeen = ts, occurrenceCount = 1,
+                ),
+            )
+        } else {
+            dtcs.update(existing.id, ts, existing.occurrenceCount + 1, status)
+        }
+    }
+
+    suspend fun dtcList(vehicleId: Long): List<DtcEntity> =
+        withContext(Dispatchers.IO) { dtcs.getAll(vehicleId) }
+
+    // -- charging sessions ---------------------------------------------------
+
+    suspend fun openSession(
+        vehicleId: Long, ts: String, chargeType: String, startSoc: Double?,
+    ): Long = withContext(Dispatchers.IO) {
+        chargingSessions.insert(
+            ChargingSessionEntity(
+                vehicleId = vehicleId, chargeType = chargeType,
+                startedAt = ts, startSoc = startSoc, status = "open",
+            ),
+        )
+    }
+
+    suspend fun closeSession(sessionId: Long, ts: String, endSoc: Double?) =
+        withContext(Dispatchers.IO) {
+            chargingSessions.close(sessionId, ts, endSoc)
+        }
+
+    /** A session a previous run left open, so a restart can adopt it. */
+    suspend fun openSessionId(vehicleId: Long): Long? =
+        withContext(Dispatchers.IO) { chargingSessions.openSession(vehicleId)?.id }
+
+    // -- diagnostic events ---------------------------------------------------
+
+    suspend fun addEvent(
+        vehicleId: Long, ts: String, kind: String, description: String,
+        ecu: String? = null, data: String? = null,
+    ) = withContext(Dispatchers.IO) {
+        diagnosticEvents.insert(
+            DiagnosticEventEntity(
+                vehicleId = vehicleId, ts = ts, kind = kind, ecu = ecu,
+                description = description, data = data,
+            ),
+        )
+    }
 }

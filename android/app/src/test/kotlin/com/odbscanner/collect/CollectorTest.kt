@@ -267,4 +267,38 @@ class CollectorTest {
     fun `non-finite numbers are preserved as text`() {
         assertEquals(null to "NaN", measurementColumns(Double.NaN))
     }
+
+    @Test
+    fun `derived values are computed from the snapshot`() {
+        val snapshot = mapOf<String, Any?>(
+            "pack_voltage" to 400.0,
+            "pack_current" to 100.0,
+            "cell_voltage_max" to 4.1,
+            "cell_voltage_min" to 3.9,
+            "aux_12v_voltage" to 13.0,
+            "aux_12v_current" to -2.0,
+            "cell_soc_max" to mapOf("value" to 55.0, "index" to 3),
+            "cell_soc_min" to mapOf("value" to 50.0, "index" to 7),
+            "bat_temp_max" to 30.0,
+            "bat_temp_min" to 25.0,
+            "hv_energy_max" to 55_100.0,
+        )
+        val derived = computeDerived(snapshot).associateBy { it.key }
+
+        assertEquals(40.0, derived.getValue("pack_power_kw").value, 1e-9)
+        assertEquals(200.0, derived.getValue("cell_delta_mv").value, 1e-9)
+        assertEquals(-26.0, derived.getValue("aux_12v_power_w").value, 1e-9)
+        assertEquals(5.0, derived.getValue("cell_soc_spread_pct").value, 1e-9)
+        assertEquals(5.0, derived.getValue("battery_temp_spread_c").value, 1e-9)
+        assertEquals(95.0, derived.getValue("soh_pct").value, 1e-6)
+        assertEquals("estimated", derived.getValue("soh_pct").provenance)
+        assertEquals("calculated", derived.getValue("pack_power_kw").provenance)
+    }
+
+    @Test
+    fun `derived values omit what the snapshot lacks`() {
+        val derived = computeDerived(mapOf("pack_voltage" to 400.0))
+        assertTrue("pack power needs current", derived.none { it.key == "pack_power_kw" })
+        assertTrue("SoH needs energy", derived.none { it.key == "soh_pct" })
+    }
 }

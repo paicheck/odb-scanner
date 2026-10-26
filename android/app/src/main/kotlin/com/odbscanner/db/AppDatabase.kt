@@ -24,8 +24,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         UnsupportedDidEntity::class,
         TxLogEntity::class,
         VehicleEntity::class,
+        DtcEntity::class,
+        ChargingSessionEntity::class,
+        DiagnosticEventEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -33,6 +36,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun unsupportedDidDao(): UnsupportedDidDao
     abstract fun txLogDao(): TxLogDao
     abstract fun vehicleDao(): VehicleDao
+    abstract fun dtcDao(): DtcDao
+    abstract fun chargingSessionDao(): ChargingSessionDao
+    abstract fun diagnosticEventDao(): DiagnosticEventDao
 
     companion object {
         /**
@@ -51,6 +57,35 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds the DTC, charging-session and diagnostic-event tables. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS dtcs (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "vehicleId INTEGER NOT NULL, ecu TEXT NOT NULL, code TEXT NOT NULL, " +
+                        "status TEXT NOT NULL, firstSeen TEXT NOT NULL, lastSeen TEXT NOT NULL, " +
+                        "occurrenceCount INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_dtcs_vehicleId_ecu_code " +
+                        "ON dtcs (vehicleId, ecu, code)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS charging_sessions (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "vehicleId INTEGER NOT NULL, chargeType TEXT, startedAt TEXT NOT NULL, " +
+                        "endedAt TEXT, startSoc REAL, endSoc REAL, status TEXT NOT NULL, notes TEXT)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS diagnostic_events (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "vehicleId INTEGER NOT NULL, ts TEXT NOT NULL, kind TEXT NOT NULL, " +
+                        "ecu TEXT, description TEXT NOT NULL, data TEXT)"
+                )
+            }
+        }
+
         @Volatile private var instance: AppDatabase? = null
 
         fun get(context: Context): AppDatabase =
@@ -59,7 +94,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "odb_scanner.db",
-                ).addMigrations(MIGRATION_1_2)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }

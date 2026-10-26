@@ -7,6 +7,8 @@ import com.odbscanner.spec.MeasurementSpec
 import com.odbscanner.spec.ProfileSpec
 import com.odbscanner.spec.Spec
 import com.odbscanner.transport.Elm327Protocol
+import com.odbscanner.transport.Elm327RefusedError
+import com.odbscanner.transport.Elm327TimeoutError
 import com.odbscanner.uds.NegativeResponseError
 import com.odbscanner.uds.NoResponseError
 import com.odbscanner.uds.ReadOnlyGuardImpl
@@ -14,7 +16,10 @@ import com.odbscanner.uds.Uds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import java.io.IOException
 import java.time.Instant
+import kotlin.math.pow
+import kotlin.math.round
 
 /** One decoded reading, with the raw bytes preserved. */
 data class Reading(
@@ -74,15 +79,24 @@ class Collector(
 
     private var lastSlowMs: Long? = null
 
+    /** Latest decoded value per key, carried across passes for derived values. */
+    private val snapshot = mutableMapOf<String, Any?>()
+
+    /** The charging session currently open, if any (opened/closed by charge_mode). */
+    private var activeSessionId: Long? = null
+
     fun setSilentRetireThreshold(n: Int) { silentRetireThreshold = n }
 
-    /** Load retired + ever-succeeded DIDs from the repository (call before collecting). */
+    /** Load retired + ever-succeeded DIDs and adopt any session left open. */
     suspend fun loadState() {
         repository?.let {
             retired.clear()
             retired.addAll(it.unsupportedKeys(vehicleId))
             everSucceeded.clear()
             everSucceeded.addAll(it.everSucceededKeys(vehicleId))
+            // A previous run may have been killed mid-charge; adopting its open
+            // session means this run closes it rather than opening a second one.
+            activeSessionId = it.openSessionId(vehicleId)
         }
     }
 
@@ -115,7 +129,10 @@ class Collector(
             return null
         }
         vin = text
-        repository?.let { vehicleId = it.ensureVehicle(text) }
+        repository?.let {
+            vehicleId = it.ensureVehicle(text)
+            it.addEvent(vehicleId, tsNow, "adapter", "VIN read = $text")
+        }
         return text
     }
 
@@ -172,6 +189,12 @@ class Collector(
                 readings.add(poll(m, did))
             }
         }
+        // Computed values and charging state are derived from what this pass
+        // just read (and from carried-forward values), every pass; DTCs are
+        // re-read once per slow rotation.
+        recordDerived(tsNow)
+        trackCharging(tsNow)
+        if (slowDue) readDtcs()
         // Readings were persisted per-DID inside poll() (and retired DIDs inside
         // retire()), so the data survives an app restart.
         return readings
@@ -190,6 +213,7 @@ class Collector(
         return try {
             val record = readRaw(m, did)
             val value = Decoder.decode(m.decode, record)
+            if (value != null) snapshot[m.key] = value
             _recordSuccess(m, record, tsNow)
             everSucceeded.add(m.ecuKey to did)
             silentCount.remove(m.ecuKey to did)
@@ -230,11 +254,22 @@ class Collector(
             throw e
         } catch (e: CancellationException) {
             throw e
+        } catch (e: Elm327TimeoutError) {
+            // Adapter alive but this one command did not answer in time: the DID
+            // is unreadable, not the link.
+            Log.w("odbscanner", "DID 0x${hex4(did)} (${m.key}) timeout: $e")
+            logTx("RX", m.ecuKey, e.toString(), "response")
+            throw NoResponseError(did)
+        } catch (e: Elm327RefusedError) {
+            Log.w("odbscanner", "DID 0x${hex4(did)} (${m.key}) refused: $e")
+            logTx("RX", m.ecuKey, e.toString(), "response")
+            throw NoResponseError(did)
+        } catch (e: IOException) {
+            // The Bluetooth link is dead; propagate so the caller reconnects
+            // instead of spinning through the whole DID map on a broken pipe.
+            logTx("RX", m.ecuKey, e.toString(), "response")
+            throw e
         } catch (e: Exception) {
-            // A timeout (Elm327TimeoutError), a refused request, or a dropped
-            // link. Record the real reason in tx_log and fold it into "no
-            // response": one stuck DID must not abort the whole pass, which is
-            // how every DID after it used to go unread.
             Log.w("odbscanner", "DID 0x${hex4(did)} (${m.key}) unreadable: $e")
             logTx("RX", m.ecuKey, e.toString(), "response")
             throw NoResponseError(did)
@@ -285,6 +320,107 @@ class Collector(
             retire(ecuKey, did, ts)
             silentCount.remove(key)
         }
+    }
+
+    /** Compute the derived values (power, spreads, SoH) and persist them. */
+    private suspend fun recordDerived(ts: String) {
+        repository ?: return
+        for (d in computeDerived(snapshot)) {
+            repository.recordMeasurement(
+                vehicleId = vehicleId, ts = ts, key = d.key, ecu = d.ecu,
+                service = "calc", pid = "-", unit = d.unit, provenance = d.provenance,
+                decodingMethod = d.decodingMethod, docStatus = "calculated",
+                rawResponse = "", value = d.value, textValue = null,
+                success = true, error = null,
+            )
+        }
+    }
+
+    /** Open/close a charging session from the charge_mode DID. */
+    private suspend fun trackCharging(ts: String) {
+        repository ?: return
+        val mode = (snapshot["charge_mode"] as? Number)?.toInt()
+        // Unknown is not the same as "not charging": a missed read must not
+        // close a live session on no evidence.
+        if (mode == null) return
+        val charging = mode in 1..3
+        when {
+            charging && activeSessionId == null -> {
+                val type = if (mode == 2) "DC" else "AC"
+                activeSessionId = repository.openSession(
+                    vehicleId, ts, type, (snapshot["soc_normal"] as? Number)?.toDouble(),
+                )
+                repository.addEvent(
+                    vehicleId, ts, "charge-start", "$type charging detected (mode=$mode)",
+                )
+            }
+            !charging && activeSessionId != null -> {
+                repository.closeSession(
+                    activeSessionId!!, ts, (snapshot["soc_normal"] as? Number)?.toDouble(),
+                )
+                repository.addEvent(vehicleId, ts, "charge-end", "Charging ended")
+                activeSessionId = null
+            }
+        }
+    }
+
+    /**
+     * Read legislated OBD-II DTCs (mode 03) and UDS DTCs (0x19 0x02, functional
+     * with status mask 0x8F = warning+active+pending+confirmed), and upsert
+     * them. Both are read-only and validated by the guard before anything is
+     * sent. Returns how many DTCs were seen.
+     */
+    suspend fun readDtcs(): Int {
+        repository ?: return 0
+        tsNow = Instant.now().toString()
+        var count = 0
+
+        // Legislated OBD-II DTCs.
+        try {
+            guard.validate(byteArrayOf(0x03.toByte()))
+            logTx("TX", null, "03", "OBD mode 03 - read emissions DTCs (read-only)")
+            protocol.setModule(null)
+            val lines = protocol.sendRead("03")
+            logTx("RX", null, lines.joinToString(" | "), "response")
+            for (payload in Uds.parsePayloadsBySource(lines).values) {
+                payload ?: continue
+                for (code in parseObd03DtcResponse(payload)) {
+                    repository.upsertDtc(vehicleId, tsNow, "OBD-II", code, "stored")
+                    count++
+                }
+            }
+        } catch (_: Exception) {
+            Log.w("odbscanner", "OBD-II DTC read failed")
+        }
+
+        // UDS DTCs: one functional read, attributed per responding ECU.
+        try {
+            val request = byteArrayOf(0x19, 0x02, 0x8F.toByte())
+            guard.validate(request)
+            logTx("TX", null, "19028F",
+                "UDS 0x19 0x02 ReadDTCInformation (mask 0x8F) - functional, read-only")
+            protocol.setModule(null)
+            val lines = protocol.sendRead("19028F")
+            logTx("RX", null, lines.joinToString(" | "), "response")
+            for ((src, payload) in Uds.parsePayloadsBySource(lines)) {
+                payload ?: continue
+                val label = src?.let { ecuLabelForSource(it) } ?: "uds"
+                for ((code, statusByte) in parseUdsDtcResponse(payload)) {
+                    repository.upsertDtc(vehicleId, tsNow, label, code, dtcStatusLabel(statusByte))
+                    count++
+                }
+            }
+        } catch (_: Exception) {
+            Log.w("odbscanner", "UDS DTC read failed")
+        }
+        return count
+    }
+
+    private fun ecuLabelForSource(src: Int): String {
+        for ((key, ecu) in spec.ecus) {
+            if (ecu.rx == src || ecu.rx29 == src) return key
+        }
+        return "uds-" + src.toString(16).uppercase()
     }
 
     private fun hex4(value: Int) = value.toString(16).uppercase().padStart(4, '0')
@@ -339,4 +475,91 @@ private fun String.escapeJson(): String = buildString {
         '\t' -> append("\\t")
         else -> if (c < ' ') append("\\u%04x".format(c.code)) else append(c)
     }
+}
+
+/** One computed value to persist as a `calc` measurement. */
+internal data class DerivedValue(
+    val key: String,
+    val ecu: String,
+    val unit: String,
+    val provenance: String,
+    val decodingMethod: String,
+    val formula: String,
+    val value: Double,
+)
+
+/** Marketed HV energy of the ID.3 58 kWh pack (Wh), for the estimated SoH. */
+private const val NOMINAL_ENERGY_WH = 58_000.0
+
+private data class PowerFormula(
+    val key: String, val voltageKey: String, val currentKey: String,
+    val ecu: String, val unit: String, val scale: Double,
+)
+
+private fun roundTo(value: Double, decimals: Int): Double {
+    val factor = 10.0.pow(decimals)
+    return round(value * factor) / factor
+}
+
+/**
+ * Derive the calculated/estimated values from the latest decoded snapshot,
+ * mirroring `collector.py`'s computed block + `_record_lv_derived` +
+ * `_record_spreads` + the SoH fallback. Pure, so it is testable without a
+ * repository or a car.
+ */
+internal fun computeDerived(snapshot: Map<String, Any?>): List<DerivedValue> {
+    val out = mutableListOf<DerivedValue>()
+    fun num(key: String): Double? = (snapshot[key] as? Number)?.toDouble()
+    fun pairValue(key: String): Double? =
+        (snapshot[key] as? Map<*, *>)?.get("value")?.let { (it as? Number)?.toDouble() }
+
+    num("pack_voltage")?.let { v ->
+        num("pack_current")?.let { c ->
+            out += DerivedValue("pack_power_kw", "bat_mgmt", "kW", "calculated",
+                "calculated", "voltage * current / 1000", roundTo(v * c / 1000.0, 3))
+        }
+    }
+    num("cell_voltage_max")?.let { max ->
+        num("cell_voltage_min")?.let { min ->
+            out += DerivedValue("cell_delta_mv", "bat_mgmt", "mV", "calculated",
+                "calculated", "(max - min) * 1000", roundTo((max - min) * 1000.0, 1))
+        }
+    }
+
+    // Low-voltage power (voltage x current), labelled calculated.
+    listOf(
+        PowerFormula("aux_12v_power_w", "aux_12v_voltage", "aux_12v_current",
+            "bat_mgmt", "W", 1.0),
+        PowerFormula("dcdc_power_kw", "dcdc_voltage", "dcdc_current",
+            "dcdc", "kW", 0.001),
+        PowerFormula("dcdc_gw_power_kw", "dcdc_gw_voltage", "dcdc_gw_current",
+            "energy", "kW", 0.001),
+    ).forEach { f ->
+        num(f.voltageKey)?.let { v ->
+            num(f.currentKey)?.let { c ->
+                out += DerivedValue(f.key, f.ecu, f.unit, "calculated", "calculated",
+                    "voltage * current", roundTo(v * c * f.scale, 3))
+            }
+        }
+    }
+
+    val socMax = pairValue("cell_soc_max")
+    val socMin = pairValue("cell_soc_min")
+    if (socMax != null && socMin != null) {
+        out += DerivedValue("cell_soc_spread_pct", "bat_mgmt", "%", "calculated",
+            "calculated", "max cell SoC - min cell SoC", roundTo(socMax - socMin, 3))
+    }
+    num("bat_temp_max")?.let { max ->
+        num("bat_temp_min")?.let { min ->
+            out += DerivedValue("battery_temp_spread_c", "bat_mgmt", "degC", "calculated",
+                "calculated", "max - min", roundTo(max - min, 3))
+        }
+    }
+    // MEB packs expose no capacity (CAC) DID; fall back to rated-vs-marketed
+    // energy, labelled estimated (decoders/bms.soh_pct_from_energy).
+    num("hv_energy_max")?.takeIf { it > 0 }?.let { maxWh ->
+        out += DerivedValue("soh_pct", "bat_mgmt", "%", "estimated", "estimated",
+            "hv_energy_max / 58000 * 100", roundTo(100.0 * maxWh / NOMINAL_ENERGY_WH, 1))
+    }
+    return out
 }

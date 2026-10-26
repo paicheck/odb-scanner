@@ -60,6 +60,45 @@ object Uds {
         return reassemble(frames)
     }
 
+    /**
+     * Reassemble a functional read's responses, grouped by the CAN id of the
+     * ECU that sent them (null for a header-off line). Several modules answer
+     * one functional request (e.g. a 0x19 0x02 DTC read), and keeping their
+     * frames apart is what stops one module's answer corrupting another's.
+     */
+    fun parsePayloadsBySource(lines: List<String>): Map<Int?, ByteArray?> {
+        val frames = LinkedHashMap<Int?, MutableList<ByteArray>>()
+        for (line in lines) {
+            val (source, body) = lineToFrameWithSource(line) ?: continue
+            val raw = try {
+                body.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            } catch (_: NumberFormatException) {
+                continue
+            }
+            if (!validFrame(raw)) continue
+            frames.getOrPut(source) { mutableListOf() }.add(raw)
+        }
+        val out = LinkedHashMap<Int?, ByteArray?>()
+        for ((source, list) in frames) out[source] = reassemble(list)
+        return out
+    }
+
+    /** One ELM327 line -> (source CAN id, frame hex), or null. */
+    private fun lineToFrameWithSource(line: String): Pair<Int?, String>? {
+        val h = line.filter { it.isDigit() || it in "abcdefABCDEF" }.uppercase()
+        if (h.length < 4) return null
+        return when {
+            // 11-bit id: 3 hex digits + an even frame length -> odd total.
+            h.length % 2 == 1 && h.length > 3 ->
+                h.substring(0, 3).toIntOrNull(16) to h.substring(3)
+            // 29-bit id: 8 hex digits ('18'/'17' priority).
+            h.length % 2 == 0 && h.length > 8 &&
+                (h.startsWith("18") || h.startsWith("17")) ->
+                h.substring(0, 8).toIntOrNull(16) to h.substring(8)
+            else -> null to h  // header-off
+        }
+    }
+
     /** One ELM327 line -> an ISO-TP frame (PCI byte included), or null. */
     private fun lineToFrame(line: String): ByteArray? {
         val h = line.filter { it.isDigit() || it in "abcdefABCDEF" }.uppercase()
