@@ -341,6 +341,11 @@ def finalize(repo, inv_id: int, *, summary: str = "",
     inv = load_investigation(repo, inv_id)
     if inv is None:
         raise KeyError(f"no investigation {inv_id}")
+    if inv.status == "resolved":
+        # A confirmed conclusion is a record of what the evidence showed at the
+        # time. Re-running finalize would overwrite it (and its summary) with
+        # whatever the evidence says now, with no trace of the original.
+        raise ValueError(f"investigation {inv_id} is already resolved")
     ok, reason = criteria_met(inv)
     if ok and not criteria_confirmed:
         ok = False

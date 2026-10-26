@@ -24,7 +24,7 @@ def register(app, ctx) -> None:
     trend_days = ctx.trend_days
     vehicle_and_id = ctx.vehicle_and_id
 
-    def _owned_investigation(investigation_id: int):
+    def _owned_investigation(investigation_id: int, *, writable: bool = False):
         """The investigation row if it exists AND belongs to this vehicle.
 
         Otherwise 404, before anything is written. Writing evidence for an id
@@ -32,11 +32,21 @@ def register(app, ctx) -> None:
         dashboard shows one vehicle (first_vehicle()), so another vehicle's
         investigation is "not found" here exactly as /dtcs/{id} and
         /charging/{id} treat other vehicles' rows.
+
+        `writable` also refuses a resolved investigation (409): its conclusion
+        was confirmed against the evidence it had, and adding evidence or
+        re-finalising afterwards would rewrite that record silently. Open a new
+        investigation instead. "insufficient-evidence" stays writable -- adding
+        evidence and finalising again is exactly what that status asks for.
         """
         _, vid = vehicle_and_id()
         row = repo.investigation(investigation_id) if vid else None
         if row is None or row["vehicle_id"] != vid:
             raise HTTPException(status_code=404, detail="No such investigation")
+        if writable and row["status"] == "resolved":
+            raise HTTPException(
+                status_code=409,
+                detail="This investigation is resolved; open a new one.")
         return row
 
     @app.get("/investigations", response_class=HTMLResponse)
@@ -49,6 +59,7 @@ def register(app, ctx) -> None:
     @app.get("/investigations/{investigation_id}", response_class=HTMLResponse)
     def investigation_page(request: Request, investigation_id: int):
         from analysis import investigation as inv_mod
+        _owned_investigation(investigation_id)
         inv = inv_mod.load_investigation(repo, investigation_id)
         if inv is None:
             raise HTTPException(status_code=404, detail="No such investigation")
@@ -87,7 +98,7 @@ def register(app, ctx) -> None:
     def investigation_observe(request: Request, investigation_id: int,
                               key: str = Form(...)):
         from analysis import investigation as inv_mod
-        row = _owned_investigation(investigation_id)
+        row = _owned_investigation(investigation_id, writable=True)
         inv_mod.observe_key(repo, row["vehicle_id"], key.strip(), _profile(),
                             inv_id=investigation_id)
         return _redirect(f"/investigations/{investigation_id}")
@@ -97,7 +108,7 @@ def register(app, ctx) -> None:
                                summary: str = Form(""),
                                criteria_confirmed: bool = Form(False)):
         from analysis import investigation as inv_mod
-        _owned_investigation(investigation_id)
+        _owned_investigation(investigation_id, writable=True)
         inv_mod.finalize(repo, investigation_id, summary=summary.strip(),
                          criteria_confirmed=criteria_confirmed)
         return _redirect(f"/investigations/{investigation_id}")
@@ -219,6 +230,7 @@ def register(app, ctx) -> None:
     def export_investigation(request: Request, investigation_id: int):
         """Download one investigation as a self-contained evidence packet."""
         from analysis import investigation as inv_mod
+        _owned_investigation(investigation_id)
         inv = inv_mod.load_investigation(repo, investigation_id)
         if inv is None:
             raise HTTPException(status_code=404, detail="No such investigation")
