@@ -1708,6 +1708,44 @@ def _register_modules(reg: DIDRegistry) -> None:
             )
         )
 
+    # Battery resistance DIDs (gateway 0x710 -> 0x77A, same module as the two
+    # VERIFIED energy DIDs above). Definitions are from the OBDb/Volkswagen-ID3
+    # signalset (CC-BY-SA-4.0), which lists both as confirmed for the 2021
+    # model year; the addressing is already confirmed by this project's passive
+    # capture. PROVISIONAL: no project-owned capture of either DID exists yet,
+    # so the scale rests on the third-party definition, not on raw bytes.
+    reg.register(
+        DIDSpec(
+            "bat_internal_resistance_raw",
+            ECU_ENERGY,
+            0x2A25,
+            "HV battery internal resistance (raw)",
+            "",
+            decode=_cs_field_decoder(sbi=0, dl=1, mul=1.0, div=5.0, ofs=0.0),
+            doc_status=_EXP,
+            slow=True,
+            notes="u8[0] / 5 raw index (0-51) [OBDb Volkswagen-ID3 signalset "
+            "v3, ID3_BAT_INTERNAL_RES_RAW, confirmed MY2021]. The physical "
+            "unit is not documented by the source ('unknown'); treat as a "
+            "relative battery-resistance index, not mOhm. PROVISIONAL.",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "aux_battery_resistance_mohm",
+            ECU_ENERGY,
+            0x2A0E,
+            "12 V (start/stop) battery resistance",
+            "mOhm",
+            decode=_cs_field_decoder(sbi=0, dl=1, mul=2.0, div=10.0, ofs=0.0),
+            doc_status=_EXP,
+            slow=True,
+            notes="u8[0] x 2 / 10 mOhm [OBDb Volkswagen-ID3 signalset v3, "
+            "ID3_SSB_R, confirmed MY2020-2021]. Start/stop (12 V auxiliary) "
+            "battery internal resistance; higher = ageing. PROVISIONAL.",
+        )
+    )
+
 
 # 25 of the 26 electric-drive rows declare FLOAT32(A,B,C,D) in Car Scanner MEB
 # profile #342. The exception is `eldrive_odometer` (a 4-byte integer ByteSet).

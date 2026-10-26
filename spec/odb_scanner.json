@@ -226,7 +226,7 @@
       "tx29": "0x767"
     }
   ],
-  "generated_at": "2026-10-24T19:15:03+00:00",
+  "generated_at": "2026-10-26T20:10:11+00:00",
   "profiles": {
     "eup": {
       "cell_voltages": null,
@@ -2943,6 +2943,30 @@
           "unit": "V"
         },
         {
+          "confidence": "PROVISIONAL",
+          "decode": {
+            "addend": 0.0,
+            "byte_order": "big-endian",
+            "divisor": 10.0,
+            "formula": "u8be[0:1] unsigned x 2 / 10",
+            "kind": "scalar",
+            "length": 1,
+            "offset": 0,
+            "scale": 2.0,
+            "signed": false
+          },
+          "did": "0x2A0E",
+          "doc_status": "experimentally determined",
+          "ecu_key": "energy",
+          "key": "aux_battery_resistance_mohm",
+          "name": "12 V (start/stop) battery resistance",
+          "provenance": "reported",
+          "request_bytes": "222A0E",
+          "service": "0x22",
+          "slow": true,
+          "unit": "mOhm"
+        },
+        {
           "confidence": "UNKNOWN",
           "decode": {
             "addend": 0,
@@ -2979,6 +3003,30 @@
           "service": "0x22",
           "slow": true,
           "unit": "V"
+        },
+        {
+          "confidence": "PROVISIONAL",
+          "decode": {
+            "addend": 0.0,
+            "byte_order": "big-endian",
+            "divisor": 5.0,
+            "formula": "u8be[0:1] unsigned x 1 / 5",
+            "kind": "scalar",
+            "length": 1,
+            "offset": 0,
+            "scale": 1.0,
+            "signed": false
+          },
+          "did": "0x2A25",
+          "doc_status": "experimentally determined",
+          "ecu_key": "energy",
+          "key": "bat_internal_resistance_raw",
+          "name": "HV battery internal resistance (raw)",
+          "provenance": "reported",
+          "request_bytes": "222A25",
+          "service": "0x22",
+          "slow": true,
+          "unit": ""
         },
         {
           "confidence": "UNKNOWN",

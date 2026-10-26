@@ -633,6 +633,70 @@ OVERLAY: dict[tuple[str, str], dict] = {
         "plausible_max": 65535 * 50.0,
         "plausible_basis": "encoding range only (u16 x 50 Wh).",
     },
+    ("meb", "bat_internal_resistance_raw"): {
+        "confidence": Confidence.PROVISIONAL,
+        "address_confidence": Confidence.VERIFIED,
+        "layout": ByteLayout(offset=0, length=1, byte_order=ByteOrder.BIG_ENDIAN,
+                             signed=False, scale=1.0, divisor=5.0),
+        "response_length_hint": 1,
+        "evidence_kind": EvidenceKind.THIRD_PARTY_DEFINITION,
+        "evidence_source": (
+            "OBDb/Volkswagen-ID3 signalset v3 (CC-BY-SA-4.0), signal "
+            "ID3_BAT_INTERNAL_RES_RAW: DID 0x2A25 on 0x710 -> 0x77A, u8 / 5, "
+            "listed confirmed for MY2021. The 0x710 -> 0x77A addressing is "
+            "independently verified by this project's 2026-10-15 passive "
+            "capture; the scale itself has no project-owned capture yet."),
+        "evidence_artifact": (
+            "https://github.com/OBDb/Volkswagen-ID3 "
+            "(signalsets/v3/default.json); "
+            "docs/investigation/meb_gateway_energy_passive_capture_20261015.md"),
+        "validation_method": (
+            "third-party definition plus the already-verified gateway "
+            "addressing; no project-owned capture of 0x2A25 yet"),
+        "limitations": (
+            "the source labels the unit 'unknown' -- this is a raw resistance "
+            "index (0-51 after /5), not a physical resistance in mOhm. A "
+            "known-state capture (fresh vs aged pack, or comparison with a "
+            "reported SOH) is needed to confirm the scale and meaning."),
+        "falsified_by": (
+            "a captured 0x2A25 value that does not fall in 0-51, or that does "
+            "not move with a known battery-resistance change"),
+        "plausible_min": 0.0,
+        "plausible_max": 51.0,
+        "plausible_basis": "raw index range 0-51 after u8 / 5 (encoding range only).",
+    },
+    ("meb", "aux_battery_resistance_mohm"): {
+        "confidence": Confidence.PROVISIONAL,
+        "address_confidence": Confidence.VERIFIED,
+        "layout": ByteLayout(offset=0, length=1, byte_order=ByteOrder.BIG_ENDIAN,
+                             signed=False, scale=2.0, divisor=10.0),
+        "response_length_hint": 1,
+        "evidence_kind": EvidenceKind.THIRD_PARTY_DEFINITION,
+        "evidence_source": (
+            "OBDb/Volkswagen-ID3 signalset v3 (CC-BY-SA-4.0), signal ID3_SSB_R: "
+            "DID 0x2A0E on 0x710 -> 0x77A, u8 x 2 / 10 mOhm, listed confirmed "
+            "for MY2020-2021. The 0x710 -> 0x77A addressing is independently "
+            "verified by this project's 2026-10-15 passive capture."),
+        "evidence_artifact": (
+            "https://github.com/OBDb/Volkswagen-ID3 "
+            "(signalsets/v3/default.json); "
+            "docs/investigation/meb_gateway_energy_passive_capture_20261015.md"),
+        "validation_method": (
+            "third-party definition plus the already-verified gateway "
+            "addressing; no project-owned capture of 0x2A0E yet"),
+        "limitations": (
+            "interpreted as the 12 V (start/stop) auxiliary battery internal "
+            "resistance; the source does not state which battery beyond "
+            "'start/stop'. A healthy 12 V AGM battery is a few mOhm, so the "
+            "0-10.2 mOhm encoding range is physically plausible. Needs a "
+            "known-load capture to confirm."),
+        "falsified_by": (
+            "a captured 0x2A0E value outside 0-10.2 mOhm, or one that does not "
+            "rise as the 12 V battery ages under a known load"),
+        "plausible_min": 0.0,
+        "plausible_max": 10.2,
+        "plausible_basis": "encoding range 0-10.2 mOhm (u8 x 2 / 10).",
+    },
     ("eup", "hv_energy_content"): {
         "confidence": Confidence.VERIFIED,
         "layout": ByteLayout(offset=2, length=2, byte_order=ByteOrder.BIG_ENDIAN,
