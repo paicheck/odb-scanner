@@ -431,9 +431,84 @@ def cmd_guard_test() -> int:
         except ReadOnlyViolationError as exc:
             print(f"FAIL: {payload} ({why}) wrongly blocked: {exc}")
             ok = False
+    ok = _guard_test_transmit_paths() and ok
     print("\nREAD-ONLY guarantee verified." if ok
-          else "\nREAD-ONLY GUARANTINE COMPROMISED -- do not connect to a vehicle.")
+          else "\nREAD-ONLY GUARANTEE COMPROMISED -- do not connect to a vehicle.")
     return 0 if ok else 1
+
+
+def _guard_test_transmit_paths() -> bool:
+    """Check the paths requests actually take, not just the validator.
+
+    The validator passing was never the whole story: a request validated as one
+    string and sent as another, an approved session that fell back to the
+    broadcast header, and adapter commands that changed what a validated
+    request became on the wire all passed the checks above. These run the real
+    DiagnosticConnection and console code against a recording stub, so nothing
+    is opened and nothing reaches an adapter.
+    """
+    from diagnostic import uds
+    from diagnostic.connection import DiagnosticConnection
+    from diagnostic.ecus import ECUS
+    from diagnostic.uds import ReadOnlyViolationError
+    from tools.elm_console import refusal
+
+    class _Stub:
+        meb_addressing = False
+
+        def __init__(self):
+            self.sent: list[str] = []
+
+        def send_command(self, command):
+            self.sent.append(command)
+            return []
+
+    ok = True
+    for payload, why in [
+        ("14FFFFFF", "0x14 clear DTCs"),
+        ("2EF19000", "0x2E write"),
+        ("22F190\r2EF19000", "a write smuggled after a CR"),
+        ("22F190zz", "non-hex characters"),
+    ]:
+        stub = _Stub()
+        try:
+            DiagnosticConnection(stub)._transmit(payload, None, "guard-test")
+            print(f"FAIL: transmit path sent {payload!r} ({why})")
+            ok = False
+        except ReadOnlyViolationError:
+            if stub.sent:
+                print(f"FAIL: {payload!r} refused but {stub.sent} was sent")
+                ok = False
+            else:
+                print(f"OK: transmit path refused {why}; nothing sent")
+    stub = _Stub()
+    DiagnosticConnection(stub)._transmit("22 f1 90", None, "guard-test")
+    if stub.sent == ["22F190"]:
+        print("OK: transmit path sends exactly the canonical string it validated")
+    else:
+        print(f"FAIL: transmit path sent {stub.sent!r} for '22 f1 90'")
+        ok = False
+
+    stub = _Stub()
+    abs_ecu = ECUS["brk"]
+    try:
+        DiagnosticConnection(stub).approved_extended_session(
+            abs_ecu, approval=uds.ABS_APPROVAL_TOKEN, purpose="guard-test")
+        print("FAIL: approved 0x10 0x03 went out without physical addressing")
+        ok = False
+    except ReadOnlyViolationError:
+        print("OK: approved 0x10 0x03 refused without physical addressing"
+              + ("" if not stub.sent else f" (but sent {stub.sent})"))
+        ok = ok and not stub.sent
+
+    for cmd in ("ATCAF0", "ATFCSD 0414FFFFFF", "ATFCSM 1",
+                "STPX H:7E0, D:14FFFFFF", "1003"):
+        if refusal(cmd, raw_unsafe=False):
+            print(f"OK: console refuses {cmd!r}")
+        else:
+            print(f"FAIL: console would send {cmd!r}")
+            ok = False
+    return ok
 
 
 def _default_backup_path(cfg) -> Path:
