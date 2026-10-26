@@ -36,7 +36,6 @@ from pathlib import Path
 # Running `python tools/....py` puts tools/ on sys.path, not the repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-DEFAULT_DB = Path("data") / "odb_scanner.db"
 
 # The four regression payloads from the research dossier.
 DCDC_VECTORS = (
@@ -302,13 +301,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Re-run the 2026-10-21 payload findings against a stored DB "
                     "(read-only; never touches the car).")
-    parser.add_argument("--db", default=str(DEFAULT_DB),
-                        help="SQLite database (default: data/odb_scanner.db)")
+    parser.add_argument("--db", default=None,
+                        help="SQLite database (default: config database.path)")
     parser.add_argument("--json", action="store_true",
                         help="emit one JSON object instead of a summary")
     parser.add_argument("--check", action="store_true",
                         help="exit 2 if any invariant fails")
     args = parser.parse_args(argv)
+    if args.db is None:
+        # The live database may live outside the repo (database.path in
+        # config.local.yaml), so the default follows the configuration.
+        from config import load_config
+        args.db = load_config().db_path
 
     try:
         report = build_report(args.db)

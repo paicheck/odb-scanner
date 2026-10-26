@@ -42,7 +42,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from decoders.bms import COMPUTED_KEYS  # noqa: E402
 from decoders.registry import build_default_registry  # noqa: E402
 
-DEFAULT_DB = Path("data/odb_scanner.db")
 DEFAULT_OUT = Path("research/measurement_discovery/implementation_impact")
 
 
@@ -340,12 +339,16 @@ def _short(value) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+    parser.add_argument("--db", type=Path, default=None,
+                        help="SQLite database (default: config database.path)")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--profile", default="meb")
     parser.add_argument("--baseline-ref", default="e6d9fbd",
                         help="pre-implementation git ref for the new-key list")
     args = parser.parse_args(argv)
+    if args.db is None:
+        from config import load_config
+        args.db = Path(load_config().db_path)
     result = replay(args.db, args.out, args.profile, args.baseline_ref)
     print(json.dumps(result, indent=2))
     return 0

@@ -25,8 +25,13 @@
 #   # auth_token: "paste-the-token-here"   # or let it be generated for you
 
 # database:
-#   path: data/real_car.db
-#   backup_dir: backups     # where `main.py backup` writes snapshots
+#   # If this checkout lives in OneDrive/Dropbox/iCloud, keep the LIVE database
+#   # outside it: a sync client copying the .db and its -wal/-shm while the
+#   # collector writes can leave an inconsistent copy. Snapshots are written
+#   # once and closed, so backup_dir can stay inside the synced folder.
+#   path: C:/odb_data/odb_scanner.db
+#   backup_dir: backups     # where `main.py backup` writes snapshots;
+#                           # relative to the database, or an absolute path
 
 # analysis:
 #   trend_window_days: 30
