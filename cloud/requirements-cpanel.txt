@@ -1,0 +1,7 @@
+# Dependencies for the cPanel "Setup Python App" (Passenger) deployment.
+#
+# Deliberately ONE pure-Python package: passenger_wsgi.py is a plain WSGI app
+# (no FastAPI/pydantic/a2wsgi), so nothing needs to be compiled. This is the
+# robust choice on shared hosting, where a compiled dependency can fail to
+# install. pymysql is pure Python and installs anywhere.
+PyMySQL>=1.1

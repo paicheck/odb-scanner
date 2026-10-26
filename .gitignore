@@ -18,6 +18,7 @@ config.local.yaml
 # API passwords). Defaults in the compose file are development values; a real
 # password must not be committed.
 cloud/.env
+cloud/cpanel.env
 
 # Generated experiment records. These are run output, not source: one holds a
 # simulator self-test, the other whatever the last real run produced. Both are
