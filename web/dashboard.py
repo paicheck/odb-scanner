@@ -710,7 +710,7 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
 
         _, vid = vehicle_and_id()
         row = repo.dtc(dtc_id) if vid else None
-        if row is None:
+        if row is None or row["vehicle_id"] != vid:
             raise HTTPException(status_code=404, detail="No such DTC")
 
         occurrences = [dict(r) for r in repo.conn.execute(

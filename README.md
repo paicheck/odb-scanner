@@ -51,9 +51,15 @@ can open it. Because that bind is reachable from the network, the dashboard
   machine can open a loopback socket, so there is nobody to authenticate.
 
 Set `web.auth_token` in `config.local.yaml` (or export `ODB_TOKEN`) to choose
-the value yourself. There is still **no CSRF protection**, and the token is
-sent in the clear over plain HTTP — which is the assumption for a home network.
-Further boundaries:
+the value yourself. The token is sent in the clear over plain HTTP — which is
+the assumption for a home network. Further boundaries:
+
+* **Cross-site requests:** `SameOriginMiddleware` (`web/auth.py`) refuses any
+  POST whose `Origin` (or, failing that, `Referer`) is not the dashboard's own,
+  whether or not a token is configured — so a page you visit cannot make your
+  browser submit `/ai/ask` or create investigations. A request carrying
+  neither header (curl, a script) is not browser-driven and is let through;
+  on a network bind it still needs the token.
 
 * Do not port-forward or expose the port to the internet.
 * On shared or untrusted Wi-Fi, bind to `127.0.0.1` and reach it over an SSH

@@ -276,3 +276,33 @@ def test_a_reading_that_is_neither_keeps_its_shape():
         "python:host", [_row("soc_abs", None, None)]))
     assert parsed.measurements[0].value is None
     assert parsed.measurements[0].text_value is None
+
+
+# ------------------------------------------------------------- body size
+def test_an_oversized_declared_body_is_refused_before_parsing(client, store):
+    from cloud.mapping import MAX_BODY_BYTES
+    r = client.post("/ingest/measurements", content=b"{}",
+                    headers={**auth_header(), "Content-Type": "application/json",
+                             "Content-Length": str(MAX_BODY_BYTES + 1)})
+    assert r.status_code == 413
+    assert store.schema_calls == 0
+
+
+def test_an_oversized_streamed_body_is_refused(store):
+    from cloud.api import BodySizeLimitMiddleware
+    app = create_app(store=store, token=TOKEN)
+    # Shrink the cap rather than send 32 MiB: a chunked body carries no
+    # Content-Length, so this exercises the counting path.
+    app.user_middleware = [m for m in app.user_middleware
+                           if m.cls is not BodySizeLimitMiddleware]
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=64)
+
+    def chunks():
+        yield b'{"source": {"source_id": "a"}, "measurements": ['
+        yield b" " * 100 + b"]}"
+
+    r = TestClient(app).post("/ingest/measurements", content=chunks(),
+                             headers={**auth_header(),
+                                      "Content-Type": "application/json"})
+    assert r.status_code == 413
+    assert store.schema_calls == 0

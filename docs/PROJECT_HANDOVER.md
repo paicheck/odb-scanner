@@ -440,7 +440,8 @@ report, so a PASS is visibly tied to it.
 - **The LLM is not a diagnosis** — it ranks hypotheses with confidence; a
   validator flags over-confident wording.
 - **Dashboard network exposure:** the default bind is `0.0.0.0` with an access
-  token; bind `127.0.0.1` for no token. No CSRF, plain HTTP — LAN/homelab only.
+  token; bind `127.0.0.1` for no token. Cross-origin POSTs are refused
+  (`SameOriginMiddleware`); plain HTTP — LAN/homelab only.
 
 ---
 

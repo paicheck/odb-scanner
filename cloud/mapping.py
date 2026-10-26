@@ -42,6 +42,54 @@ class InvalidMeasurement(ValueError):
     """A payload field is not usable; the request is rejected, not guessed at."""
 
 
+# Request limits shared by both ingest front ends (cloud/api.py and
+# cloud/wsgi.py), so the FastAPI and cPanel deployments refuse the same input.
+#
+# A single request may not carry more than MAX_BATCH rows. The batch size is
+# the client's to choose (the collector and the phone send 500); this is the
+# server refusing one enormous INSERT.
+MAX_BATCH = 5000
+
+# ...nor more than MAX_BODY_BYTES on the wire. The row cap is only checked
+# after the body has been read and parsed, so without a byte cap a single
+# request could make the server buffer an arbitrarily large body first. 32 MiB
+# is far above a real 5000-row batch.
+MAX_BODY_BYTES = 32 * 1024 * 1024
+
+# Widths of sources.source_id / kind / label in schema.sql.
+SOURCE_ID_MAX = 120
+SOURCE_KIND_MAX = 16
+SOURCE_LABEL_MAX = 200
+
+
+def source_from_payload(source) -> tuple[str, str, str]:
+    """Validate a request's ``source`` block into (source_id, kind, label).
+
+    The FastAPI front end gets these checks from pydantic; the plain-WSGI one
+    does not, so they live here where both can use them. Widths are checked
+    rather than assumed for the same reason as in `row_from_payload`: under
+    INSERT IGNORE an over-long source_id is truncated, not rejected, and two
+    sources sharing a prefix would then merge in silence.
+    """
+    if not isinstance(source, dict):
+        raise InvalidMeasurement("'source' must be an object")
+    source_id = source.get("source_id")
+    if not isinstance(source_id, str):
+        raise InvalidMeasurement("'source.source_id' is required and must be a string")
+    kind = source.get("kind", "python")
+    label = source.get("label", "")
+    if not isinstance(kind, str) or not isinstance(label, str):
+        raise InvalidMeasurement("'source.kind' and 'source.label' must be strings")
+    for name, text, limit in (("source_id", source_id, SOURCE_ID_MAX),
+                              ("kind", kind, SOURCE_KIND_MAX),
+                              ("label", label, SOURCE_LABEL_MAX)):
+        if len(text) > limit:
+            raise InvalidMeasurement(
+                f"'source.{name}' is {len(text)} characters, longer than the "
+                f"{limit} the column allows")
+    return source_id, kind, label
+
+
 def cloud_measurement_id(source_id: str, local_id: int) -> str:
     """Derive a stable cloud UUID for a local SQLite measurement row.
 

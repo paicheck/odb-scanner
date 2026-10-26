@@ -167,6 +167,22 @@ def test_dtc_detail_unknown_id_is_404(client):
     assert client.get("/dtcs/9999").status_code == 404
 
 
+def test_dtc_detail_of_another_vehicle_is_404(client):
+    # Same ownership rule as /charging/{id}: the dashboard shows one vehicle
+    # (Repository.first_vehicle, the most recently first-seen), so a code
+    # recorded against any other vehicle is not found. Adding a newer vehicle
+    # makes it the current one, which moves the fixture's DTC out of view.
+    from database.repository import Repository
+
+    r = Repository(client.db_path)
+    newer = r.ensure_vehicle("SYNTHETIC00000001", make="VW", model="ID.4")
+    newer_dtc = r.upsert_dtc(newer, client.anchor_ts, "eldrive", "P0A0F00",
+                             "newer car", ["informational"])
+    r.close()
+    assert client.get(f"/dtcs/{newer_dtc}").status_code == 200
+    assert client.get(f"/dtcs/{client.dtc_id}").status_code == 404
+
+
 def test_dtc_list_links_each_code_to_its_detail(client):
     r = client.get("/dtcs")
     assert r.status_code == 200

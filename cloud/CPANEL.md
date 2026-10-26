@@ -2,9 +2,11 @@
 
 If your cPanel plan has **Software → Setup Python App**, it runs the ingest API
 on your shared account via CloudLinux Passenger, connected to your cPanel MySQL
-on `localhost`. The same `cloud/api.py` runs here as in the Docker/VPS deploy —
-`a2wsgi` bridges FastAPI (ASGI) onto Passenger (WSGI), so `cloud/mapping.py`
-stays the single source of truth.
+on `localhost`. Passenger speaks WSGI, so this deploy runs `cloud/wsgi.py` — a
+plain-WSGI twin of the FastAPI `cloud/api.py` used by the Docker/VPS deploy,
+with the same routes, token, limits and validation. Both reuse `cloud/mapping.py`
+and `cloud/db.py`, which stay the single source of truth, and the only
+dependency is the pure-Python `PyMySQL`, so nothing needs compiling.
 
 > **Check first:** create a throwaway application and look at the Python
 > version list. You need **3.9+** (ideally 3.10+). Some hosts (including some
@@ -36,13 +38,13 @@ Into the application root, put:
 passenger_wsgi.py        (from cloud/)
 requirements-cpanel.txt  (from cloud/, rename to requirements.txt)
 cpanel.env               (created from cloud/cpanel.env.example, filled in)
-cloud/                   (the whole package: __init__.py, api.py, config.py,
-                          db.py, mapping.py, schema.sql)
+cloud/                   (the whole package: __init__.py, config.py, db.py,
+                          mapping.py, wsgi.py, schema.sql)
 ```
 
 * Rename `requirements-cpanel.txt` to `requirements.txt` so Passenger installs
   it, or install manually from the app's "Run pip install" / terminal:
-  `pip install fastapi pydantic pymysql a2wsgi`.
+  `pip install PyMySQL`.
 * `schema.sql` must sit next to `db.py` — `cloud/db.py` reads it at that
   relative path, so copy it as part of `cloud/`.
 

@@ -25,28 +25,27 @@ from pydantic import BaseModel, Field
 
 from .config import CloudConfigError, db_settings_from_env
 from .db import MySqlStore
-from .mapping import InvalidMeasurement, row_from_payload
+from .mapping import (
+    MAX_BATCH,
+    MAX_BODY_BYTES,
+    SOURCE_ID_MAX,
+    SOURCE_KIND_MAX,
+    SOURCE_LABEL_MAX,
+    InvalidMeasurement,
+    row_from_payload,
+)
 
 log = logging.getLogger(__name__)
 
-# A single request may not carry more than this. The batch size is the client's
-# to choose; this is the server refusing an unbounded body before it is parsed
-# into memory and turned into one enormous INSERT.
-MAX_BATCH = 5000
-
-# Length caps mirror the column widths in schema.sql, so an over-long value is
-# rejected with a clear 422 instead of being silently truncated by MySQL (which
-# would then make two different readings look identical on the next retry).
-MAX_BODY_FIELD = 100_000
-
 
 class SourceIn(BaseModel):
-    # Widths again mirror schema.sql (sources/source_id VARCHAR(120),
-    # kind VARCHAR(16), label VARCHAR(200)) for the same reason as below: the
-    # INSERT uses IGNORE, so an over-long value would be truncated in silence.
-    source_id: str = Field(..., max_length=120)
-    kind: str = Field("python", max_length=16)
-    label: str = Field("", max_length=200)
+    # Widths mirror schema.sql (sources/source_id VARCHAR(120), kind
+    # VARCHAR(16), label VARCHAR(200)): the INSERT uses IGNORE, so an over-long
+    # value would be truncated in silence. cloud/wsgi.py applies the same caps
+    # through mapping.source_from_payload.
+    source_id: str = Field(..., max_length=SOURCE_ID_MAX)
+    kind: str = Field("python", max_length=SOURCE_KIND_MAX)
+    label: str = Field("", max_length=SOURCE_LABEL_MAX)
 
 
 class MeasurementIn(BaseModel):
@@ -110,6 +109,78 @@ def _require_token(request: Request) -> None:
         raise HTTPException(status_code=401, detail="invalid or missing API token")
 
 
+class _BodyLimit(Exception):
+    pass
+
+
+class BodySizeLimitMiddleware:
+    """Refuse a request body over MAX_BODY_BYTES before it is parsed.
+
+    The MAX_BATCH check runs only after pydantic has read and parsed the whole
+    body, so on its own it does not stop a huge body from being buffered. A
+    declared Content-Length over the cap is refused immediately; a chunked body
+    is counted as it arrives and refused once it crosses the cap.
+    """
+
+    def __init__(self, app, max_bytes: int = MAX_BODY_BYTES):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        for name, value in scope.get("headers") or []:
+            if name == b"content-length":
+                try:
+                    declared = int(value)
+                except ValueError:
+                    declared = 0
+                if declared > self.max_bytes:
+                    await self._refuse(send)
+                    return
+
+        seen = 0
+        exceeded = False
+        refused = False
+
+        async def counted_receive():
+            nonlocal seen, exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > self.max_bytes:
+                    exceeded = True
+                    raise _BodyLimit()
+            return message
+
+        async def guarded_send(message):
+            # FastAPI turns an exception raised while it reads the body into
+            # its own 400, so the 413 is substituted for whatever response the
+            # app produces once the cap has been crossed.
+            nonlocal refused
+            if not exceeded:
+                await send(message)
+            elif not refused:
+                refused = True
+                await self._refuse(send)
+
+        try:
+            await self.app(scope, counted_receive, guarded_send)
+        except _BodyLimit:
+            pass
+        if exceeded and not refused:
+            await self._refuse(send)
+
+    async def _refuse(self, send):
+        body = (b'{"detail":"request body exceeds the '
+                + str(self.max_bytes).encode() + b'-byte limit"}')
+        await send({"type": "http.response.start", "status": 413,
+                    "headers": [(b"content-type", b"application/json"),
+                                (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})
+
+
 def create_app(store=None, token: str | None = None) -> FastAPI:
     """Build the ingest app.
 
@@ -133,6 +204,7 @@ def create_app(store=None, token: str | None = None) -> FastAPI:
     app = FastAPI(title="odb_scanner cloud ingest", version="1.0.0")
     app.state.store = store
     app.state.token = token
+    app.add_middleware(BodySizeLimitMiddleware)
 
     @app.get("/healthz")
     def healthz() -> dict:
