@@ -29,9 +29,14 @@ This system performs **no writes to the vehicle**. Enforced structurally in
 * The LLM has no path to the adapter whatsoever.
 
 **One deliberate exception: `tools/elm_console.py --raw-unsafe`.** The
-console is read-only by default: `AT`/`ST` adapter commands are sent as typed,
-and every vehicle request must pass the same `validate_request` allow-list, so
-a stray `2E`, `31`, `1002` or `14` is refused. Started with `--raw-unsafe` it
+console is read-only by default: every vehicle request must pass the same
+`validate_request` allow-list, so a stray `2E`, `31`, `1002` or `14` is
+refused, and adapter commands are allow-listed as well. Only commands that set
+addressing, display, timing or receive filters are accepted (`ATZ`, `ATI`,
+`ATSP`, `ATSH`, `ATCRA`, `ATCP`, `ATH`, ...). `ATCAF0`, the `ATFC...`
+flow-control commands and every OBDLink `ST...` command are refused, because
+they change what reaches the car without the request looking different:
+under `ATCAF0` a validated `0104` arrives as mode 04, clear emissions DTCs. Started with `--raw-unsafe` it
 sends whatever you type, with no allow-list — that mode exists for discovery
 work, says so on every prompt, and is the one place the guarantee above does
 not extend to. Everything else — `collect`, `discover`, `doctor`,

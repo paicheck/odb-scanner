@@ -692,7 +692,8 @@ Car Scanner 431.25–431.75 V band, across ≥3 readings. Then expand.
   `tools/diagnose_meb_path.py` sends only allow-listed services.
 - `tools/elm_console.py --raw-unsafe` is the one documented exception (not
   read-only) and is not part of any planned path; without the flag the console
-  uses the same allow-list.
+  uses the same allow-list for requests and an allow-list of adapter commands
+  (no `ATCAF0`, `ATFC...` or `ST...`).
 - `guard-test` must keep passing; baseline is 210 tests, ruff clean, smoke 24/0/1.
 
 ---

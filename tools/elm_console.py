@@ -1,10 +1,19 @@
 """Interactive ELM327 console for live diagnostics at the vehicle.
 
-READ-ONLY BY DEFAULT. Adapter commands (AT..., and ST... on OBDLink) configure
-the adapter itself and are sent as typed; every other line is checked by
+READ-ONLY BY DEFAULT. Vehicle requests are checked by
 diagnostic/uds.validate_request -- the same allow-list the collector uses -- so
 a stray 2E (write data), 31 (routine control), 1002 (programming session) or
 14 (clear DTCs) is refused instead of reaching the vehicle.
+
+Adapter commands are allow-listed too, not waved through because they start
+with "AT". Several of them change what reaches the car without the request
+itself looking any different: ATCAF0 turns off ISO-TP formatting, so a
+validated "0104" goes out with 0x01 as the PCI byte and the ECU receives mode
+04 (clear emissions DTCs); ATFCSD/ATFCSM make the adapter send arbitrary bytes
+as the flow-control frame of the next multi-frame read; OBDLink's STPX sends
+anything at all. So only commands that configure addressing, display,
+timing or the receive side are accepted (see SAFE_ADAPTER_COMMANDS); anything
+else, and every ST... command, needs --raw-unsafe.
 
 *** --raw-unsafe TURNS THAT OFF. ***
 
@@ -31,6 +40,7 @@ Useful commands:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -42,9 +52,11 @@ from diagnostic.elm327 import Elm327Transport  # noqa: E402
 from diagnostic.interface import CommunicationError  # noqa: E402
 from diagnostic.uds import ReadOnlyViolationError, validate_request  # noqa: E402
 
-HELP_TEXT = """Read-only: AT/ST adapter commands are sent as typed; vehicle requests must
-pass the project's read-only allow-list (0100, 0902, 03, 22xxxx, 1001, 19xx,
-3E00, ...). Start with --raw-unsafe to send anything, writes included.
+HELP_TEXT = """Read-only: vehicle requests must pass the project's read-only allow-list
+(0100, 0902, 03, 22xxxx, 1001, 19xx, 3E00, ...), and only adapter commands that
+cannot change what reaches the car are accepted (ATZ, ATI, ATSP, ATSH, ATCRA,
+ATCP, ATH, ATE, ATRV, ...; not ATCAF0, ATFC..., or any ST command).
+Start with --raw-unsafe to send anything, writes included.
 
 commands:
   <ELM327 or UDS command>    e.g. 0100, 0902, 03, ATSP0, ATSH7E5, 22F190
@@ -64,9 +76,40 @@ commands:
 """
 
 
+# ELM327 commands (datasheet v2.x) that only configure addressing, display,
+# timing or what the adapter listens to. None of them sends bytes on its own
+# or changes how a validated request is framed, so a request that passed
+# validate_request still reaches the ECU as exactly that request. Matched
+# against the command upper-cased with spaces removed.
+#
+# Deliberately absent, so refused without --raw-unsafe:
+#   CAF0 (raw framing: the first data byte becomes the PCI byte), CEA
+#   (extended addressing), FC* and CFC (flow-control content), V (variable
+#   DLC), AL (long messages); RTR, WM, FI, SI, BI (transmit on their own:
+#   remote frames, wake-up messages, ISO initialisation); MA/MR/MT and CSM
+#   (monitor modes; CSM0 makes the adapter acknowledge bus traffic); PP, SD
+#   and @3 (write the adapter's EEPROM); R0 (stop waiting for responses);
+#   baud-rate changes. Anything not listed is refused by default.
+SAFE_ADAPTER_COMMANDS = re.compile(
+    r"^AT(?:"
+    r"Z|WS|D|I|@1|DP|DPN|RV|CS|PC|AR|CAF1|R1|D[01]|"
+    r"[ELSH][01]|AT[0-2]|ST[0-9A-F]{2}|"
+    r"[ST]PA?[0-9A-C]|"
+    r"SH(?:[0-9A-F]{3}|[0-9A-F]{6}|[0-9A-F]{8})|"
+    r"CRA(?:[0-9A-FX]{3}|[0-9A-FX]{8})?|"
+    r"CP[0-9A-F]{2}|"
+    r"C[FM](?:[0-9A-F]{3}|[0-9A-F]{8})"
+    r")$")
+
+
 def is_adapter_command(cmd: str) -> bool:
-    """AT (ELM327) and ST (OBDLink) lines configure the adapter, not the car."""
+    """AT (ELM327) and ST (OBDLink) lines address the adapter, not the car."""
     return cmd.strip()[:2].upper() in ("AT", "ST")
+
+
+def normalise_adapter_command(cmd: str) -> str:
+    """Upper case, internal spaces removed: 'at sh 7e0' -> 'ATSH7E0'."""
+    return "".join(cmd.split()).upper()
 
 
 def refusal(cmd: str, raw_unsafe: bool) -> str | None:
@@ -74,10 +117,16 @@ def refusal(cmd: str, raw_unsafe: bool) -> str | None:
 
     Vehicle requests go through the same validate_request the collector's
     _transmit uses, so the console refuses exactly what the rest of the
-    project refuses.
+    project refuses. Adapter commands must match SAFE_ADAPTER_COMMANDS.
     """
-    if raw_unsafe or is_adapter_command(cmd):
+    if raw_unsafe:
         return None
+    if is_adapter_command(cmd):
+        if SAFE_ADAPTER_COMMANDS.match(normalise_adapter_command(cmd)):
+            return None
+        return (f"adapter command {cmd.strip()!r} is not on the read-only "
+                "allow-list: it can change how requests are framed or send "
+                "bytes on its own. Use --raw-unsafe if you really mean it.")
     try:
         validate_request(cmd)
     except ReadOnlyViolationError as exc:
