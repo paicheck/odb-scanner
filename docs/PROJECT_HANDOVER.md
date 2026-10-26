@@ -54,10 +54,12 @@ structurally in `diagnostic/uds.py`, the *only* module that builds UDS requests.
 
 **Two deliberate exceptions:**
 
-1. `tools/elm_console.py` is a raw, no-allow-list console for debugging. If you
-   type `2E`, `31`, `14` there, it reaches the car. Everything else — `collect`,
-   `discover`, `doctor`, `guard-test`, the dashboard — goes through the
-   allow-list. Do not assume `elm_console.py` is safe.
+1. `tools/elm_console.py --raw-unsafe` is a no-allow-list console for
+   debugging. If you type `2E`, `31`, `14` in that mode, it reaches the car.
+   Without the flag the console passes `AT`/`ST` adapter commands through and
+   refuses any vehicle request `validate_request` refuses. Everything else —
+   `collect`, `discover`, `doctor`, `guard-test`, the dashboard — goes through
+   the allow-list.
 2. `tools/read_abs_wheel_speeds.py` is a narrow, approval-gated ABS reader. The
    normal allow-list still refuses `0x10 0x03`; this tool can send **exactly
    one** `0x10 0x03` on `0x713` after `--execute --approve-session-change`, then

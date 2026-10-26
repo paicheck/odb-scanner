@@ -690,8 +690,9 @@ Car Scanner 431.25–431.75 V band, across ≥3 readings. Then expand.
 - `0x27`, `0x2E`, `0x31`, `0x14`, `0x30`, `0x37`, flashing: never sent.
 - `diagnostic/uds.py:202` `validate_request()` remains the single choke point;
   `tools/diagnose_meb_path.py` sends only allow-listed services.
-- `tools/elm_console.py` is the one documented exception (not read-only) and is
-  not part of any planned path.
+- `tools/elm_console.py --raw-unsafe` is the one documented exception (not
+  read-only) and is not part of any planned path; without the flag the console
+  uses the same allow-list.
 - `guard-test` must keep passing; baseline is 210 tests, ruff clean, smoke 24/0/1.
 
 ---

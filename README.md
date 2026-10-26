@@ -28,11 +28,13 @@ This system performs **no writes to the vehicle**. Enforced structurally in
   (safety manifest).
 * The LLM has no path to the adapter whatsoever.
 
-**One deliberate exception: `tools/elm_console.py` is not read-only.** It is a
-raw console that sends whatever you type, with no allow-list, so `2E`, `31`,
-`1002` and `14` reach the vehicle if you enter them. That is the point of a
-discovery tool, and it is why the guarantee above does not extend to it. It
-says so on startup. Everything else — `collect`, `discover`, `doctor`,
+**One deliberate exception: `tools/elm_console.py --raw-unsafe`.** The
+console is read-only by default: `AT`/`ST` adapter commands are sent as typed,
+and every vehicle request must pass the same `validate_request` allow-list, so
+a stray `2E`, `31`, `1002` or `14` is refused. Started with `--raw-unsafe` it
+sends whatever you type, with no allow-list — that mode exists for discovery
+work, says so on every prompt, and is the one place the guarantee above does
+not extend to. Everything else — `collect`, `discover`, `doctor`,
 `guard-test`, the dashboard — goes through the allow-list.
 
 ### Network exposure — read this before connecting it to anything
@@ -332,7 +334,7 @@ the scheme.
 | `python main.py report` | Print AI report to console (`--question "..."`) |
 | `python tools/smoke_test.py` | Offline end-to-end self-test (no car, no Ollama) |
 | `python tools/collect_acceptance.py` | One bounded live run, then check the database holds pack voltage / SoC / cells (`--sim` for an offline self-test) |
-| `python tools/elm_console.py` | Raw ELM327 console for live debugging (`--tcp` for simulator) |
+| `python tools/elm_console.py` | ELM327 console for live debugging, read-only allow-list (`--tcp` for simulator, `--raw-unsafe` for no allow-list) |
 | `python tools/start_scanner.py` | Start/stop the simulated stack (`--status`, `--stop`) |
 | `python tools/import_carscanner.py "export.csv"` | Import a Car Scanner CSV as evidence labelled `imported` (`--dry-run` previews) |
 | `python tools/build_observations_db.py` | Build the normalised SQL analysis copy `data/observations.db` (`--force` rebuilds; see [docs/OBSERVATIONS_DB.md](docs/OBSERVATIONS_DB.md)) |
