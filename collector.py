@@ -1,10 +1,13 @@
 """Diagnostic collector: connects, discovers, reads, stores. READ-ONLY.
 
-Everything it transmits is logged via repo.log_tx with a purpose string.
-It only uses DiagnosticConnection methods, which can only produce:
+Every vehicle request it transmits is logged via repo.log_tx with a purpose
+string (the adapter's AT configuration commands are not vehicle requests and
+are not logged). It only uses DiagnosticConnection methods, which can only
+produce:
   * ELM327 AT commands (configuration, not vehicle commands)
   * OBD-II modes 01/03/09 (read)
-  * UDS 0x10 0x01, 0x22, 0x19 0x02 (read) — enforced by diagnostic/uds.py
+  * UDS 0x10 0x01, 0x22, 0x19 0x02/0x04 (read) — enforced by
+    diagnostic/uds.py:validate_request at DiagnosticConnection._transmit
 """
 from __future__ import annotations
 

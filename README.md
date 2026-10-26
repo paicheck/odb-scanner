@@ -15,20 +15,36 @@ VW ID.3 → OBD-II port → ELM327/OBDLink (USB) → Windows PC
 
 ## Safety — READ ONLY
 
-This system performs **no writes to the vehicle**. Enforced structurally in
-`diagnostic/uds.py`, the only module that builds UDS requests:
+This system performs **no writes to the vehicle**. The allow-list is
+`diagnostic/uds.py:validate_request`, and the choke point that applies it is
+`diagnostic/connection.py:DiagnosticConnection._transmit`: the request is
+reduced to one canonical hex string (anything but hex digits and spaces is
+refused), and that same string is validated, logged and sent.
 
-* Allowed: `0x10` (default session), `0x22` ReadDataByIdentifier,
-  `0x19 0x02` ReadDTCInformation, `0x3E` TesterPresent, OBD-II modes 01/03/09.
+* Allowed: `0x10 0x01` (default session only), `0x22` ReadDataByIdentifier,
+  `0x19` ReadDTCInformation with the read sub-functions `0x01`–`0x09`,
+  `0x3E` TesterPresent, OBD-II modes 01/03/09. At most 7 bytes (one CAN frame).
 * Blocked (raises `ReadOnlyViolationError`): `0x14` clear DTCs, `0x27`
   security access, `0x2E` write data, `0x31` routine control, `0x2F` actuator
   control, `0x34–0x37` flashing, `0x28/0x85` communication control, and all
   others. There is **no API to send arbitrary payloads**.
-* Every transmitted request is written to the `tx_log` table with its purpose
-  (safety manifest).
+* Every vehicle request sent through `DiagnosticConnection` is written to the
+  `tx_log` table with its purpose (safety manifest). Not logged there: the
+  adapter's own AT configuration commands, the one `0100` warm-up inside
+  `Elm327Transport.initialize()` (validated, but sent before the manifest
+  exists), and `tools/diagnose_meb_path.py`, which validates every line but
+  never opens the car's database -- its record is its printed transcript.
 * The LLM has no path to the adapter whatsoever.
 
-**One deliberate exception: `tools/elm_console.py --raw-unsafe`.** The
+**Exceptions, all deliberate and all opt-in:**
+
+1. **`tools/read_abs_wheel_speeds.py --execute --approve-session-change`**
+   sends exactly one `0x10 0x03` (extended session) to the ABS module, which
+   the normal allow-list refuses. It is token-gated, sent only when physical
+   addressing to 0x713 is confirmed (never on the broadcast header), accepted
+   only from the ABS response id 0x77D, and followed by `0x10 0x01` in a
+   `finally` block. It has not been run against the car.
+2. **`tools/elm_console.py --raw-unsafe`.** The
 console is read-only by default: every vehicle request must pass the same
 `validate_request` allow-list, so a stray `2E`, `31`, `1002` or `14` is
 refused, and adapter commands are allow-listed as well. Only commands that set
@@ -39,8 +55,12 @@ they change what reaches the car without the request looking different:
 under `ATCAF0` a validated `0104` arrives as mode 04, clear emissions DTCs. Started with `--raw-unsafe` it
 sends whatever you type, with no allow-list — that mode exists for discovery
 work, says so on every prompt, and is the one place the guarantee above does
-not extend to. Everything else — `collect`, `discover`, `doctor`,
-`guard-test`, the dashboard — goes through the allow-list.
+not extend to at all.
+
+Everything else — `collect`, `discover`, `doctor`, the capture tools, the
+dashboard — goes through the allow-list. `python main.py guard-test` checks
+the allow-list *and* the transmit paths (canonical string, approved-session
+addressing, console refusals) without opening an adapter.
 
 ### Network exposure — read this before connecting it to anything
 

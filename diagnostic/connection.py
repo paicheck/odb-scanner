@@ -1,10 +1,12 @@
 """Diagnostic connection: session handling, UDS reads, tx logging.
 
-Every transmitted request is passed to `tx_logger(direction, ecu, payload,
-purpose)` so the database holds a complete manifest of what was sent to the
-vehicle and why (safety requirement #16). No method here can produce a
-write request — the payload space is limited to the UDS allow-list and
-standard OBD-II read modes.
+Every request transmitted through this class is passed to
+`tx_logger(direction, ecu, payload, purpose)` so the database holds a manifest
+of what was sent to the vehicle and why (safety requirement #16). The adapter's
+AT configuration commands are not requests to the vehicle and are not logged.
+No method here can produce a write request: _transmit validates, logs and sends
+one canonical string, limited to the UDS allow-list and the standard OBD-II
+read modes.
 """
 from __future__ import annotations
 

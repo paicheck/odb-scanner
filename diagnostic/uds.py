@@ -2,8 +2,12 @@
 
 SAFETY ARCHITECTURE
 -------------------
-This module is the only place in the codebase that constructs UDS requests.
-The request builders refuse any service outside the read allow-list:
+This module defines what may be sent; DiagnosticConnection._transmit (and on
+Android, Elm327Protocol.sendRead) is where it is enforced. Requests are built
+in several places -- the connection's read helpers, the collector, the
+diagnostic tools -- so the guarantee comes from every one of them passing
+through validate_request, not from requests being built only here. The
+allow-list:
 
     0x10  DiagnosticSessionControl (default session ONLY, sub-function 0x01)
     0x22  ReadDataByIdentifier
@@ -105,14 +109,12 @@ MIN_REQUEST_BYTES: dict[int, int] = {
 # Nothing this tool sends is longer than a single read request, and this is the
 # longest one that can actually be framed.
 #
-# 7, not 15. ISO-TP puts at most 7 data bytes in a single CAN frame, and the
-# MEB addressing path in connection.py builds that frame by hand:
-#     wire = (f"{len(body)//2:02X}{body}" + "55"*8)[:16]
-# which hard-truncates at 16 hex chars. At a 15-byte cap the validator would
-# approve a request whose trailing bytes were silently dropped in transit, and
-# the ECU would answer 0x13 incorrectMessageLengthOrInvalidFormat -- a
-# correctness bug at best, and a request the safety manifest recorded in full
-# while the vehicle received a fragment of it at worst.
+# 7, not 15. ISO-TP puts at most 7 data bytes in a single CAN frame, and
+# nothing here implements multi-frame transmission: requests go out bare with
+# the adapter's auto-formatting adding the single-frame PCI byte. (The MEB path
+# once hand-built that frame and truncated it at 16 hex characters; at a
+# 15-byte cap the validator approved requests whose tail was silently dropped,
+# so the manifest recorded in full what the vehicle received only in part.)
 #
 # The longest request actually sent is 6 bytes (1904<DTC>FF, a DTC snapshot
 # for one status mask). Raising this means implementing ISO-TP multi-frame
