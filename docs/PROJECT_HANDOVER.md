@@ -1,6 +1,6 @@
 # odb_scanner — Project Handover
 
-**Last updated:** 2026-10-23 · **Git HEAD:** `main` (2026-10-23 gateway-scan evidence pass) · **Test suite:** 765 passing
+**Last updated:** 2026-10-26 · **Git HEAD:** `project-review-fixes` (2026-10-26 project review) · **Test suite:** 926 passing
 
 This document is the "hand this to the next person" summary. It explains what the
 project is, how it is put together, what state it is in, and — most importantly —
@@ -101,7 +101,7 @@ stays quarantined. `0x5867` is pinned to a 10 km/LSB counter with a constant
 decoders and an approval-gated reader are prepared but **not executed**; the
 ordinary allow-list still refuses `0x10 0x03`. A sanitised evidence archive
 excludes the raw phone log, and the strict expected-value archive passes 5/5
-with non-null expected values. **765 tests pass.** On 2026-10-22 the live
+with non-null expected values. **926 tests pass** (2026-10-26). On 2026-10-22 the live
 gateway scan succeeded: **9/9 DIDs, 0 NRC, 0 timeouts**, only UDS `0x22`, no
 session change; it is archived as `live_gateway_scan_20261022.json` plus a
 manifest. The follow-up `0x27C4` cold-soak/defroster test captured a baseline
@@ -122,18 +122,18 @@ the car; no writes or session changes are part of that plan.
 | `decoders/` | The measurement data model (see §5) — `registry.py`, `catalogue.py`, `quality.py`, `meb.py`, `gateway.py`, `bms.py` |
 | `database/` | SQLite schema + `Repository` (`models.py`, `repository.py`) |
 | `analysis/` | Statistics, anomaly detection, freshness/provenance, series/trends, discovery |
-| `web/` | FastAPI dashboard + Jinja2 templates |
+| `web/` | FastAPI dashboard: `dashboard.py` (app setup, auth, shared helpers), `routes/` (one module per page area), Jinja2 templates |
 | `ai/` | Ollama integration (report generation) |
 | `simulator/` | Built-in ID.3 simulator (TCP ELM327, no car needed) |
 | `gui/` | Desktop window (`0_OPEN_GUI.bat`) |
 | `android/` | Kotlin/Compose client + its own `Decode.kt` (mirrors `decoders/meb.py`) |
-| `cloud/` | Optional MySQL ingest API |
+| `cloud/` | Optional MySQL ingest API: `api.py` (FastAPI, Docker/VPS) and `wsgi.py` (plain WSGI, cPanel), one shared contract test suite |
 | `spec/odb_scanner.json` | Generated shared spec consumed by the Android client (source of truth for DID addresses/scales) |
-| `tests/` | 765 tests (no car, no Ollama required) |
+| `tests/` | 926 tests (no car, no Ollama required) |
 | `tools/` | Scripts: `smoke_test.py`, `doctor` helpers, `replay_decoder_impact.py`, `validate_measurement_capture.py`, `export_validation_capture.py`, `export_spec.py`, `export_catalogue.py`, … |
 | `research/measurement_discovery/` | The evidence package for the recent decoder work (see §7) |
 | `docs/investigation/` | Historical investigation notes, replay reports, gateway-energy passive-capture writeups |
-| `data/` | SQLite databases + logs (mostly gitignored; `data/odb_scanner.db` is the real car's DB) |
+| `data/` | SQLite databases + logs (mostly gitignored). The real car's live DB is `database.path`; on the owner's machine `config.local.yaml` puts it at `C:/Users/kings/odb_data/odb_scanner.db`, outside OneDrive, with backups still in `data/backups/` |
 
 Top-level `.bat` files (`0_OPEN_GUI.bat` … `5_TRY_IT_NOW.bat`) are double-click
 shortcuts that wrap `main.py` / `tools/start_scanner.py`.
@@ -187,8 +187,8 @@ copy config.local.yaml.example config.local.yaml     :: optional, gitignored
 
 ```bat
 .venv\Scripts\python tools\smoke_test.py              :: end-to-end self-test
-.venv\Scripts\python -m pytest tests -q               :: 765 tests
-.venv\Scripts\python -m pytest -m "not slow"          :: 748-test fast subset
+.venv\Scripts\python -m pytest tests -q               :: 926 tests
+.venv\Scripts\python -m pytest -m "not slow"          :: 909-test fast subset
 .venv\Scripts\python -m ruff check .                  :: lint (clean)
 ```
 
@@ -330,12 +330,13 @@ raw bytes remain the source of truth.
 
 ## 8. Test, lint, and CI status
 
-- **Tests:** 765 passing (`python -m pytest tests -q`); 748 in the fast subset
+- **Tests:** 926 passing (`python -m pytest tests -q`); 909 in the fast subset
   (`-m "not slow"`). No car or Ollama needed.
 - **Lint:** `ruff check .` passes clean. Two rules are intentionally ignored in
   `pyproject.toml` (`E402`, `B905`).
 - **CI:** `.github/workflows/ci.yml` runs lint, fast tests, full suite, smoke
-  test, and `guard-test` on Python 3.11–3.14.
+  test, and `guard-test` on Python 3.11–3.14 (Ubuntu), plus a Windows job
+  (fast tests, smoke test, `guard-test` on 3.14) and the Android unit tests.
 - **Android parity:** `android/.../spec/Decode.kt` mirrors the Python decoders and
   `DecodeTest.kt` pins them against the same vectors. Verified passing on this
   machine (`gradlew :app:testDebugUnitTest` → 9 tests, 0 failures; JDK is
@@ -449,7 +450,7 @@ report, so a PASS is visibly tied to it.
 
 ## 12. Handoff checklist
 
-- [ ] Run `python -m pytest tests -q` — expect 765 passed.
+- [ ] Run `python -m pytest tests -q` — expect 926 passed (or more, as tests are added).
 - [ ] Run `python main.py guard-test` — confirms the read-only guard.
 - [ ] Run `python tools/smoke_test.py` — confirms the whole pipeline without a car.
 - [ ] Run `python tools/audit_payload_findings.py` — re-checks the payload
