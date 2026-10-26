@@ -140,23 +140,28 @@ def downsample(points: list[tuple[float, float]], max_points: int | None,
 
 def numeric_payload(ts_list: list[str], values: list, *,
                     max_points: int | None = 1500,
-                    method: str = "min_max") -> dict:
+                    method: str = "min_max",
+                    provenance: list | None = None) -> dict:
     """Chart payload for a numeric series.
 
     Rows where the value is not numeric are skipped rather than coerced: a
     text row (`gear` = "P") has no place on a numeric axis, and turning it into
     0 would draw a reading that was never made.
+
+    `provenance`, when given, is aligned with `values`; the kept points carry
+    their own entry so a downsampled imported reading is still labelled
+    imported in the chart.
     """
-    pairs: list[tuple[float, float]] = []
-    for ts, value in zip(ts_list, values):
+    pairs: list[tuple[str, float, int]] = []
+    for i, (ts, value) in enumerate(zip(ts_list, values)):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             continue
-        pairs.append((ts, float(value)))  # type: ignore[arg-type]
+        pairs.append((ts, float(value), i))  # type: ignore[arg-type]
     xs = _seconds([p[0] for p in pairs])
     points = list(zip(xs, [p[1] for p in pairs]))
     kept = downsample(points, max_points, method)
     kept_idx = _map_back(points, kept)
-    return {
+    out = {
         "ts": [pairs[i][0] for i in kept_idx],
         "value": [pairs[i][1] for i in kept_idx],
         "raw_points": len(pairs),
@@ -164,6 +169,9 @@ def numeric_payload(ts_list: list[str], values: list, *,
         "downsampled": len(kept_idx) < len(pairs),
         "method": method if len(kept_idx) < len(pairs) else "none",
     }
+    if provenance is not None:
+        out["provenance"] = [provenance[pairs[i][2]] for i in kept_idx]
+    return out
 
 
 def _map_back(points: list[tuple[float, float]],

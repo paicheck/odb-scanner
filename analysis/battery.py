@@ -84,6 +84,50 @@ def cell_delta_trend(repo, days: int = 30, vehicle_id: int | None = None,
     }
 
 
+def cell_sweeps(rows, expected_cells: int | None = None) -> dict:
+    """Per-sweep min / max / spread from individual cell readings.
+
+    `rows` are ``(ts, cell_index, voltage_v)`` ordered by ts. Cell identity is
+    kept: each sweep reports WHICH cell was lowest and highest (``number`` is
+    the 1-based cell number the catalogue uses, ``index`` the stored 0-based
+    slot). Missing slots are counted against ``expected_cells`` (the number of
+    cell DIDs in the registry) so an incomplete sweep cannot pass for a full
+    one.
+
+    No imbalance verdict is produced: the catalogue documents no
+    manufacturer limit for this pack, so the spread is reported as a number.
+    """
+    by_ts: dict[str, list[tuple[int, float]]] = {}
+    for ts, idx, v in rows:
+        if v is None:
+            continue
+        by_ts.setdefault(ts, []).append((int(idx), float(v)))
+    sweeps = []
+    for ts, cells in by_ts.items():
+        lo = min(cells, key=lambda c: (c[1], c[0]))
+        hi = max(cells, key=lambda c: (c[1], -c[0]))
+        sweeps.append({
+            "ts": ts, "cells": len(cells),
+            "min_v": lo[1], "min_cell": lo[0] + 1, "min_index": lo[0],
+            "max_v": hi[1], "max_cell": hi[0] + 1, "max_index": hi[0],
+            "spread_mv": round((hi[1] - lo[1]) * 1000.0, 1),
+            "missing": (max(0, expected_cells - len({c[0] for c in cells}))
+                        if expected_cells else None),
+        })
+    latest = None
+    if by_ts:
+        ts = list(by_ts)[-1]
+        present = {i for i, _ in by_ts[ts]}
+        missing = ([n + 1 for n in range(expected_cells) if n not in present]
+                   if expected_cells else [])
+        latest = {"ts": ts,
+                  "cells": [{"number": i + 1, "index": i, "voltage_v": v}
+                            for i, v in sorted(by_ts[ts])],
+                  "missing_numbers": missing}
+    return {"sweeps": sweeps, "latest": latest,
+            "expected_cells": expected_cells}
+
+
 def battery_overview(repo, days: int = 30, vehicle_id: int | None = None) -> dict:
     """Aggregate battery health statistics for dashboard / LLM context."""
     hist = repo.battery_history(days, vehicle_id)

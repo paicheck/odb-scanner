@@ -12,6 +12,7 @@ import csv
 import io
 import json
 import logging
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -68,10 +69,126 @@ def _format_value(value):
 
 _templates.env.filters["fmtvalue"] = _format_value
 
+
+def _format_number(value, decimals=1):
+    """Fixed-precision number for chart summaries; missing stays "—".
+
+    `decimals` comes from `analysis.chart_semantics.decimals_for`, so a summary
+    never shows more digits than the axis/tooltip for the same series.
+    """
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "—"
+    return f"{value:.{int(decimals)}f}"
+
+
+def _format_ts(ts):
+    """Observation timestamp for display, with its timezone made explicit.
+
+    Stored stamps are ISO-8601; a `+00:00` stamp is shown as UTC, anything
+    else keeps its own offset rather than being silently relabelled.
+    """
+    if not ts:
+        return "—"
+    ts = str(ts)
+    if ts.endswith("+00:00"):
+        return ts[:19].replace("T", " ") + " UTC"
+    return ts.replace("T", " ")
+
+
+_templates.env.filters["fmtnum"] = _format_number
+_templates.env.filters["fmtts"] = _format_ts
+
 # The question is the only unbounded user input in the app: it goes into an
 # LLM prompt and, on the default model, occupies a GPU for minutes. Without a
 # cap a single request can stall the box for anyone else using it.
 MAX_QUESTION_CHARS = 1000
+
+# ---------------------------------------------------------------------------
+# Chart panels. Each panel answers one question; `assemble_panels` refuses to
+# put two units on one axis unless a panel explicitly asks for a labelled
+# second axis (`dual`). `visible` limits which series are drawn by default --
+# the others stay one checkbox away.
+# ---------------------------------------------------------------------------
+
+OVERVIEW_PANELS = [
+    {"id": "ov-soc-v", "title": "State of charge and pack voltage",
+     "question": "How full was the pack, and what voltage did it report?",
+     "keys": ["soc_abs", "pack_voltage"], "dual": True,
+     "note": "Two units, two labelled axes: SoC (BMS, %) on the left, pack "
+             "voltage (V) on the right."},
+]
+
+BATTERY_PANELS = [
+    {"id": "soc", "title": "State of charge",
+     "question": "How full was the pack, by each SoC definition?",
+     "keys": ["soc_abs", "soc_normal"],
+     "note": "soc_abs is the BMS (absolute) figure and soc_normal the "
+             "display (normalised) figure. They are different definitions, "
+             "drawn as separate lines and never merged."},
+    {"id": "pack-v", "title": "HV pack voltage",
+     "question": "What terminal voltage did the BMS report?",
+     "keys": ["pack_voltage"]},
+    {"id": "pack-i", "title": "HV pack current",
+     "question": "How much current flowed, and in which direction?",
+     "keys": ["pack_current"],
+     "note": "Plotted with the sign as decoded. The catalogue does not "
+             "document which sign means charging."},
+    {"id": "pack-p", "title": "HV pack power (calculated)",
+     "question": "What power did voltage × current imply?",
+     "keys": ["pack_power_kw"],
+     "note": "CALCULATED by the collector as pack voltage × pack current; "
+             "not a vehicle report."},
+    {"id": "cell-minmax", "title": "Lowest and highest cell voltage (BMS)",
+     "question": "What did the BMS report as the extreme cell voltages?",
+     "keys": ["cell_voltage_max", "cell_voltage_min"]},
+    {"id": "temp", "title": "HV battery temperatures",
+     "question": "How warm was the pack?",
+     "keys": ["battery_temp", "bat_temp_max", "bat_temp_min"],
+     "note": "Three BMS temperature signals for the same pack. The catalogue "
+             "does not document the sensor locations, so they are shown side "
+             "by side, not combined."},
+    {"id": "energy", "title": "HV energy content (vehicle-reported)",
+     "question": "How much energy did the BMS say the pack held?",
+     "keys": ["hv_energy_content", "hv_energy_max"],
+     "note": "hv_energy_content is the energy currently held; hv_energy_max is "
+             "the BMS-rated maximum. Neither is a measured total capacity."},
+    {"id": "lv", "title": "12 V system voltage",
+     "question": "What did the 12 V system read?",
+     "keys": ["lv_voltage_obd", "aux_12v_voltage"],
+     "note": "Two independent sources: the OBD-II PID 0x42 module supply "
+             "voltage and the BMS 12 V battery reading."},
+]
+
+RANGE_PANELS = [
+    {"id": "range", "title": "Estimated remaining range (vehicle estimate)",
+     "question": "How far did the vehicle predict it could still go?",
+     "keys": ["range_displayed", "range_can", "range_internal"],
+     "visible": ["range_displayed"],
+     "note": "Predictions computed by the vehicle — not distance travelled "
+             "and not a measure of battery health. The catalogue marks all "
+             "three UNKNOWN (scaling not independently confirmed)."},
+    {"id": "range-soc", "title": "State of charge (BMS)",
+     "question": "How full was the pack over the same period?",
+     "keys": ["soc_abs"]},
+    {"id": "odo", "title": "Odometer",
+     "question": "How far had the car actually travelled?",
+     "keys": ["odometer_km"],
+     "note": "Cumulative distance counter: the axis is fitted to the data and "
+             "does not start at zero."},
+    {"id": "consumption", "title": "Average consumption reported by the vehicle",
+     "question": "What consumption figures did the vehicle store?",
+     "keys": [f"road_avg_consumption_{i}" for i in range(7)],
+     "visible": ["road_avg_consumption_0"],
+     "note": "Vehicle-reported figures. What categories 0–6 represent is "
+             "UNRESOLVED in the catalogue, so they are shown as separate "
+             "series and never averaged together."},
+]
+
+# Pairing tolerance for range-vs-SoC: the two DIDs are polled in the same
+# collector cycle, so readings more than this far apart are not compared.
+RANGE_SOC_PAIR_TOLERANCE_S = 120.0
+
+_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_]{1,80}$")
 
 
 def _redirect(url: str) -> RedirectResponse:
@@ -90,6 +207,23 @@ def _first_number(*values):
         if value is not None:
             return value
     return None
+
+
+def _int_param(request: Request, name: str, default: int, lo: int, hi: int) -> int:
+    """Read a bounded integer query parameter, falling back to `default`.
+
+    Used by the timeline and event pages for the day/hour window controls. A
+    non-numeric or out-of-range value must not 500 the page or open an unbounded
+    query; it falls back to the default and is clamped into [lo, hi].
+    """
+    raw = request.query_params.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(value, hi))
 
 
 def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
@@ -318,7 +452,9 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
                 "Explore",
                 "Status",
                 "Battery",
+                "Range",
                 "Faults",
+                "Timeline",
                 "Charging",
                 "Quality",
                 "Investigations",
@@ -371,16 +507,10 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             charging_analysis.session_comparison(repo, vid, charging_days) if vid else {}
         )
         anomalies = [dict(a) for a in repo.anomalies(vid, days)] if vid else []
-        history = repo.battery_history(days, vid) if vid else []
-        overview_chart = {
-            "ts": [r["ts"] for r in history],
-            "soc": [
-                r["soc_normal_pct"] if r["soc_normal_pct"] is not None
-                else r["soc_abs_pct"]
-                for r in history
-            ],
-            "pack_v": [r["pack_voltage_v"] for r in history],
-        }
+        # Per-key series with their own observation timestamps. The chart used
+        # to read the battery snapshot table, which carries values forward and
+        # merged normalised and absolute SoC into one line.
+        panels = panels_context(OVERVIEW_PANELS, days)
         latest = repo.latest_measurements(vid, max_age_s=86400) if vid else {}
         lv = latest.get("lv_voltage_obd") or {}
         speed = latest.get("vehicle_speed") or {}
@@ -398,44 +528,162 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             anomalies=anomalies,
             days=days,
             live=live,
-            overview_chart=overview_chart,
             gap_s=chart_gap_s,
             bms_refusal=bms_refusal(),
+            **panels,
         )
+
+    def panels_context(defs: list[dict], days: int) -> dict:
+        """Template context for a set of chart panels: annotated series (one
+        query), unit-safe panels, a shared time axis and default visibility."""
+        from analysis.chart_semantics import assemble_panels, shared_x_range
+
+        keys = list(dict.fromkeys(k for d in defs for k in d["keys"]))
+        series = chart_series(keys, days)
+        visible = {}
+        for d in defs:
+            for k in d["keys"]:
+                visible[k] = k in d.get("visible", d["keys"])
+        return {
+            "panels": assemble_panels(defs, series),
+            "series": series,
+            "panel_data": {"series": series, "visible": visible,
+                           "x_range": shared_x_range(series),
+                           "gap_s": chart_gap_s},
+        }
+
+    def _window_days(request: Request) -> int:
+        return _int_param(request, "days", trend_days, 1, 3650)
+
+    def _windows(days: int) -> list[int]:
+        """Window choices, always including the one being shown, so the
+        selector never claims a different window from the chart."""
+        return sorted({1, 7, 14, 30, 90, 365, trend_days, days})
+
+    def _cell_sweep_series(vid, days: int):
+        """Spread of each full cell sweep, with which cells were lowest/highest.
+
+        Built from the individual `cell_voltages` readings (cell identity
+        preserved), not from the BMS min/max DIDs, so the two can be compared.
+        Uses the quality record of `cell_delta_mv`, the same quantity.
+        """
+        from analysis.chart_semantics import build_series
+        from decoders.quality import quality_for
+
+        registry = _registry_for_meta()
+        expected = sum(1 for s in registry.all() if s.key.startswith("cell_v_"))
+        rows = repo.cell_voltage_rows(vid, days) if vid else []
+        summary = battery_analysis.cell_sweeps(
+            [(r["ts"], r["cell_index"], r["voltage_v"]) for r in rows],
+            expected_cells=expected or None)
+        sweeps = summary["sweeps"]
+        series = build_series(
+            "cell_sweep_spread_mv",
+            [(s["ts"], s["spread_mv"], "calculated") for s in sweeps],
+            name="Cell voltage spread from individual cells (calculated)",
+            unit="mV", quality=quality_for(_profile(), "cell_delta_mv"),
+            gap_s=chart_gap_s, max_points=0)
+        series["point_notes"] = [
+            f"lowest cell #{s['min_cell']:03d} {s['min_v']:.3f} V, highest cell "
+            f"#{s['max_cell']:03d} {s['max_v']:.3f} V, {s['cells']} cells"
+            + (f", {s['missing']} missing" if s["missing"] else "")
+            for s in sweeps]
+        return series, summary
 
     @app.get("/battery", response_class=HTMLResponse)
     def battery_page(request: Request):
+        from analysis.chart_semantics import axis_for
+
         _, vid = vehicle_and_id()
-        rows = repo.battery_history(trend_days, vid) if vid else []
-        chart = {
-            "ts": [r["ts"] for r in rows],
-            "delta_mv": [r["cell_delta_mv"] for r in rows],
-            # `or` would treat a genuine 0 % SoC as missing and silently fall
-            # back to the absolute figure, which is the one number on this page
-            # that must never be fudged.
-            "soc": [_first_number(r["soc_normal_pct"], r["soc_abs_pct"]) for r in rows],
-            "pack_v": [r["pack_voltage_v"] for r in rows],
-            "temp": [r["battery_temp_c"] for r in rows],
-        }
+        days = _window_days(request)
         trend = (
-            battery_analysis.cell_delta_trend(repo, trend_days, vid)
+            battery_analysis.cell_delta_trend(repo, days, vid)
             if vid
             else {"status": "no vehicle"}
         )
-        lv_rows = (
-            repo.measurement_series(vid, "lv_voltage_obd", trend_days) if vid else []
-        )
-        lv_chart = {"ts": [r["ts"] for r in lv_rows], "v": [r["value"] for r in lv_rows]}
+        ctx = panels_context(BATTERY_PANELS, days)
+        sweep_series, sweeps = _cell_sweep_series(vid, days)
+        ctx["series"]["cell_sweep_spread_mv"] = sweep_series
+        ctx["panel_data"]["series"]["cell_sweep_spread_mv"] = sweep_series
+        ctx["panel_data"]["visible"]["cell_sweep_spread_mv"] = True
+        ctx["panels"].insert(4, {
+            "id": "cell-spread", "title": "Cell voltage spread per sweep",
+            "question": "How far apart were the lowest and highest cells?",
+            "note": "CALCULATED from each full sweep of individual cell readings "
+                    "(highest − lowest). The tooltip names the cells. No "
+                    "imbalance threshold is drawn: the catalogue documents no "
+                    "manufacturer limit for this pack.",
+            "left": ["cell_sweep_spread_mv"], "right": [],
+            "empty": sweep_series["stats"]["n"] == 0})
+        latest = sweeps["latest"]
+        latest_axis = axis_for("cell_v_000", "V",
+                               [c["voltage_v"] for c in latest["cells"]]
+                               if latest else [])
+        ctx["panel_data"]["cell_bar"] = (
+            {"latest": latest, "axis": latest_axis} if latest else None)
+        soh = ctx["series"].get("soh_pct") or chart_series(["soh_pct"], days)["soh_pct"]
         return render(
-            "battery.html",
-            request,
-            chart=chart,
-            trend=trend,
-            days=trend_days,
-            lv_chart=lv_chart,
-            gap_s=chart_gap_s,
-            bms_refusal=bms_refusal(),
+            "battery.html", request, trend=trend, days=days,
+            windows=_windows(days),
+            sweeps=sweeps, soh=soh, bms_refusal=bms_refusal(), **ctx,
         )
+
+    @app.get("/range", response_class=HTMLResponse)
+    def range_page(request: Request):
+        """Range estimates, state of charge, distance and vehicle-reported
+        consumption -- kept as distinct quantities.
+
+        Nothing here derives consumption from energy and distance: the inputs
+        available are either UNKNOWN-confidence or not segmented into
+        journeys, so such a figure would look precise without being so.
+        """
+        from analysis.chart_semantics import counter_delta, pair_nearest
+
+        _, vid = vehicle_and_id()
+        days = _window_days(request)
+        ctx = panels_context(RANGE_PANELS, days)
+        pairs, distance = [], counter_delta([])
+        if vid:
+            rows = {k: [] for k in ("range_displayed", "soc_abs", "odometer_km")}
+            for r in repo.measurement_series_many(vid, list(rows), days):
+                rows[r["key"]].append((r["ts"], r["value"]))
+            pairs = pair_nearest(rows["soc_abs"], rows["range_displayed"],
+                                 RANGE_SOC_PAIR_TOLERANCE_S)
+            distance = counter_delta(rows["odometer_km"])
+        ctx["panel_data"]["scatter"] = {
+            "pairs": pairs, "tolerance_s": RANGE_SOC_PAIR_TOLERANCE_S,
+            "x": {"label": "State of charge (BMS)", "unit_label": "%"},
+            "y": {"label": "Estimated range (displayed)", "unit_label": "km"},
+        }
+        return render(
+            "range.html", request, days=days,
+            windows=_windows(days),
+            pairs=pairs, distance=distance,
+            pair_tolerance_s=RANGE_SOC_PAIR_TOLERANCE_S, **ctx,
+        )
+
+    @app.get("/api/chart/series")
+    def api_chart_series(request: Request):
+        """Annotated series for up to 12 keys, read in one query.
+
+        Each series carries its catalogue unit and display label, axis policy
+        and range, raw (pre-downsampling) statistics, plausibility flags,
+        recording coverage and per-point provenance.
+        """
+        from analysis.chart_semantics import shared_x_range
+
+        raw = request.query_params.get("keys") or ""
+        keys = [k for k in (p.strip() for p in raw.split(",")) if k]
+        if not keys:
+            raise HTTPException(status_code=400, detail="keys is required")
+        if len(keys) > 12 or not all(_KEY_PATTERN.match(k) for k in keys):
+            raise HTTPException(status_code=400,
+                                detail="up to 12 keys of [A-Za-z0-9_]")
+        days = _window_days(request)
+        max_points = _int_param(request, "max_points", 1500, 20, 20000)
+        series = chart_series(list(dict.fromkeys(keys)), days, max_points)
+        return {"days": days, "gap_s": chart_gap_s,
+                "x_range": shared_x_range(series), "series": series}
 
     @app.get("/dtcs", response_class=HTMLResponse)
     def dtc_page(request: Request):
@@ -446,6 +694,67 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             else {}
         )
         return render("dtcs.html", request, dtcs=summary)
+
+    @app.get("/dtcs/{dtc_id}", response_class=HTMLResponse)
+    def dtc_detail(request: Request, dtc_id: int):
+        """One fault code's full story: occurrence history, warning-lamp
+        transitions, the ECU's freeze-frame snapshot, and the measurements the
+        car recorded around its latest occurrence.
+
+        The Faults page used to stop at a flat summary, so there was no way to
+        answer "when did this code actually appear and what was the car doing
+        at the time?". Raw snapshot bytes stay raw; nothing here interprets a
+        manufacturer-defined freeze-frame record it has not been told about.
+        """
+        from analysis.context import measurement_context
+
+        _, vid = vehicle_and_id()
+        row = repo.dtc(dtc_id) if vid else None
+        if row is None:
+            raise HTTPException(status_code=404, detail="No such DTC")
+
+        occurrences = [dict(r) for r in repo.conn.execute(
+            "SELECT id, ts, freeze_frame FROM dtc_occurrences "
+            "WHERE dtc_id=? ORDER BY ts", (dtc_id,)).fetchall()]
+
+        # Warning-lamp edges for this code, from its own status-byte history.
+        # Built from the DTC's own occurrences rather than the whole vehicle's
+        # status history so the page does not scan every DTC to describe one.
+        history = []
+        for o in occurrences:
+            status_byte = None
+            if o["freeze_frame"]:
+                try:
+                    status_byte = json.loads(o["freeze_frame"]).get("status_byte")
+                except (TypeError, ValueError):
+                    status_byte = None
+            history.append({"ts": o["ts"], "ecu": row["ecu"], "code": row["code"],
+                            "status_byte": status_byte})
+        transitions = dtc_analysis.detect_warning_transitions(history)
+
+        categories = (json.loads(row["categories"])
+                      if isinstance(row["categories"], str)
+                      else list(row["categories"]))
+
+        freeze_frame = repo.latest_freeze_frames(vid).get((row["ecu"], row["code"]))
+        snapshot_records = [
+            rec for e in (freeze_frame or {}).get("snapshot") or []
+            for rec in e.get("records") or []
+        ]
+
+        window_s = 6 * 3600.0
+        near_last = (measurement_context(repo, vid, row["last_seen"],
+                                         window_s=window_s) if vid else [])
+        for m in near_last:
+            meta = key_meta(m["key"])
+            m["name"] = meta["name"]
+            m["unit"] = m["unit"] or meta["unit"]
+
+        return render(
+            "dtc_detail.html", request, d=dict(row), categories=categories,
+            occurrences=occurrences, transitions=transitions,
+            snapshot_records=snapshot_records, near_last=near_last,
+        )
 
     @app.get("/charging", response_class=HTMLResponse)
     def charging_page(request: Request):
@@ -465,6 +774,56 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             sessions=[dict(s) for s in sessions],
             comparison=comparison,
             correlation=corr,
+        )
+
+    # Charging samples are written by the collector during a detected session;
+    # the table has no provenance or per-field source-key column, so each panel
+    # says what it is rather than borrowing a catalogue key's evidence level.
+    _SAMPLE_FIELDS = (
+        ("soc", "charging_soc", "State of charge (sampled during session)", "%"),
+        ("power_kw", "charging_power_kw",
+         "Instantaneous power (vehicle side, sampled)", "kW"),
+        ("current_a", "charging_current_a", "Current (sampled)", "A"),
+        ("voltage_v", "charging_voltage_v", "Voltage (sampled)", "V"),
+        ("battery_temp_c", "charging_battery_temp_c",
+         "Battery temperature (sampled)", "degC"),
+    )
+
+    @app.get("/charging/{session_id}", response_class=HTMLResponse)
+    def charging_session_page(request: Request, session_id: int):
+        """One charging session: aligned panels on a shared time axis, the
+        collector's energy estimate with its method, and sample coverage."""
+        from analysis.chart_semantics import (
+            build_series,
+            coverage,
+            shared_x_range,
+        )
+        from decoders.quality import DataKind, MeasurementQuality, Verification
+
+        _, vid = vehicle_and_id()
+        sess = repo.charging_session(session_id) if vid else None
+        if sess is None or sess["vehicle_id"] != vid:
+            raise HTTPException(status_code=404, detail="No such charging session")
+        samples = [dict(r) for r in repo.charging_samples(session_id)]
+        series, panels = {}, []
+        for field, key, name, unit in _SAMPLE_FIELDS:
+            quality = MeasurementQuality(
+                key=key, verification=Verification.UNKNOWN,
+                data_kind=DataKind.NUMERIC, unit=unit, use_in_scoring=False,
+                plausible_basis="not established for charging samples")
+            s = build_series(
+                key, [(r["ts"], r[field], None) for r in samples], name=name,
+                unit=unit, quality=quality, gap_s=chart_gap_s, max_points=0)
+            series[key] = s
+            panels.append({"id": key, "title": name, "question": "",
+                           "note": "", "left": [key], "right": [],
+                           "empty": s["stats"]["n"] == 0})
+        cov = coverage([r["ts"] for r in samples], chart_gap_s)
+        return render(
+            "charging_session.html", request, s=dict(sess), samples=samples,
+            sample_coverage=cov, panels=panels, series=series,
+            panel_data={"series": series, "visible": dict.fromkeys(series, True),
+                        "x_range": shared_x_range(series), "gap_s": chart_gap_s},
         )
 
     @app.get("/ai", response_class=HTMLResponse)
@@ -675,12 +1034,16 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         key = resolve(key)
 
         if key.startswith("cell_v_"):
+            # cell_v_NNN is the zero-based slot index; every decoder and the
+            # importer number cells from 1 (cell_v_000 is "Cell voltage #001").
+            # This used to say "Cell 0 voltage", one off from the catalogue.
             try:
                 idx = int(key.rsplit("_", 1)[1])
-                name = f"Cell {idx} voltage"
+                name = f"Cell voltage #{idx + 1:03d}"
             except ValueError:
                 name = "Cell voltage"
             return {"key": key, "name": name, "unit": "V",
+                    "unit_source": "catalogue", "unit_conflict": [],
                     "data_kind": "numeric",
                     "aliases": list(aliases_for(key))}
 
@@ -690,20 +1053,59 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             name, unit = spec.name, spec.unit or ""
         except KeyError:
             pass
+        q = None
         try:
-            kind = quality_for(_profile(), key).data_kind.value
+            q = quality_for(_profile(), key)
+            kind = q.data_kind.value
         except Exception:  # pragma: no cover - metadata must never break a chart
             kind = "numeric"
-        return {"key": key, "name": name, "unit": unit, "data_kind": kind,
-                "aliases": list(aliases_for(key))}
+        if name == key and q is not None and q.extras.get("name"):
+            # Calculated metrics are not registry DIDs; their human name lives
+            # on the quality record (from decoders/bms.COMPUTED_KEYS).
+            name = q.extras["name"]
+        if not unit and q is not None and q.unit:
+            unit = q.unit
+        unit_source = "catalogue" if unit else "none"
+        if not unit:
+            # Keys with no catalogue unit (the OBD-II PID keys such as
+            # lv_voltage_obd) used to chart with a bare axis although every
+            # stored row names its unit. Fall back to the stored unit only when
+            # it is unambiguous, and say so.
+            stored = repo.recent_units(key)
+            if len(stored) == 1:
+                unit, unit_source = stored[0], "stored rows"
+        return {"key": key, "name": name, "unit": unit,
+                "unit_source": unit_source, "unit_conflict": [],
+                "data_kind": kind, "aliases": list(aliases_for(key))}
+
+    def _unit_conflict(key: str, unit: str) -> list[str]:
+        """Stored units that disagree with the catalogue unit (reported, never
+        silently resolved)."""
+        if not unit:
+            return []
+        return [u for u in repo.recent_units(key) if u != unit]
+
+    def _annotated(key: str, meta: dict, rows, max_points: int, method: str,
+                   conflict: bool = True) -> dict:
+        from analysis.chart_semantics import build_series
+        from decoders.quality import quality_for
+
+        return build_series(
+            key, rows, name=meta["name"], unit=meta["unit"],
+            quality=quality_for(_profile(), key), gap_s=chart_gap_s,
+            max_points=max_points, method=method,
+            unit_source=meta.get("unit_source", "catalogue"),
+            unit_conflict=_unit_conflict(key, meta["unit"]) if conflict else [])
 
     def series_for(key: str, days: int, max_points: int, method: str) -> dict:
         """Chart payload for one key, server-side downsampled.
 
         Text/code keys become a step series (only changes are returned), numeric
-        keys go through the sampler. Raw rows are never discarded: the export
-        endpoints below serve them untouched. Per-cell keys read the
-        `cell_voltages` table instead of `measurements`.
+        keys go through the sampler and are annotated by
+        `analysis/chart_semantics.py` (axis policy, raw statistics,
+        plausibility, coverage, per-point provenance). Raw rows are never
+        discarded: the export endpoints below serve them untouched. Per-cell
+        keys read the `cell_voltages` table instead of `measurements`.
         """
         from analysis import series as series_mod
         from decoders.aliases import resolve
@@ -722,20 +1124,36 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
             except ValueError:
                 idx = -1
             if idx >= 0:
-                rows = repo.cell_voltage_series(vid, idx, days)
+                # The cell table stores no provenance column; say so rather
+                # than claiming "reported".
+                rows = [(r["ts"], r["value"], None)
+                        for r in repo.cell_voltage_series(vid, idx, days)]
         else:
-            rows = repo.measurement_series(vid, key, days)
+            rows = [(r["ts"], r["value"], r["provenance"])
+                    for r in repo.measurement_series(vid, key, days)]
 
-        ts_list = [r["ts"] for r in rows]
-        values = [r["value"] for r in rows]
         if meta["data_kind"] in ("text", "json"):
-            payload = series_mod.transitions(ts_list, values)
+            payload = series_mod.transitions([r[0] for r in rows],
+                                             [r[1] for r in rows])
+            payload.update(meta)
         else:
-            payload = series_mod.numeric_payload(
-                ts_list, values, max_points=max_points, method=method)
-        payload.update(meta)
+            payload = _annotated(key, meta, rows, max_points, method)
+            payload["aliases"] = meta["aliases"]
         payload["key"] = key
         return payload
+
+    def chart_series(keys: list[str], days: int, max_points: int = 1500) -> dict:
+        """Annotated numeric series for several keys from ONE query."""
+        if not keys:
+            return {}
+        _, vid = vehicle_and_id()
+        rows_by_key: dict[str, list] = {k: [] for k in keys}
+        if vid:
+            for r in repo.measurement_series_many(vid, keys, days):
+                rows_by_key[r["key"]].append((r["ts"], r["value"], r["provenance"]))
+        return {k: _annotated(k, key_meta(k), rows_by_key[k], max_points,
+                              "min_max", conflict=False)
+                for k in keys}
 
     def observation_states(keys: list[str]) -> list[dict]:
         from analysis.freshness import observe_key
@@ -846,6 +1264,90 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         return {"events": [e.as_dict() for e in events],
                 "markers": markers(events)}
 
+    # ---- timeline & event context ------------------------------------------
+    @app.get("/timeline", response_class=HTMLResponse)
+    def timeline_page(request: Request):
+        """Every timestamped event, merged into one chronological list.
+
+        `analysis/timeline.py` already merged DTC occurrences, warning-lamp
+        edges, charging sessions, cell sweeps, anomalies and adapter/wake/sleep/
+        note events into one ordered stream, but it was only ever surfaced as a
+        collapsed marker list on the Explore page and a bare JSON endpoint.
+        This page makes the stream browsable: filter by kind and window, and
+        follow any event to its own investigation context.
+        """
+        from analysis.timeline import build_timeline
+
+        _, vid = vehicle_and_id()
+        days = _int_param(request, "days", trend_days, 1, 3650)
+        include_sim = request.query_params.get("simulated") == "1"
+        selected = set(request.query_params.getlist("kind"))
+
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(
+            timespec="seconds")
+        events = (build_timeline(repo, vid, since=since,
+                                 include_simulated=include_sim) if vid else [])
+
+        # Facets come from the unfiltered window so the checkboxes show counts
+        # that reflect what is actually stored, not what is currently selected.
+        kinds: dict[str, int] = {}
+        for e in events:
+            kinds[e.kind] = kinds.get(e.kind, 0) + 1
+        shown = [e for e in events if not selected or e.kind in selected]
+        return render(
+            "timeline.html", request, events=[e.as_dict() for e in shown],
+            total_events=len(events), shown_events=len(shown),
+            kinds=kinds, selected=selected, days=days,
+            simulated=include_sim,
+        )
+
+    @app.get("/event", response_class=HTMLResponse)
+    def event_page(request: Request):
+        """The investigation context for one moment: what happened around it.
+
+        Given an event's observation timestamp this shows the event itself, the
+        other events in a ±window, and the measurements the car recorded closest
+        to that moment -- each with its own real timestamp, provenance and
+        distance from the anchor, never re-stamped or interpolated. From here a
+        reader can open an investigation anchored on the moment, which records
+        the nearby events as *associations* (explicitly not causes).
+        """
+        from analysis.context import measurement_context
+        from analysis.timeline import build_timeline
+
+        _, vid = vehicle_and_id()
+        ts = request.query_params.get("ts") or ""
+        title = request.query_params.get("title") or ""
+        kind = request.query_params.get("kind") or ""
+        ecu = request.query_params.get("ecu") or ""
+        window_h = _int_param(request, "window_h", 6, 1, 72)
+
+        events = []
+        measurements = []
+        if vid and ts:
+            try:
+                anchor = datetime.fromisoformat(ts)
+            except (TypeError, ValueError):
+                anchor = None
+            if anchor is not None:
+                window_s = window_h * 3600.0
+                lo = (anchor - timedelta(seconds=window_s)).isoformat(
+                    timespec="seconds")
+                hi = (anchor + timedelta(seconds=window_s)).isoformat(
+                    timespec="seconds")
+                events = build_timeline(repo, vid, since=lo, until=hi)
+                measurements = measurement_context(repo, vid, ts,
+                                                   window_s=window_s)
+                for m in measurements:
+                    meta = key_meta(m["key"])
+                    m["name"] = meta["name"]
+                    m["unit"] = m["unit"] or meta["unit"]
+        return render(
+            "event.html", request, ts=ts, title=title, kind=kind, ecu=ecu,
+            window_h=window_h, events=[e.as_dict() for e in events],
+            measurements=measurements,
+        )
+
     @app.get("/status", response_class=HTMLResponse)
     def status_page(request: Request):
         from analysis import freshness
@@ -921,15 +1423,27 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     def create_investigation(request: Request, title: str = Form(...),
                              symptom: str = Form(...),
                              anchor_key: str = Form(""),
-                             criteria: str = Form("")):
+                             criteria: str = Form(""),
+                             anchor_ts: str = Form("")):
         from analysis import investigation as inv_mod
         _, vid = vehicle_and_id()
         if not vid:
             raise HTTPException(status_code=400,
                                 detail="No vehicle; nothing to investigate.")
+        anchor_key = anchor_key.strip() or None
+        anchor_ts = anchor_ts.strip() or None
         inv = inv_mod.open_investigation(
             repo, vid, title.strip(), symptom.strip(),
-            anchor_key=(anchor_key.strip() or None), criteria=criteria.strip())
+            anchor_key=anchor_key, criteria=criteria.strip())
+        # A new investigation opened from the event context is seeded, not left
+        # empty: the anchor measurement is observed (with its freshness), and
+        # the events in the ±window are recorded as *associations* -- never as
+        # causes. `associate_events` tolerates an unparseable anchor by
+        # returning [], so a bad timestamp can never take the page down.
+        if anchor_key:
+            inv_mod.observe_key(repo, vid, anchor_key, _profile(), inv_id=inv.id)
+        if anchor_ts:
+            inv_mod.associate_events(repo, vid, anchor_ts, inv_id=inv.id)
         return _redirect(f"/investigations/{inv.id}")
 
     @app.post("/investigations/{investigation_id}/observe")

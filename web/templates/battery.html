@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_panels.html" import panel, marker_legend, window_form %}
 {% block content %}
 <h2>Battery</h2>
 {% if bms_refusal %}
@@ -11,51 +12,80 @@ The 12 V chart comes from standard OBD-II and does work. Battery-level data
 requires a CAN-EV tap (e.g. the preheat-harness hardware) — see events log.
 </div>
 {% endif %}
+
+{{ window_form('/battery', days, windows) }}
+
+{% set soc = series.get('soc_abs') %}
+{% set energy = series.get('hv_energy_content') %}
+{% set spread = series.get('cell_sweep_spread_mv') %}
 <div class="cards">
-  <div class="card"><h3>Current delta</h3><div class="big">{{ trend.current_mv if trend.current_mv is defined else '—' }} mV</div></div>
-  <div class="card"><h3>{{ trend.window_days if trend.window_days is defined else days }}-day mean</h3><div class="big">{{ trend.mean_mv if trend.mean_mv is defined else '—' }} mV</div></div>
-  <div class="card"><h3>Std dev</h3><div class="big">{{ trend.std_mv if trend.std_mv is defined else '—' }} mV</div></div>
-  <div class="card"><h3>Trend</h3><div class="big" style="font-size:18px">{{ trend.trend if trend.trend is defined else 'insufficient data' }}</div>
-  {% if trend.slope_mv_per_day is defined and trend.slope_mv_per_day is not none %}
-  <div class="note">{{ trend.slope_mv_per_day }} mV/day</div>
-  {% elif trend.trend is defined and trend.trend == 'insufficient_span' %}
-  <div class="note">needs {{ trend.min_span_days }} d of samples, have {{ trend.span_text }}</div>
-  {% endif %}</div>
+  <div class="card"><h3>State of charge (BMS)</h3>
+    <div class="big">{% if soc and soc.stats.n %}{{ soc.stats.latest | fmtnum(1) }} %{% else %}Unavailable{% endif %}</div>
+    <div class="note">{% if soc and soc.stats.n %}read {{ soc.coverage.last_ts | fmtts }}; evidence {{ soc.verification | upper }}{% else %}no reading in this window{% endif %}</div></div>
+  <div class="card"><h3>HV energy content</h3>
+    <div class="big">{% if energy and energy.stats.n %}{{ (energy.stats.latest / 1000) | fmtnum(1) }} kWh{% else %}Unavailable{% endif %}</div>
+    <div class="note">{% if energy and energy.stats.n %}vehicle-reported energy held now (stored in Wh), read {{ energy.coverage.last_ts | fmtts }}; not total capacity{% else %}no reading in this window{% endif %}</div></div>
+  <div class="card"><h3>Cell spread (latest sweep)</h3>
+    <div class="big">{% if spread and spread.stats.n %}{{ spread.stats.latest | fmtnum(1) }} mV{% else %}Unavailable{% endif %}</div>
+    <div class="note">{% if sweeps.latest %}{{ sweeps.latest.cells | length }} of {{ sweeps.expected_cells or '?' }} cells, {{ sweeps.latest.ts | fmtts }}{% else %}no full cell sweep in this window{% endif %}</div></div>
+  <div class="card"><h3>State of health (ESTIMATED)</h3>
+    <div class="big">{% if soh and soh.stats.n %}{{ soh.stats.latest | fmtnum(1) }} %{% else %}Unavailable{% endif %}</div>
+    <div class="note">Rough estimate only: BMS-rated max energy ÷ the marketed 58 kWh
+      (or measured capacity ÷ nominal when a capacity DID exists). Not a measured
+      capacity test; no uncertainty band is established.</div></div>
 </div>
+
+<div class="cards" style="margin-top:12px;">
+  <div class="card"><h3>Cell delta, {{ trend.window_days if trend.window_days is defined else days }}-day mean</h3>
+    <div class="big">{% if trend.mean_mv is defined and trend.mean_mv is not none %}{{ trend.mean_mv }} mV{% else %}Unavailable{% endif %}</div>
+    <div class="note">from the snapshot table; std dev {% if trend.std_mv is defined and trend.std_mv is not none %}{{ trend.std_mv }} mV{% else %}unavailable{% endif %}</div></div>
+  <div class="card"><h3>Cell delta trend</h3>
+    <div class="big" style="font-size:18px">{{ trend.trend if trend.trend is defined else 'insufficient data' }}</div>
+    {% if trend.slope_mv_per_day is defined and trend.slope_mv_per_day is not none %}
+    <div class="note">{{ trend.slope_mv_per_day }} mV/day</div>
+    {% elif trend.trend is defined and trend.trend == 'insufficient_span' %}
+    <div class="note">needs {{ trend.min_span_days }} d of samples, have {{ trend.span_text }}</div>
+    {% endif %}</div>
+</div>
+
+{{ marker_legend() }}
+
 <div class="chart-grid">
-  <div class="chart-card">
-    <h3>State of charge</h3>
-    <p class="chart-sub">absolute / normalised SoC as recorded</p>
-    <div class="chart-wrap small"><canvas id="socChart"></canvas></div>
-    <div id="socChart-empty" class="chart-empty">No SoC samples in the last {{ days }} days.</div>
-  </div>
-  <div class="chart-card">
-    <h3>Pack voltage</h3>
-    <p class="chart-sub">reported pack voltage</p>
-    <div class="chart-wrap small"><canvas id="packChart"></canvas></div>
-    <div id="packChart-empty" class="chart-empty">No pack-voltage samples in the last {{ days }} days.</div>
-  </div>
-  <div class="chart-card">
-    <h3>Cell delta</h3>
-    <p class="chart-sub">max − min cell voltage (calculated)</p>
-    <div class="chart-wrap small"><canvas id="deltaChart"></canvas></div>
-    <div id="deltaChart-empty" class="chart-empty">No cell-delta samples in the last {{ days }} days.</div>
-  </div>
-  <div class="chart-card">
-    <h3>Battery temperature</h3>
-    <p class="chart-sub">reported pack temperature</p>
-    <div class="chart-wrap small"><canvas id="tempChart"></canvas></div>
-    <div id="tempChart-empty" class="chart-empty">No temperature samples in the last {{ days }} days.</div>
-  </div>
+{% for p in panels %}{{ panel(p, series, panel_data.visible) }}{% endfor %}
 </div>
-{% if lv_chart.ts %}
-<div class="chart-card">
-  <h3>12 V system</h3>
-  <p class="chart-sub">OBD-II PID 0x42</p>
-  <div class="chart-wrap small"><canvas id="lvChart"></canvas></div>
-  <div id="lvChart-empty" class="chart-empty">No 12 V samples in the last {{ days }} days.</div>
-</div>
-{% endif %}
-<p class="note">Cell delta is CALCULATED (max − min cell voltage). SOH is ESTIMATED. All values labelled in the database.</p>
-<script type="application/json" id="battery-data">{{ {"chart": chart, "lv": lv_chart, "gap_s": gap_s} | tojson }}</script>
+
+<section class="chart-card" aria-labelledby="h-cell-bar">
+  <h3 id="h-cell-bar">Individual cell voltages — latest sweep</h3>
+  <p class="chart-sub">Which cells sat where in the most recent complete reading?</p>
+  {% if sweeps.latest %}
+  <div class="chart-wrap"><canvas id="cell-bar" role="img"
+       aria-label="Bar chart of each cell's voltage in the latest sweep; extremes listed below"></canvas></div>
+  <div id="cell-bar-empty" class="chart-empty">No cell sweep in this window.</div>
+  {% set cells = sweeps.latest.cells %}
+  {% set lo = cells | sort(attribute='voltage_v') | first %}
+  {% set hi = cells | sort(attribute='voltage_v') | last %}
+  <ul class="series-summary">
+    <li>Sweep at {{ sweeps.latest.ts | fmtts }}: {{ cells | length }} cells read
+      {%- if sweeps.expected_cells %} of {{ sweeps.expected_cells }} defined{% endif %}.</li>
+    <li>Lowest: cell #{{ '%03d' | format(lo.number) }} at {{ lo.voltage_v | fmtnum(3) }} V;
+        highest: cell #{{ '%03d' | format(hi.number) }} at {{ hi.voltage_v | fmtnum(3) }} V.</li>
+    {% if sweeps.latest.missing_numbers %}
+    <li class="flag">Not read in this sweep: cell{{ 's' if sweeps.latest.missing_numbers | length != 1 }}
+      {{ sweeps.latest.missing_numbers | join(', ') }}.</li>
+    {% endif %}
+    {% if panel_data.cell_bar %}<li>Axis: V — {{ panel_data.cell_bar.axis.note }}; small
+      differences between cells are magnified accordingly.</li>{% endif %}
+    <li>Cell numbers follow the catalogue (cell #001 is stored slot 0). The cell
+      table records no provenance column; these are collector sweep rows.</li>
+  </ul>
+  {% else %}
+  <div class="chart-empty show">No individual cell readings in this window.</div>
+  {% endif %}
+</section>
+
+<p class="note">Battery charts read each signal's own rows with their real
+observation timestamps. Earlier versions drew the snapshot table, whose rows
+carry values forward and merged two SoC definitions into one line. Raw rows for
+any key are downloadable from <a href="/explore">Explore</a>.</p>
+<script type="application/json" id="panel-data">{{ dict(panel_data, panels=panels) | tojson }}</script>
 {% endblock %}

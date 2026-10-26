@@ -11,10 +11,11 @@
   <div class="card"><h3>Pack voltage</h3>
     <div class="big">{% set pv = battery.get('pack_voltage_latest_v') %}{% if pv is not none %}{{ "%.1f"|format(pv) }} V{% else %}—{% endif %}</div></div>
   <div class="card"><h3>Cell delta trend</h3>
-    <div class="big">{{ battery.cell_delta.current_mv if battery.cell_delta is mapping else '—' }} mV</div>
-    <div class="note">{{ battery.cell_delta.get('trend', 'no data') if battery.cell_delta is mapping else 'no data' }}</div></div>
+    {% set cd = battery.cell_delta if battery.cell_delta is mapping else {} %}
+    <div class="big">{% if cd.get('current_mv') is not none %}{{ cd.current_mv }} mV{% else %}—{% endif %}</div>
+    <div class="note">{{ cd.get('trend', 'no data') }}</div></div>
   <div class="card"><h3>SOH (estimated)</h3>
-    <div class="big">{{ battery.soh_latest_pct if battery.soh_latest_pct else '—' }}%</div>
+    <div class="big">{% if battery.get('soh_latest_pct') is not none %}{{ battery.soh_latest_pct }} %{% else %}—{% endif %}</div>
     <div class="note">{{ battery.get('provenance_note') or '' }}</div></div>
   <div class="card"><h3>12 V system</h3>
     <div class="big">{% if live.get('lv_voltage_v') is not none %}{{ "%.2f"|format(live.lv_voltage_v) }} V{% else %}—{% endif %}</div>
@@ -32,13 +33,12 @@
 </div>
 
 {% if vehicle %}
-<div class="chart-card">
-  <h3>Battery trend ({{ days }} days)</h3>
-  <p class="chart-sub">state of charge and pack voltage &middot; gaps are periods with no snapshot</p>
-  <div class="chart-wrap"><canvas id="overviewChart"></canvas></div>
-  <div id="overviewChart-empty" class="chart-empty">No battery snapshots in this window.</div>
-  <script type="application/json" id="overview-data">{{ {"chart": overview_chart, "gap_s": gap_s} | tojson }}</script>
-</div>
+{% from "_panels.html" import panel, marker_legend %}
+<p class="chart-sub" style="margin-top:14px;">Last {{ days }} days. More battery charts on
+  <a href="/battery">Battery</a>; range and distance on <a href="/range">Range</a>.</p>
+{% for p in panels %}{{ panel(p, series, panel_data.visible) }}{% endfor %}
+{{ marker_legend() }}
+<script type="application/json" id="panel-data">{{ dict(panel_data, panels=panels) | tojson }}</script>
 {% endif %}
 
 <h3>Recent anomalies (z-score based)</h3>

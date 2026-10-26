@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .anchor { background:#fff; border-left:4px solid #0b2340; padding:12px 16px; margin:12px 0; }
+  .anchor h2 { margin:0 0 6px; font-size:16px; }
+  .muted { color:#777; font-size:12px; }
+  .delta { font-variant-numeric: tabular-nums; }
+  .ev-list li { margin:3px 0; font-size:13px; }
+  .prov { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px;
+          background:#eceff1; color:#546e7a; }
+  .prov.imported { background:#d6e9ff; color:#1a5fa8; }
+  .prov.simulated { background:#f6d6ea; color:#8c1a63; }
+</style>
+
+<h2>Event context</h2>
+
+<div class="anchor">
+  <h2>{{ title or 'Unnamed event' }} {% if kind %}<span class="prov">{{ kind }}</span>{% endif %}</h2>
+  <div class="muted">
+    {% if ecu %}ECU/module: {{ ecu }} &middot; {% endif %}
+    time: {{ ts[:19] if ts else '—' }} UTC &middot;
+    window: &plusmn;{{ window_h }} h
+  </div>
+</div>
+
+<div class="card">
+  <h3>Investigate this moment</h3>
+  <p class="muted">
+    Opening an investigation records the events in this window as
+    <em>associations</em> (temporal, never causal) and observes the anchor key
+    below with its real freshness.
+  </p>
+  <form method="post" action="/investigations/new" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+    <input type="hidden" name="anchor_ts" value="{{ ts }}">
+    <label style="display:flex;flex-direction:column;font-size:12px;color:#556;gap:3px;">Title
+      <input name="title" required value="Investigation: {{ title or 'event' }}">
+    </label>
+    <label style="display:flex;flex-direction:column;font-size:12px;color:#556;gap:3px;">Symptom
+      <input name="symptom" required size="44"
+             value="{{ title or 'event' }} at {{ ts[:19] if ts else '—' }}">
+    </label>
+    <label style="display:flex;flex-direction:column;font-size:12px;color:#556;gap:3px;">Anchor key
+      <input name="anchor_key" placeholder="optional, e.g. soc_abs">
+    </label>
+    <label style="display:flex;flex-direction:column;font-size:12px;color:#556;gap:3px;">Resolution criteria
+      <input name="criteria" size="34" placeholder="what evidence would confirm or refute">
+    </label>
+    <button type="submit">Open investigation</button>
+  </form>
+</div>
+
+<h3>Events within &plusmn;{{ window_h }} h</h3>
+{% if events %}
+<ul class="ev-list">
+  {% for e in events %}
+  <li>
+    <span class="delta">{{ e.ts[:19] }}</span> &mdash;
+    <strong>[{{ e.kind }}]</strong> {{ e.title }}
+    {% if e.ecu %} <span class="muted">({{ e.ecu }})</span>{% endif %}
+    {% if e.detail %} &mdash; <span class="muted">{{ e.detail }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No other events recorded in this window.</p>
+{% endif %}
+
+<h3>Measurements recorded nearby</h3>
+<p class="muted">
+  One row per measurement, choosing the value recorded closest to the moment.
+  Each row keeps its own real timestamp and provenance; the &Delta; is how far
+  that reading sits from the anchor, not a claim it existed at the anchor.
+</p>
+{% if measurements %}
+<table>
+  <thead><tr><th>Measurement</th><th>Value</th><th>Unit</th><th>Provenance</th><th>&Delta; from event</th><th>Read at</th></tr></thead>
+  <tbody>
+  {% for m in measurements %}
+  <tr>
+    <td><a href="/explore?key={{ m.key | urlencode }}">{{ m.name }} <span class="muted">{{ m.key }}</span></a></td>
+    <td>{{ m.value | fmtvalue if m.value is not none else (m.text_value or '—') }}</td>
+    <td class="muted">{{ m.unit }}</td>
+    <td>
+      {% set p = (m.provenance or '') | string %}
+      <span class="prov {% if p.startswith('imported') %}imported{% elif p == 'simulated' %}simulated{% endif %}">{{ m.provenance or '—' }}</span>
+    </td>
+    <td class="delta">
+      {% if m.delta_s == 0 %}same instant{% elif m.delta_s < 0 %}{{ (-m.delta_s)|round(0) }}s before{% else %}{{ m.delta_s|round(0) }}s after{% endif %}
+    </td>
+    <td class="muted">{{ m.ts[:19] }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="warn">No measurements were recorded in this window.</div>
+{% endif %}
+{% endblock %}

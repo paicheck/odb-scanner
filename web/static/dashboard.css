@@ -112,3 +112,24 @@
 }
 
 .state-list li { margin: 1px 0; }
+
+/* Chart semantics: axis notes, text summaries, series toggles, legends. */
+.axis-note { margin: 6px 0 2px; font-size: 11px; color: #667; }
+.axis-note span { display: block; }
+.axis-note-inline { flex-basis: 100%; font-size: 11px; color: #667; }
+.series-summary { margin: 4px 0 0; padding-left: 18px; font-size: 12px; color: #445; }
+.series-summary li { margin: 2px 0; }
+.chart-note { margin: 6px 0 0; font-size: 12px; color: #556; font-style: italic; }
+.flag { color: #8a4b00; font-weight: 600; }
+.muted { color: #777; font-size: 12px; }
+.series-toggle { border: 1px solid #e3e7ea; border-radius: 6px; padding: 4px 10px;
+                 margin: 4px 0 6px; font-size: 12px; }
+.series-toggle legend { font-size: 11px; color: #667; padding: 0 4px; }
+.series-toggle label { margin-right: 12px; white-space: nowrap; }
+.series-toggle input:focus-visible, .window-form select:focus-visible,
+.window-form button:focus-visible { outline: 2px solid #2471a3; outline-offset: 2px; }
+.marker-legend { font-size: 12px; color: #556; margin: 10px 0 0; }
+.marker-legend span { margin-right: 14px; white-space: nowrap; }
+.window-form { display: flex; gap: 8px; align-items: center; margin: 8px 0 12px;
+               font-size: 13px; }
+.window-form select { padding: 4px 6px; }

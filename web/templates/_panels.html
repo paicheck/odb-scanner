@@ -1,0 +1,100 @@
+{#- Shared chart-panel macros.
+
+    Every chart carries a text summary built from the SAME server payload the
+    chart draws, so the numbers are available without the canvas (screen
+    readers, a failed script, a printout) and nothing shown in the chart is
+    absent from the text. -#}
+
+{% macro marker_legend() %}
+<p class="marker-legend" aria-label="How chart points are marked">
+  Point marks: <span>● vehicle reading or calculation</span>
+  <span>▲ imported from a Car Scanner export</span>
+  <span>◆ simulated</span>
+  <span>✕ outside the documented plausible range (kept, not removed)</span>
+  <span>- - - dashed line: calculated, not read from the vehicle</span>
+  <span>Lines break across recording gaps; nothing is interpolated.</span>
+</p>
+{% endmacro %}
+
+{% macro window_form(action, days, windows) %}
+<form class="window-form" method="get" action="{{ action }}">
+  <label for="window-days">Time window</label>
+  <select id="window-days" name="days">
+    {% for d in windows %}
+    <option value="{{ d }}" {% if d == days %}selected{% endif %}>last {{ d }} day{{ 's' if d != 1 }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Show</button>
+</form>
+{% endmacro %}
+
+{% macro series_line(s) %}
+<li>
+  <strong>{{ s.name }}</strong> <code>{{ s.key }}</code>
+  &middot; unit: {{ s.unit_label or 'none recorded' }}
+  {%- if s.unit_source == 'stored rows' %} (from stored rows; no catalogue unit){% endif %}
+  &middot; decoder evidence: {{ s.verification | upper }}
+  {%- if s.derived %} &middot; CALCULATED / ESTIMATED{% endif %}
+  {% if s.stats.n %}
+  &middot; {{ s.stats.n }} reading{{ 's' if s.stats.n != 1 }}:
+  min {{ s.stats.min | fmtnum(s.axis.decimals) }}, max {{ s.stats.max | fmtnum(s.axis.decimals) }},
+  latest {{ s.stats.latest | fmtnum(s.axis.decimals) }} {{ s.unit_label }} at {{ s.coverage.last_ts | fmtts }}
+  {% else %}
+  &middot; <em>no readings in this window</em>
+  {% endif %}
+  {%- for p, n in s.provenance_counts.items() if p not in ('reported', 'calculated') %}
+  &middot; <span class="flag">{{ n }} {{ p }}</span>
+  {%- endfor %}
+  {%- if s.plausibility.outside %}
+  &middot; <span class="flag">{{ s.plausibility.outside }} outside documented range
+    [{{ s.plausibility.range[0] }}, {{ s.plausibility.range[1] }}] ({{ s.plausibility.basis }})</span>
+  {%- endif %}
+  {%- if s.plausibility.known_issue %}
+  &middot; <span class="flag">{{ 'known decoder issue' if s.verification == 'invalid' else 'catalogue note' }}:
+    {{ s.plausibility.known_issue }}</span>
+  {%- endif %}
+  {%- if s.coverage.gaps %}
+  &middot; {{ s.coverage.gaps }} recording gap{{ 's' if s.coverage.gaps != 1 }} longer than
+  {{ (s.coverage.gap_threshold_s / 60) | round | int }} min (line broken)
+  {%- endif %}
+  {%- if s.unit_conflict %}
+  &middot; <span class="flag">stored rows also use unit(s): {{ s.unit_conflict | join(', ') }}</span>
+  {%- endif %}
+  {%- if s.downsampled %}
+  &middot; chart shows {{ s.returned_points }} of {{ s.raw_points }} points (min/max sampling keeps every bucket's extremes)
+  {%- endif %}
+</li>
+{% endmacro %}
+
+{% macro axis_line(label, axis) %}
+{% if axis %}<span>{{ label }}: {{ axis.unit_label or 'no unit' }} — {{ axis.note }}</span>{% endif %}
+{% endmacro %}
+
+{% macro panel(p, series, visible) %}
+{% set keys = p.left + p.right %}
+<section class="chart-card" aria-labelledby="h-{{ p.id }}">
+  <h3 id="h-{{ p.id }}">{{ p.title }}</h3>
+  {% if p.question %}<p class="chart-sub">{{ p.question }}</p>{% endif %}
+  {% if keys | length > 1 and not p.empty %}
+  <fieldset class="series-toggle" data-panel="{{ p.id }}">
+    <legend>Series shown</legend>
+    {% for k in keys %}
+    <label><input type="checkbox" data-key="{{ k }}" {% if visible.get(k, true) %}checked{% endif %}>
+      {{ series[k].name }}{% if k in p.right %} (right axis){% endif %}</label>
+    {% endfor %}
+  </fieldset>
+  {% endif %}
+  <div class="chart-wrap small"><canvas id="panel-{{ p.id }}" role="img"
+       aria-label="{{ p.title }}; the values are summarised in text below the chart"></canvas></div>
+  <div id="panel-{{ p.id }}-empty" class="chart-empty{% if p.empty %} show{% endif %}">
+    No readings of {{ keys | join(', ') }} in this window.</div>
+  <p class="axis-note">
+    {{ axis_line('Left axis' if p.right else 'Axis', p.left_axis or series[p.left[0]].axis) }}
+    {{ axis_line('Right axis', p.right_axis) if p.right }}
+  </p>
+  <ul class="series-summary">
+    {% for k in keys %}{{ series_line(series[k]) }}{% endfor %}
+  </ul>
+  {% if p.note %}<p class="chart-note">{{ p.note }}</p>{% endif %}
+</section>
+{% endmacro %}

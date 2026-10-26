@@ -186,6 +186,10 @@ def dtc_summary(dtc_rows, freeze_frames: dict | None = None) -> dict:
             "first_seen": r["first_seen"], "last_seen": r["last_seen"],
             "count": r["occurrence_count"],
         }
+        # The row id is the durable link to the per-code drill-down page; older
+        # callers that pass a narrow row (no id) simply render without a link.
+        if "id" in r.keys():
+            entry["id"] = r["id"]
         # `status` is not always selected (older callers pass a narrow row), so
         # it is added only when present rather than assumed.
         if "status" in r.keys():

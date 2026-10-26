@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .tag { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; background:#e2e8f0; margin:1px; }
+  .tag.critical, .tag.active, .tag.warning-lamp { background:#ffd2d2; color:#8a1c1c; }
+  .tag.communication { background:#fff3cd; color:#7a5d00; }
+  .muted { color:#777; font-size:12px; }
+  .delta { font-variant-numeric: tabular-nums; }
+  .prov { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px;
+          background:#eceff1; color:#546e7a; }
+  .prov.imported { background:#d6e9ff; color:#1a5fa8; }
+  .prov.simulated { background:#f6d6ea; color:#8c1a63; }
+</style>
+
+<h2>Fault code <strong>{{ d.code }}</strong> <span class="muted">on {{ d.ecu }}</span></h2>
+
+<p>
+  {% if d.status %}<span class="tag {{ d.status }}">{{ d.status }}</span>{% endif %}
+  {% for c in categories %}<span class="tag {{ 'critical' if c == 'potentially critical' else c }}">{{ c }}</span>{% endfor %}
+</p>
+<p class="muted">
+  First seen {{ d.first_seen[:19] }} &middot; last seen {{ d.last_seen[:19] }} &middot;
+  {{ d.occurrence_count }} recorded occurrence(s) &middot;
+  <a href="/event?ts={{ d.last_seen | urlencode }}&amp;title=DTC%20{{ d.code | urlencode }}%20on%20{{ d.ecu | urlencode }}&amp;kind=dtc&amp;ecu={{ d.ecu | urlencode }}">investigate this fault</a>
+</p>
+
+{% if d.description %}
+<p>{{ d.description }}</p>
+{% else %}
+<p class="muted">No public description available; the code is kept with its raw data.</p>
+{% endif %}
+
+<h3>Occurrences</h3>
+{% if occurrences %}
+<table>
+  <thead><tr><th>Time (UTC)</th><th>Freeze frame</th></tr></thead>
+  <tbody>
+  {% for o in occurrences %}
+  <tr>
+    <td class="delta">{{ o.ts[:19] }}</td>
+    <td class="muted">{{ 'present' if o.freeze_frame else 'none recorded' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No occurrence rows recorded (the code may be a summary only).</p>
+{% endif %}
+
+{% if transitions %}
+<h3>Warning-lamp transitions</h3>
+<p class="muted">Derived from the ISO 14229 status byte (bit 7, warningIndicatorRequested) across this code's own occurrences.</p>
+<table>
+  <thead><tr><th>Time (UTC)</th><th>Change</th></tr></thead>
+  <tbody>
+  {% for t in transitions %}
+  <tr><td class="delta">{{ t.ts[:19] }}</td><td>{{ t.event }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if snapshot_records %}
+<h3>Freeze-frame snapshot (raw)</h3>
+<p class="muted">
+  The ECU's own snapshot at fault time (UDS 0x19 0x04). Identifier content is
+  manufacturer-defined, so values are shown as raw hex until a decoder is
+  documented &mdash; never guessed.
+</p>
+<table>
+  <thead><tr><th>Record</th><th>Raw data</th></tr></thead>
+  <tbody>
+  {% for r in snapshot_records %}
+  <tr>
+    <td class="delta">rec {{ '%02X' | format(r.record) }}</td>
+    <td>
+      {% if r.data %}{% for did, hexv in r.data.items() %}<code>{{ did }} = {{ hexv }}</code> {% endfor %}
+      {% else %}<code>{{ r.raw or '(empty)' }}</code>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h3>Measurements recorded around the latest occurrence</h3>
+<p class="muted">
+  What the car reported closest to {{ d.last_seen[:19] }}. Real timestamps and
+  provenance are kept; the &Delta; is distance from that instant, not a value at it.
+</p>
+{% if near_last %}
+<table>
+  <thead><tr><th>Measurement</th><th>Value</th><th>Unit</th><th>Provenance</th><th>&Delta;</th><th>Read at</th></tr></thead>
+  <tbody>
+  {% for m in near_last %}
+  <tr>
+    <td><a href="/explore?key={{ m.key | urlencode }}">{{ m.name }} <span class="muted">{{ m.key }}</span></a></td>
+    <td>{{ m.value | fmtvalue if m.value is not none else (m.text_value or '—') }}</td>
+    <td class="muted">{{ m.unit }}</td>
+    <td>
+      {% set p = (m.provenance or '') | string %}
+      <span class="prov {% if p.startswith('imported') %}imported{% elif p == 'simulated' %}simulated{% endif %}">{{ m.provenance or '—' }}</span>
+    </td>
+    <td class="delta">{% if m.delta_s < 0 %}{{ (-m.delta_s)|round(0) }}s before{% else %}{{ m.delta_s|round(0) }}s after{% endif %}</td>
+    <td class="muted">{{ m.ts[:19] }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="warn">No measurements were recorded near the latest occurrence.</div>
+{% endif %}
+{% endblock %}

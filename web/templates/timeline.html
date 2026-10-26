@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .ev-row { display:grid; grid-template-columns: 150px 90px 1fr; gap:8px;
+            padding:6px 4px; border-bottom:1px solid #eef0f2; font-size:13px; }
+  .ev-row:hover { background:#f6f9fb; }
+  .ev-ts { color:#667; font-variant-numeric: tabular-nums; }
+  .ev-kind { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px;
+             font-weight:600; text-align:center; background:#e2e8f0; color:#334; }
+  .ev-kind.dtc, .ev-kind.warning-on { background:#fdecea; color:#a1261b; }
+  .ev-kind.warning-off, .ev-kind.dtc-cleared { background:#d4f4dd; color:#136b2c; }
+  .ev-kind.charge { background:#d6e9ff; color:#1a5fa8; }
+  .ev-kind.sweep, .ev-kind.collection { background:#e8eef5; color:#445; }
+  .ev-kind.anomaly { background:#fff3cd; color:#7a5d00; }
+  .ev-kind.note { background:#eceff1; color:#546e7a; }
+  .ev-title { font-weight:600; }
+  .ev-detail { color:#667; font-size:12px; }
+  .sev { font-size:11px; color:#a1261b; font-weight:600; }
+  .filters { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; }
+  .filters fieldset { border:1px solid #e3e7ea; border-radius:6px; padding:8px 12px; }
+  .filters legend { font-size:12px; color:#556; padding:0 4px; }
+  .filters label { font-size:13px; margin-right:12px; white-space:nowrap; }
+  .muted { color:#777; font-size:12px; }
+</style>
+
+<h2>Diagnostic timeline</h2>
+<p class="muted">
+  Every stored event, merged into one chronological list. An event is an
+  <em>observation with a timestamp</em>, never a cause: two events close in time
+  are not thereby linked. Simulator events are hidden unless asked for.
+</p>
+
+<div class="card">
+  <form class="filters" method="get" action="/timeline">
+    <fieldset>
+      <legend>Event kind</legend>
+      {% for k, n in kinds | dictsort %}
+      <label>
+        <input type="checkbox" name="kind" value="{{ k }}"
+               {% if k in selected %}checked{% endif %}> {{ k }} ({{ n }})
+      </label>
+      {% endfor %}
+    </fieldset>
+    <label style="display:flex;flex-direction:column;font-size:12px;color:#556;gap:3px;">Window (days)
+      <input type="number" name="days" value="{{ days }}" min="1" max="3650" style="width:80px;">
+    </label>
+    <label style="font-size:13px;">
+      <input type="checkbox" name="simulated" value="1" {% if simulated %}checked{% endif %}>
+      include simulator events
+    </label>
+    <button type="submit">Apply</button>
+    <a href="/timeline" style="font-size:13px;">clear</a>
+  </form>
+</div>
+
+<p class="muted">Showing {{ shown_events }} of {{ total_events }} events.</p>
+
+{% if events %}
+<table>
+  <thead><tr><th style="width:150px;">Time (UTC)</th><th style="width:110px;">Kind</th><th>Event</th></tr></thead>
+  <tbody>
+  {% for e in events %}
+  <tr>
+    <td class="ev-ts">{{ e.ts[:19] }}</td>
+    <td><span class="ev-kind {{ e.kind }}">{{ e.kind }}</span></td>
+    <td>
+      <a class="ev-title" href="/event?ts={{ e.ts | urlencode }}&amp;title={{ e.title | urlencode }}&amp;kind={{ e.kind }}&amp;ecu={{ (e.ecu or '') | urlencode }}">{{ e.title }}</a>
+      {% if e.ecu %}<span class="muted"> &middot; {{ e.ecu }}</span>{% endif %}
+      {% if e.severity == 'warning' %}<span class="sev"> &middot; warning</span>{% endif %}
+      {% if e.simulated %}<span class="sev"> &middot; simulated</span>{% endif %}
+      {% if e.detail %}<div class="ev-detail">{{ e.detail }}</div>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="warn">No events in this window match those filters.</div>
+{% endif %}
+{% endblock %}

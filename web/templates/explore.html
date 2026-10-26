@@ -101,7 +101,9 @@
     {% if o.reason %} &mdash; {{ o.reason }}{% endif %}
   </p>
   {% endfor %}
-  <div class="chart-wrap"><canvas id="chart"></canvas></div>
+  <div id="explore-summary" class="chart-summary"></div>
+  <div class="chart-wrap"><canvas id="chart" role="img"
+       aria-label="Chart of {{ key }}; statistics summarised above"></canvas></div>
   <div id="chart-state" class="state-strip" style="display:none;"></div>
   <div id="empty" class="chart-empty">No readings in this window.</div>
   {% if markers %}

@@ -464,11 +464,56 @@ class Repository:
         non-battery anomaly detection reported zero findings, always, with no
         error. There is now exactly one definition; the (key, since, ...)
         form has no callers left.
+
+        Ordered by (ts, id) so rows sharing a timestamp come back in the same
+        order every time; `provenance` travels with each row so a chart can
+        tell an imported reading from a live one.
         """
         return self.conn.execute(
-            "SELECT ts, value FROM measurements WHERE vehicle_id=? AND key=? "
-            "AND success=1 AND value IS NOT NULL AND ts>=? ORDER BY ts",
+            "SELECT ts, value, provenance FROM measurements "
+            "WHERE vehicle_id=? AND key=? "
+            "AND success=1 AND value IS NOT NULL AND ts>=? ORDER BY ts, id",
             (vehicle_id, key, _iso_days_ago(days)),
+        ).fetchall()
+
+    def measurement_series_many(self, vehicle_id: int, keys: list[str],
+                                days: int = 30):
+        """`measurement_series` for several keys in ONE query.
+
+        A chart page with six panels used to cost six round trips; this keeps
+        it to one, still bounded by the time window. Rows are ordered by
+        (key, ts, id).
+        """
+        if not keys:
+            return []
+        marks = ",".join("?" for _ in keys)
+        return self.conn.execute(
+            "SELECT key, ts, value, provenance FROM measurements "
+            f"WHERE vehicle_id=? AND key IN ({marks}) AND success=1 "
+            "AND value IS NOT NULL AND ts>=? ORDER BY key, ts, id",
+            (vehicle_id, *keys, _iso_days_ago(days)),
+        ).fetchall()
+
+    def recent_units(self, key: str, limit: int = 200) -> list[str]:
+        """Distinct non-empty units on the newest `limit` rows of a key.
+
+        Used only as a fallback when the catalogue has no unit for a key (the
+        OBD-II PID keys), and to report a disagreement between the stored rows
+        and the catalogue. Bounded so it never scans a whole history.
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT unit FROM (SELECT unit FROM measurements "
+            "WHERE key=? ORDER BY ts DESC LIMIT ?) "
+            "WHERE unit IS NOT NULL AND unit != ''",
+            (key, limit)).fetchall()
+        return sorted(r["unit"] for r in rows)
+
+    def cell_voltage_rows(self, vehicle_id: int, days: int = 30):
+        """Every per-cell reading in the window, ordered by (ts, cell_index)."""
+        return self.conn.execute(
+            "SELECT ts, cell_index, voltage_v FROM cell_voltages "
+            "WHERE vehicle_id=? AND ts>=? ORDER BY ts, cell_index",
+            (vehicle_id, _iso_days_ago(days)),
         ).fetchall()
 
     def raw_measurement_series(self, vehicle_id: int, key: str, days: int = 30):
@@ -483,7 +528,7 @@ class Repository:
             "SELECT ts, ecu, service, pid, key, value, text_value, unit, "
             "provenance, decoding_method, doc_status, raw_response, success, "
             "error FROM measurements WHERE vehicle_id=? AND key=? AND ts>=? "
-            "ORDER BY ts",
+            "ORDER BY ts, id",
             (vehicle_id, key, _iso_days_ago(days)),
         ).fetchall()
 
@@ -942,6 +987,19 @@ class Repository:
         ).fetchone()
         return row["id"] if row else None
 
+    def charging_session(self, session_id: int):
+        """One charging session by id, or None."""
+        return self.conn.execute(
+            "SELECT * FROM charging_sessions WHERE id=?", (session_id,)
+        ).fetchone()
+
+    def charging_samples(self, session_id: int):
+        """A session's samples, oldest first, ties broken by insertion order."""
+        return self.conn.execute(
+            "SELECT ts, voltage_v, current_a, power_kw, soc, battery_temp_c "
+            "FROM charging_samples WHERE session_id=? ORDER BY ts, id",
+            (session_id,)).fetchall()
+
     def charging_sessions(self, days: int = 90, vehicle_id: int | None = None):
         sql = ("SELECT * FROM charging_sessions WHERE status='completed' "
                "AND started_at>=?")
@@ -1044,6 +1102,17 @@ class Repository:
             "SELECT * FROM dtcs WHERE vehicle_id=? ORDER BY last_seen DESC",
             (vehicle_id,),
         ).fetchall()
+
+    def dtc(self, dtc_id: int):
+        """One DTC row by id, or None.
+
+        Added for the per-code drill-down: the Faults page used to stop at a
+        flat summary with no way to open one code's occurrence history and
+        freeze frames. Mirrors `investigation()`.
+        """
+        return self.conn.execute(
+            "SELECT * FROM dtcs WHERE id=?", (dtc_id,)
+        ).fetchone()
 
     def latest_freeze_frames(self, vehicle_id: int) -> dict:
         """Most recent non-empty freeze-frame JSON per (ecu, code).

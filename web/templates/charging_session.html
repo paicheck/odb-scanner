@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% from "_panels.html" import panel, marker_legend %}
+{% block content %}
+<h2>Charging session {{ s.id }} <span class="muted">{{ s.charge_type or 'type not recorded' }}</span></h2>
+<p><a href="/charging">← all sessions</a></p>
+
+<div class="cards">
+  <div class="card"><h3>Started → ended</h3>
+    <div class="note">{{ s.started_at | fmtts }}<br>→ {{ s.ended_at | fmtts }}</div></div>
+  <div class="card"><h3>SoC (session record)</h3>
+    <div class="big">{% if s.start_soc is not none %}{{ s.start_soc | fmtnum(1) }}{% else %}—{% endif %}
+      → {% if s.end_soc is not none %}{{ s.end_soc | fmtnum(1) }}{% else %}—{% endif %} %</div></div>
+  <div class="card"><h3>Session energy (ESTIMATED)</h3>
+    <div class="big">{% if s.energy_estimate_kwh is not none %}{{ s.energy_estimate_kwh | fmtnum(2) }} kWh{% else %}Unavailable{% endif %}</div>
+    <div class="note">Session total, not a sample: trapezoidal integration of sampled
+      vehicle-side power. Not a charger meter, so it cannot be used for charging
+      efficiency.</div></div>
+  <div class="card"><h3>Max power (sampled)</h3>
+    <div class="big">{% if s.max_power_kw is not none %}{{ s.max_power_kw | fmtnum(1) }} kW{% else %}Unavailable{% endif %}</div>
+    <div class="note">highest single instantaneous sample, not an average</div></div>
+</div>
+
+<h3>Sample coverage</h3>
+<ul class="series-summary">
+  <li>{{ samples | length }} sample{{ 's' if samples | length != 1 }}
+    {%- if sample_coverage.first_ts %}, {{ sample_coverage.first_ts | fmtts }} → {{ sample_coverage.last_ts | fmtts }}{% endif %}.</li>
+  {% if sample_coverage.largest_gap_s is not none %}
+  <li>Largest interval between samples: {{ (sample_coverage.largest_gap_s / 60) | round(1) }} min.
+    {% if sample_coverage.gaps %}<span class="flag">{{ sample_coverage.gaps }} interval(s) exceed
+    {{ (sample_coverage.gap_threshold_s / 60) | round | int }} min; the energy estimate bridges
+    them with a straight line, so treat it as approximate.</span>{% endif %}</li>
+  {% endif %}
+  {% if sample_coverage.duplicate_timestamps %}
+  <li class="flag">{{ sample_coverage.duplicate_timestamps }} duplicate sample timestamp(s), kept in stored order.</li>
+  {% endif %}
+  <li>Samples are written by the collector during a detected session. The
+    sample table records no per-field source DID or provenance, so the panels
+    are labelled by field and their decoder evidence is shown as UNKNOWN.</li>
+</ul>
+
+{{ marker_legend() }}
+{% for p in panels %}{{ panel(p, series, panel_data.visible) }}{% endfor %}
+
+<h3>Individual samples</h3>
+{% if samples %}
+<table>
+  <thead><tr><th>Time</th><th>SoC (%)</th><th>Power (kW)</th><th>Current (A)</th><th>Voltage (V)</th><th>Battery temp (°C)</th></tr></thead>
+  <tbody>
+  {% for r in samples %}
+  <tr><td>{{ r.ts | fmtts }}</td><td>{{ r.soc | fmtnum(1) }}</td><td>{{ r.power_kw | fmtnum(2) }}</td>
+      <td>{{ r.current_a | fmtnum(1) }}</td><td>{{ r.voltage_v | fmtnum(1) }}</td>
+      <td>{{ r.battery_temp_c | fmtnum(1) }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No samples were recorded for this session.</p>
+{% endif %}
+<script type="application/json" id="panel-data">{{ dict(panel_data, panels=panels) | tojson }}</script>
+{% endblock %}

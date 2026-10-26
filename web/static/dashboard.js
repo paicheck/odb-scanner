@@ -2,22 +2,24 @@
  *
  * WHY THIS IS A FILE AND NOT INLINE
  * ---------------------------------
- * The CSP is `script-src 'self'`. It used to also allow the Chart.js CDN but
- * not inline scripts, so every page's inline `new Chart(...)` block was refused
- * by the browser: the library loaded and nothing ever drew. All chart code now
- * lives here, served from the dashboard's own origin, and page data arrives in
- * non-executable `<script type="application/json">` blocks.
+ * The CSP is `script-src 'self'`, so all chart code lives here and page data
+ * arrives in non-executable `<script type="application/json">` blocks.
  *
- * WHAT "BETTER" MEANS HERE
- * ------------------------
- *   * a real time axis (linear milliseconds) instead of equally spaced
- *     category labels, so a three-day outage looks like three days;
- *   * gaps are gaps: samples further apart than `gap_s` are not joined by a
- *     straight line that claims data nobody measured;
- *   * units are on the axis and in the tooltip;
- *   * empty series say "no readings", not an empty pair of axes;
- *   * text signals (gear, charge mode) render as a state timeline rather than
- *     being forced onto a numeric axis.
+ * WHO DECIDES WHAT
+ * ----------------
+ * Units, axis policies and ranges, precision, statistics, plausibility and
+ * provenance are decided on the server (analysis/chart_semantics.py) where
+ * they are tested. This file draws what it is given:
+ *
+ *   * a real time axis (milliseconds, UTC), shared by related panels;
+ *   * straight segments between recorded points -- no spline, because a curve
+ *     between two samples draws values nobody measured;
+ *   * gaps wider than `gap_s` break the line instead of bridging it;
+ *   * one unit per axis, with the unit in the axis title and the tooltip;
+ *   * imported / simulated readings and values outside the documented range
+ *     get distinct point SHAPES (not only colours) and say so in the tooltip;
+ *   * calculated series are dashed;
+ *   * an empty series says "no readings", never draws a flat zero.
  */
 /* global Chart */
 (function () {
@@ -28,13 +30,24 @@
   var PALETTE = ["#0b2340", "#2471a3", "#1e8449", "#e67e22", "#8e44ad",
                  "#c0392b", "#7f8c8d", "#16a085", "#2c3e50", "#d35400"];
 
+  var PROV_TEXT = {
+    reported: "reported by the vehicle",
+    calculated: "calculated from other readings",
+    estimated: "estimated",
+    imported: "imported from a Car Scanner export (not read by this tool)",
+    simulated: "simulated — describes no car",
+    unknown: "provenance not recorded for this source",
+  };
+  var PROV_STYLE = { imported: "triangle", simulated: "rectRot" };
+
   function pad(n) { return String(n).padStart(2, "0"); }
 
+  /** Full observation time, to the second, explicitly UTC. */
   function fmtFull(ms) {
     var d = new Date(ms);
     return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" +
       pad(d.getUTCDate()) + " " + pad(d.getUTCHours()) + ":" +
-      pad(d.getUTCMinutes()) + " UTC";
+      pad(d.getUTCMinutes()) + ":" + pad(d.getUTCSeconds()) + " UTC";
   }
 
   function fmtTick(ms, span, narrow) {
@@ -55,6 +68,7 @@
     return pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate());
   }
 
+  /** Generic formatter, used only where no server precision is known. */
   function fmtNum(v) {
     if (!Number.isFinite(v)) return "—";
     var a = Math.abs(v);
@@ -64,6 +78,12 @@
     if (a >= 1) return v.toFixed(2);
     if (a >= 0.01) return v.toFixed(3);
     return v.toExponential(2);
+  }
+
+  function fmtFixed(v, decimals) {
+    if (!Number.isFinite(v)) return "—";
+    if (decimals == null) return fmtNum(v);
+    return v.toFixed(decimals);
   }
 
   function readJSON(id) {
@@ -81,30 +101,41 @@
     return Number.isFinite(s) && s > 0 ? s * 1000 : 0;
   }
 
-  function zipPoints(ts, values) {
+  /** Points from an annotated series payload, keeping per-point provenance,
+   *  plausibility flag and note. Non-finite values become null (a hole), never
+   *  zero. */
+  function pointsFromPayload(p) {
+    var ts = p.ts || [], vals = p.value || [];
+    var prov = p.provenance || [], oor = p.out_of_range || [];
+    var notes = p.point_notes || [];
     var out = [];
-    var n = Math.min((ts || []).length, (values || []).length);
+    var n = Math.min(ts.length, vals.length);
     for (var i = 0; i < n; i++) {
       var x = Date.parse(ts[i]);
       if (!Number.isFinite(x)) continue;
-      var y = values[i];
-      out.push({ x: x, y: (typeof y === "number" && Number.isFinite(y)) ? y : null });
+      var y = vals[i];
+      out.push({
+        x: x,
+        y: (typeof y === "number" && Number.isFinite(y)) ? y : null,
+        p: prov[i] || null, o: !!oor[i], n: notes[i] || null,
+      });
     }
     return out;
   }
 
-  /** Insert a null point in the middle of a hole so Chart.js breaks the line. */
+  /** Insert a null point in the middle of a hole so Chart.js breaks the line.
+   *  The inserted point carries no value and is never shown in a tooltip. */
   function breakGaps(points, gapMs) {
     if (!gapMs || gapMs <= 0) return points;
     var out = [];
     var lastX = null;
     for (var i = 0; i < points.length; i++) {
-      var p = points[i];
-      if (lastX != null && p.x - lastX > gapMs) {
-        out.push({ x: lastX + (p.x - lastX) / 2, y: null });
+      var pt = points[i];
+      if (lastX != null && pt.x - lastX > gapMs) {
+        out.push({ x: lastX + (pt.x - lastX) / 2, y: null, gap: true });
       }
-      out.push(p);
-      lastX = p.x;
+      out.push(pt);
+      lastX = pt.x;
     }
     return out;
   }
@@ -124,7 +155,11 @@
   function showEmpty(canvasId, message) {
     var canvas = document.getElementById(canvasId);
     var empty = emptyFor(canvasId);
-    if (canvas) canvas.style.display = "none";
+    if (canvas) {
+      canvas.style.display = "none";
+      var wrap = canvas.closest(".chart-wrap");
+      if (wrap) wrap.style.display = "none";
+    }
     if (empty) {
       if (message) empty.textContent = message;
       empty.classList.add("show");
@@ -134,7 +169,11 @@
   function showCanvas(canvasId) {
     var canvas = document.getElementById(canvasId);
     var empty = emptyFor(canvasId);
-    if (canvas) canvas.style.display = "";
+    if (canvas) {
+      canvas.style.display = "";
+      var wrap = canvas.closest(".chart-wrap");
+      if (wrap) wrap.style.display = "";
+    }
     if (empty) empty.classList.remove("show");
   }
 
@@ -170,12 +209,53 @@
     };
   }
 
+  function axisTitle(meta, datasets) {
+    if (!datasets.length) return undefined;
+    var unit = meta && meta.unit_label ? meta.unit_label : "";
+    if (datasets.length === 1) {
+      return datasets[0].label + (unit ? " (" + unit + ")" : "");
+    }
+    return unit || "no unit";
+  }
+
+  function yScale(meta, datasets, position, fallbackZero) {
+    var range = meta && meta.range;
+    var tickDecimals = range ? range.tick_decimals : null;
+    var title = axisTitle(meta, datasets);
+    var scale = {
+      position: position,
+      beginAtZero: !!fallbackZero,
+      grid: position === "right" ? { drawOnChartArea: false }
+                                 : { color: "#eef2f5" },
+      border: { color: "#cfd8e0" },
+      title: title
+        ? { display: true, text: title, font: { size: 11 }, color: "#556" }
+        : { display: false },
+      ticks: {
+        font: { size: 10 },
+        color: "#667",
+        callback: function (value) {
+          return tickDecimals == null ? fmtNum(Number(value))
+                                      : Number(value).toFixed(tickDecimals);
+        },
+      },
+    };
+    if (range) {
+      scale.min = range.min;
+      scale.max = range.max;
+      if (range.step) scale.ticks.stepSize = range.step;
+    }
+    return scale;
+  }
+
   /**
    * Draw one line chart.
    *
    * spec = {
-   *   gapMs, markers: [{x,label}],
-   *   series: [{label, unit, points:[{x,y}], color, step, axis:'right'}]
+   *   gapMs, markers: [{x,label}], xRange: [msMin, msMax],
+   *   axes: {left: axisMeta, right: axisMeta},
+   *   series: [{key, label, unit_label, decimals, points, color, axis,
+   *             verification, derived, hidden, plausible}]
    * }
    */
   function lineChart(canvasId, spec) {
@@ -204,20 +284,41 @@
         if (points[j].x > xMax) xMax = points[j].x;
       }
       var color = s.color || COLORS[i % COLORS.length];
-      var showPoints = vals.length <= 150;
+      var base = vals.length === 1 ? 3.5 : (vals.length <= 150 ? 1.8 : 0);
       datasets.push({
+        key: s.key,
         label: s.label || "",
-        unit: s.unit || "",
+        unit: s.unit_label || "",
+        decimals: s.decimals,
+        verification: s.verification || "",
+        derived: !!s.derived,
+        plausible: s.plausible || null,
         data: points,
+        hidden: !!s.hidden,
         borderColor: color,
         backgroundColor: color,
         borderWidth: 1.7,
-        pointRadius: vals.length === 1 ? 3.5 : (showPoints ? 1.8 : 0),
-        pointBackgroundColor: color,
-        pointBorderWidth: 0,
+        borderDash: s.derived ? [5, 3] : [],
+        pointStyle: function (ctx) {
+          var r = ctx.raw;
+          if (r && r.o) return "crossRot";
+          return (r && PROV_STYLE[r.p]) || "circle";
+        },
+        pointRadius: (function (b) {
+          return function (ctx) {
+            var r = ctx.raw;
+            if (!r || r.y == null) return 0;
+            if (r.o) return 5;
+            if (PROV_STYLE[r.p]) return 4;
+            return b;
+          };
+        })(base),
+        pointBorderWidth: function (ctx) {
+          return ctx.raw && ctx.raw.o ? 2 : 0;
+        },
         pointHitRadius: 9,
-        tension: s.step ? 0 : 0.15,
-        stepped: s.step ? "before" : false,
+        tension: 0,
+        stepped: false,
         spanGaps: false,
         fill: false,
         yAxisID: s.axis === "right" ? "y2" : "y",
@@ -231,19 +332,18 @@
     }
     showCanvas(canvasId);
 
+    if (spec.xRange && Number.isFinite(spec.xRange[0]) &&
+        Number.isFinite(spec.xRange[1])) {
+      xMin = Math.min(xMin, spec.xRange[0]);
+      xMax = Math.max(xMax, spec.xRange[1]);
+    }
     if (xMax === xMin) { xMin -= 60000; xMax += 60000; }
     var span = xMax - xMin;
     var narrow = (canvas.clientWidth || canvas.width || 0) < 480;
+    var axes = spec.axes || {};
 
-    function axisTitle(ds) {
-      if (!ds.length) return undefined;
-      var d = ds[0];
-      return d.label + (d.unit ? " (" + d.unit + ")" : "");
-    }
     var leftDs = datasets.filter(function (d) { return d.yAxisID === "y"; });
     var rightDs = datasets.filter(function (d) { return d.yAxisID === "y2"; });
-    var yTitle = axisTitle(leftDs);
-    var y2Title = axisTitle(rightDs);
 
     var scales = {
       x: {
@@ -252,6 +352,8 @@
         max: xMax,
         grid: { color: "#eef2f5", drawTicks: false },
         border: { color: "#cfd8e0" },
+        title: { display: true, text: "Time (UTC)", font: { size: 10 },
+                 color: "#778" },
         ticks: {
           maxTicksLimit: narrow ? 4 : 8,
           font: { size: 10 },
@@ -261,42 +363,14 @@
           },
         },
       },
-      y: {
-        beginAtZero: !!(spec.beginAtZero),
-        grid: { color: "#eef2f5" },
-        border: { color: "#cfd8e0" },
-        title: yTitle
-          ? { display: true, text: yTitle, font: { size: 11 }, color: "#556" }
-          : { display: false },
-        ticks: {
-          font: { size: 10 },
-          color: "#667",
-          callback: function (value) { return fmtNum(Number(value)); },
-        },
-      },
+      y: yScale(axes.left, leftDs, "left", spec.beginAtZero),
     };
-    if (anyRight) {
-      scales.y2 = {
-        position: "right",
-        grid: { drawOnChartArea: false },
-        border: { color: "#cfd8e0" },
-        title: y2Title
-          ? { display: true, text: y2Title, font: { size: 11 }, color: "#556" }
-          : { display: false },
-        ticks: {
-          font: { size: 10 },
-          color: "#667",
-          callback: function (value) { return fmtNum(Number(value)); },
-        },
-      };
-    }
-
-    var plugins = [markerPlugin(spec.markers || [])];
+    if (anyRight) scales.y2 = yScale(axes.right, rightDs, "right", false);
 
     return new Chart(canvas.getContext("2d"), {
       type: "line",
       data: { datasets: datasets },
-      plugins: plugins,
+      plugins: [markerPlugin(spec.markers || [])],
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -313,13 +387,31 @@
           },
           tooltip: {
             displayColors: true,
+            filter: function (item) { return item.raw && item.raw.y != null; },
             callbacks: {
               title: function (items) {
-                return items.length ? fmtFull(items[0].parsed.x) : "";
+                return items.length ? fmtFull(items[0].raw.x) : "";
               },
               label: function (item) {
-                var unit = item.dataset.unit ? " " + item.dataset.unit : "";
-                return item.dataset.label + ": " + fmtNum(item.parsed.y) + unit;
+                var ds = item.dataset;
+                var unit = ds.unit ? " " + ds.unit : "";
+                return ds.label + ": " + fmtFixed(item.raw.y, ds.decimals) + unit;
+              },
+              afterLabel: function (item) {
+                var ds = item.dataset, r = item.raw, lines = [];
+                if (r.p) lines.push("source: " + (PROV_TEXT[r.p] || r.p));
+                if (ds.derived) lines.push("calculated, not a vehicle reading");
+                if (ds.verification) {
+                  lines.push("decoder evidence: " + ds.verification.toUpperCase());
+                }
+                if (r.n) lines.push(r.n);
+                if (r.o) {
+                  var pr = ds.plausible;
+                  lines.push("outside documented plausible range" +
+                    (pr ? " [" + pr[0] + ", " + pr[1] + "]" : "") +
+                    " — kept, not removed");
+                }
+                return lines;
               },
             },
           },
@@ -329,20 +421,19 @@
     });
   }
 
-  function summarize(points, unit) {
-    var vals = finiteValues(points);
-    if (!vals.length) return "";
-    var min = vals[0], max = vals[0], sum = 0;
-    for (var i = 0; i < vals.length; i++) {
-      if (vals[i] < min) min = vals[i];
-      if (vals[i] > max) max = vals[i];
-      sum += vals[i];
-    }
-    var u = unit ? " " + unit : "";
-    return '<span>n <strong>' + vals.length + "</strong></span>" +
-      "<span>min <strong>" + fmtNum(min) + "</strong>" + u + "</span>" +
-      "<span>max <strong>" + fmtNum(max) + "</strong>" + u + "</span>" +
-      "<span>mean <strong>" + fmtNum(sum / vals.length) + "</strong>" + u + "</span>";
+  function seriesSpec(payload, extra) {
+    var spec = {
+      key: payload.key,
+      label: payload.name || payload.key,
+      unit_label: payload.unit_label != null ? payload.unit_label : payload.unit,
+      decimals: payload.axis ? payload.axis.decimals : null,
+      verification: payload.verification,
+      derived: payload.derived,
+      plausible: payload.plausibility ? payload.plausibility.range : null,
+      points: pointsFromPayload(payload),
+    };
+    for (var k in (extra || {})) spec[k] = extra[k];
+    return spec;
   }
 
   function displayValue(value) {
@@ -351,6 +442,48 @@
       try { return JSON.stringify(value); } catch (e) { return String(value); }
     }
     return String(value);
+  }
+
+  /** Text summary from SERVER statistics (computed on the raw rows, before
+   *  any downsampling). Built with DOM nodes, not HTML strings. */
+  function renderSummary(container, payload) {
+    if (!container) return;
+    container.innerHTML = "";
+    var st = payload.stats;
+    if (!st) return;
+    var d = payload.axis ? payload.axis.decimals : null;
+    var u = payload.unit_label ? " " + payload.unit_label : "";
+    function add(label, value) {
+      var span = document.createElement("span");
+      span.appendChild(document.createTextNode(label + " "));
+      var strong = document.createElement("strong");
+      strong.textContent = value;
+      span.appendChild(strong);
+      container.appendChild(span);
+    }
+    add("readings", String(st.n));
+    if (st.n) {
+      add("min", fmtFixed(st.min, d) + u);
+      add("max", fmtFixed(st.max, d) + u);
+      add("mean", fmtFixed(st.mean, d) + u);
+    }
+    if (payload.verification) add("evidence", payload.verification.toUpperCase());
+    var pc = payload.provenance_counts || {};
+    for (var p in pc) {
+      if (p !== "reported" && p !== "calculated") add(p, String(pc[p]));
+    }
+    if (payload.plausibility && payload.plausibility.outside) {
+      add("outside documented range", String(payload.plausibility.outside));
+    }
+    if (payload.coverage && payload.coverage.gaps) {
+      add("recording gaps", String(payload.coverage.gaps));
+    }
+    if (payload.axis && payload.axis.note) {
+      var note = document.createElement("span");
+      note.className = "axis-note-inline";
+      note.textContent = "y-axis: " + payload.axis.note;
+      container.appendChild(note);
+    }
   }
 
   function renderStateStrip(container, payload) {
@@ -395,8 +528,8 @@
       total += w;
     }
     if (!total) total = 1;
-    for (var k = 0; k < segs.length; k++) {
-      var seg = segs[k];
+    for (var s = 0; s < segs.length; s++) {
+      var seg = segs[s];
       var band = document.createElement("span");
       band.className = "state-band";
       band.style.flex = "0 0 " + (seg.w / total * 100) + "%";
@@ -425,8 +558,7 @@
     for (var li = 0; li < shown; li++) {
       if (times[li] == null) continue;
       var item = document.createElement("li");
-      item.textContent = fmtFull(times[li]) + " — " +
-        displayValue(vals[li]);
+      item.textContent = fmtFull(times[li]) + " — " + displayValue(vals[li]);
       list.appendChild(item);
     }
     if (n > shown) {
@@ -435,6 +567,15 @@
       list.appendChild(more);
     }
     container.appendChild(list);
+  }
+
+  function singleSeriesChart(canvasId, payload, gapS, markers) {
+    return lineChart(canvasId, {
+      gapMs: gapMsFrom(gapS),
+      markers: markers || [],
+      axes: { left: payload.axis || null },
+      series: [seriesSpec(payload)],
+    });
   }
 
   function initMeasurements() {
@@ -481,7 +622,8 @@
           if (meta) {
             var bits = [];
             if (payload.name) bits.push(payload.name);
-            if (payload.unit) bits.push("(" + payload.unit + ")");
+            var unit = payload.unit_label != null ? payload.unit_label : payload.unit;
+            if (unit) bits.push("(" + unit + ")");
             if (payload.raw_points != null) {
               bits.push(payload.raw_points + " raw → " +
                         payload.returned_points + " shown");
@@ -499,8 +641,7 @@
             return;
           }
 
-          var points = zipPoints(payload.ts, payload.value);
-          if (!finiteValues(points).length) {
+          if (!payload.stats || !payload.stats.n) {
             if (canvas) canvas.style.display = "none";
             if (wrap) wrap.style.display = "none";
             if (empty) {
@@ -510,15 +651,8 @@
             }
             return;
           }
-          if (summary) summary.innerHTML = summarize(points, payload.unit);
-          current = lineChart("chart", {
-            gapMs: gapMsFrom(data.gap_s),
-            series: [{
-              label: payload.name || key,
-              unit: payload.unit,
-              points: points,
-            }],
-          });
+          renderSummary(summary, payload);
+          current = singleSeriesChart("chart", payload, data.gap_s);
         })
         .catch(function (err) {
           if (seq !== requestSeq) return;
@@ -560,74 +694,184 @@
       renderStateStrip(strip, payload);
       return;
     }
-    var points = zipPoints(payload.ts, payload.value);
-    if (!finiteValues(points).length) {
+    renderSummary(document.getElementById("explore-summary"), payload);
+    var markers = (data.markers || []).map(function (m) {
+      return { x: Date.parse(m.ts), label: m.label };
+    }).filter(function (m) { return Number.isFinite(m.x); });
+    var chart = singleSeriesChart("chart", payload, data.gap_s, markers);
+    if (!chart) {
       if (canvas) canvas.style.display = "none";
       if (wrap) wrap.style.display = "none";
       if (empty) empty.classList.add("show");
-      return;
     }
-    var markers = (data.markers || []).map(function (m) {
-      var x = Date.parse(m.ts);
-      return { x: x, label: m.label };
-    }).filter(function (m) { return Number.isFinite(m.x); });
+  }
 
-    lineChart("chart", {
-      gapMs: gapMsFrom(data.gap_s),
-      markers: markers,
-      series: [{
-        label: payload.name || payload.key,
-        unit: payload.unit,
-        points: points,
-      }],
+  /** Server-built panels (overview, battery, range, charging session): one
+   *  unit per axis, shared time axis, selectable series. */
+  function initPanels() {
+    var data = readJSON("panel-data");
+    if (!data || !data.panels) return;
+    var series = data.series || {};
+    var visible = data.visible || {};
+    var xr = data.x_range || null;
+    var xRange = xr ? [Date.parse(xr[0]), Date.parse(xr[1])] : null;
+
+    data.panels.forEach(function (panel) {
+      var canvasId = "panel-" + panel.id;
+      if (panel.empty) { showEmpty(canvasId); return; }
+      var specs = [];
+      var idx = 0;
+      function add(keys, side) {
+        keys.forEach(function (k) {
+          var p = series[k];
+          if (!p) return;
+          specs.push(seriesSpec(p, {
+            axis: side, color: COLORS[idx++ % COLORS.length],
+            hidden: visible[k] === false,
+          }));
+        });
+      }
+      add(panel.left || [], "left");
+      add(panel.right || [], "right");
+      var leftKey = (panel.left || [])[0];
+      var rightKey = (panel.right || [])[0];
+      var chart = lineChart(canvasId, {
+        gapMs: gapMsFrom(data.gap_s),
+        xRange: xRange,
+        axes: {
+          left: panel.left_axis || (leftKey && series[leftKey] ? series[leftKey].axis : null),
+          right: panel.right_axis || (rightKey && series[rightKey] ? series[rightKey].axis : null),
+        },
+        series: specs,
+      });
+      var box = document.querySelector('fieldset[data-panel="' + panel.id + '"]');
+      if (!chart || !box) return;
+      box.querySelectorAll("input[data-key]").forEach(function (input) {
+        input.addEventListener("change", function () {
+          var key = input.getAttribute("data-key");
+          for (var i = 0; i < chart.data.datasets.length; i++) {
+            if (chart.data.datasets[i].key === key) {
+              chart.setDatasetVisibility(i, input.checked);
+            }
+          }
+          chart.update();
+        });
+      });
+    });
+
+    if (data.cell_bar) cellBar("cell-bar", data.cell_bar);
+    if (data.scatter) rangeScatter("range-soc-scatter", data.scatter);
+  }
+
+  /** Latest sweep: one bar per physical cell, labelled with the catalogue's
+   *  1-based cell number. */
+  function cellBar(canvasId, info) {
+    var canvas = document.getElementById(canvasId);
+    if (!canvas || !window.Chart) return;
+    var cells = (info.latest && info.latest.cells) || [];
+    if (!cells.length) { showEmpty(canvasId); return; }
+    destroy(canvas);
+    var range = info.axis && info.axis.range;
+    var decimals = info.axis ? info.axis.decimals : 3;
+    new Chart(canvas.getContext("2d"), {
+      type: "bar",
+      data: {
+        labels: cells.map(function (c) { return "#" + String(c.number).padStart(3, "0"); }),
+        datasets: [{
+          label: "Cell voltage",
+          data: cells.map(function (c) { return c.voltage_v; }),
+          backgroundColor: "#2471a3",
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: function (items) {
+                var c = cells[items[0].dataIndex];
+                return "Cell #" + String(c.number).padStart(3, "0") +
+                  " (stored index " + c.index + ")";
+              },
+              label: function (item) {
+                return fmtFixed(item.raw, decimals) + " V at " +
+                  fmtFull(Date.parse(info.latest.ts));
+              },
+            },
+          },
+        },
+        scales: {
+          x: { title: { display: true, text: "Cell number" },
+               ticks: { autoSkip: true, maxTicksLimit: 18, font: { size: 9 } } },
+          y: {
+            min: range ? range.min : undefined,
+            max: range ? range.max : undefined,
+            title: { display: true, text: "Cell voltage (V)" },
+            ticks: {
+              callback: function (v) {
+                return range ? Number(v).toFixed(range.tick_decimals) : fmtNum(v);
+              },
+            },
+          },
+        },
+      },
     });
   }
 
-  function initOverview() {
-    var data = readJSON("overview-data");
-    if (!data || !data.chart) return;
-    var c = data.chart;
-    var gap = gapMsFrom(data.gap_s);
-    var soc = zipPoints(c.ts, c.soc);
-    var pack = zipPoints(c.ts, c.pack_v);
-    if (!finiteValues(soc).length && !finiteValues(pack).length) {
-      showEmpty("overviewChart");
-      return;
-    }
-    lineChart("overviewChart", {
-      gapMs: gap,
-      series: [
-        { label: "State of charge", unit: "%", points: soc, color: "#1e8449" },
-        { label: "Pack voltage", unit: "V", points: pack, color: "#2471a3",
-          axis: "right" },
-      ],
-    });
+  function fitRange(vals, lo, hi) {
+    var mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
+    var padv = (mx - mn) * 0.05 || Math.abs(mx) * 0.05 || 1;
+    var a = mn - padv, b = mx + padv;
+    if (lo != null) a = Math.max(a, lo);
+    if (hi != null) b = Math.min(b, hi);
+    return [a, b];
   }
 
-  function seriesChart(canvasId, ts, values, label, unit, gapMs) {
-    var points = zipPoints(ts, values);
-    if (!finiteValues(points).length) {
-      showEmpty(canvasId);
-      return;
-    }
-    lineChart(canvasId, {
-      gapMs: gapMs,
-      series: [{ label: label, unit: unit, points: points }],
+  /** Range estimate vs SoC, paired by nearest timestamp. No fitted line: the
+   *  relationship is not assumed to be linear (or anything else). */
+  function rangeScatter(canvasId, info) {
+    var canvas = document.getElementById(canvasId);
+    if (!canvas || !window.Chart) return;
+    var pairs = info.pairs || [];
+    if (!pairs.length) { showEmpty(canvasId); return; }
+    destroy(canvas);
+    var xs = pairs.map(function (p) { return p.x; });
+    var ys = pairs.map(function (p) { return p.y; });
+    var xr = fitRange(xs, 0, 100);
+    var yr = fitRange(ys, 0, null);
+    new Chart(canvas.getContext("2d"), {
+      type: "scatter",
+      data: { datasets: [{ label: "paired readings", data: pairs,
+                           backgroundColor: "#2471a3", pointRadius: 3 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        parsing: { xAxisKey: "x", yAxisKey: "y" },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (item) {
+                var p = item.raw;
+                return [
+                  info.x.label + ": " + fmtFixed(p.x, 1) + " " + info.x.unit_label +
+                    " at " + fmtFull(Date.parse(p.ts_a)),
+                  info.y.label + ": " + fmtFixed(p.y, 0) + " " + info.y.unit_label +
+                    " at " + fmtFull(Date.parse(p.ts_b)),
+                  "readings " + Math.abs(p.dt_s) + " s apart",
+                ];
+              },
+            },
+          },
+        },
+        scales: {
+          x: { type: "linear", min: xr[0], max: xr[1],
+               title: { display: true, text: info.x.label + " (" + info.x.unit_label + ")" } },
+          y: { min: yr[0], max: yr[1],
+               title: { display: true, text: info.y.label + " (" + info.y.unit_label + ")" } },
+        },
+      },
     });
-  }
-
-  function initBattery() {
-    var data = readJSON("battery-data");
-    if (!data) return;
-    var gap = gapMsFrom(data.gap_s);
-    var c = data.chart || {};
-    seriesChart("deltaChart", c.ts, c.delta_mv, "Cell delta", "mV", gap);
-    seriesChart("socChart", c.ts, c.soc, "State of charge", "%", gap);
-    seriesChart("packChart", c.ts, c.pack_v, "Pack voltage", "V", gap);
-    seriesChart("tempChart", c.ts, c.temp, "Battery temperature", "°C", gap);
-    if (data.lv && data.lv.ts && data.lv.ts.length) {
-      seriesChart("lvChart", data.lv.ts, data.lv.v, "12 V system", "V", gap);
-    }
   }
 
   function initProgress() {
@@ -668,7 +912,8 @@
         animation: false,
         plugins: { legend: { position: "top", align: "end" } },
         scales: {
-          x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
+          x: { stacked: true, beginAtZero: true, ticks: { precision: 0 },
+               title: { display: true, text: "Reads (count)" } },
           y: { stacked: true, ticks: { font: { size: 10 } } },
         },
       },
@@ -683,8 +928,7 @@
     }
     initMeasurements();
     initExplore();
-    initOverview();
-    initBattery();
+    initPanels();
     initProgress();
   }
 
