@@ -50,7 +50,11 @@ sys.path.insert(0, str(ROOT))
 from config import load_config  # noqa: E402
 from diagnostic.elm327 import Elm327Transport  # noqa: E402
 from diagnostic.interface import CommunicationError  # noqa: E402
-from diagnostic.uds import ReadOnlyViolationError, validate_request  # noqa: E402
+from diagnostic.uds import (  # noqa: E402
+    ReadOnlyViolationError,
+    canonical_request,
+    validate_request,
+)
 
 HELP_TEXT = """Read-only: vehicle requests must pass the project's read-only allow-list
 (0100, 0902, 03, 22xxxx, 1001, 19xx, 3E00, ...), and only adapter commands that
@@ -134,6 +138,19 @@ def refusal(cmd: str, raw_unsafe: bool) -> str | None:
     return None
 
 
+def wire_form(cmd: str, raw_unsafe: bool) -> str:
+    """The exact text sent for an accepted command.
+
+    Read-only mode sends the canonical form that was checked (adapter commands
+    normalised, vehicle requests as canonical hex), never the typed text.
+    """
+    if raw_unsafe:
+        return cmd.strip()
+    if is_adapter_command(cmd):
+        return normalise_adapter_command(cmd)
+    return canonical_request(cmd)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", default=None, help="alternative config file")
@@ -199,9 +216,9 @@ def main() -> int:
                 print(f"  refused: {reason}")
                 continue
             try:
-                for line in transport.send_command(cmd):
+                for line in transport.send_command(wire_form(cmd, args.raw_unsafe)):
                     print(f"  {line}")
-            except CommunicationError as exc:
+            except (CommunicationError, ReadOnlyViolationError) as exc:
                 print(f"  error: {exc}")
     finally:
         transport.close()

@@ -183,7 +183,7 @@ def _validate_subfunction(hexed: str, service: int) -> None:
         )
     try:
         sub = int(hexed[2:4], 16)
-    except ValueError as exc:  # pragma: no cover - clean_hex already filtered
+    except ValueError as exc:  # pragma: no cover - canonical_request filtered
         raise ReadOnlyViolationError(
             f"Refusing to transmit {hexed!r}: sub-function is not a hex byte."
         ) from exc
@@ -199,6 +199,30 @@ def _validate_subfunction(hexed: str, service: int) -> None:
         )
 
 
+def canonical_request(payload: str | bytes) -> str:
+    """The exact hex a request is validated as AND transmitted as.
+
+    Validation used to run on clean_hex(payload), which silently drops every
+    character that is not a hex digit, while the caller transmitted the
+    original string. The two could disagree: "22F190\\r2EF19000" validated as
+    one 7-byte 0x22 read, and the adapter, which ends a command at CR, received
+    a read followed by a 0x2E write. So an outgoing request may contain hex
+    digits and spaces and nothing else, and the canonical form returned here
+    -- upper case, no spaces -- is the one string that is checked, logged and
+    sent. (clean_hex stays lenient: it parses adapter OUTPUT, which carries
+    headers, prompts and status words.)
+    """
+    if isinstance(payload, (bytes, bytearray)):
+        return bytes(payload).hex().upper()
+    bad = sorted({c for c in payload if c not in HEX_DIGITS and c != " "})
+    if bad:
+        raise ReadOnlyViolationError(
+            f"Refusing to transmit {payload!r}: requests may contain only hex "
+            f"digits and spaces, found {bad!r}. This system is strictly "
+            "READ-ONLY.")
+    return payload.replace(" ", "").upper()
+
+
 def validate_request(payload: str | bytes) -> int:
     """Validate a whole outgoing request. Returns the service id.
 
@@ -210,9 +234,10 @@ def validate_request(payload: str | bytes) -> int:
     diagnostic port must pass through here first.
 
     Fails closed: anything that is not a well-formed request whose service AND
-    sub-function are both allow-listed is rejected rather than sent.
+    sub-function are both allow-listed is rejected rather than sent. Callers
+    must transmit canonical_request(payload), the exact string checked here.
     """
-    hexed = clean_hex(payload) if isinstance(payload, str) else payload.hex()
+    hexed = canonical_request(payload)
     if len(hexed) < 2:
         raise ReadOnlyViolationError(
             f"Refusing to transmit an empty or malformed request {hexed!r}: "
@@ -266,8 +291,8 @@ def validate_approved_extended_session(payload: str | bytes, approval: str) -> i
             "Refusing 0x10 0x03: the ABS approval token was not supplied. "
             "This session change is not part of the normal read-only path."
         )
-    hexed = clean_hex(payload) if isinstance(payload, str) else payload.hex()
-    if hexed.upper() != "1003":
+    hexed = canonical_request(payload)
+    if hexed != "1003":
         raise ReadOnlyViolationError(
             f"Refusing {hexed!r}: the approved session request is exactly "
             "'10 03'. This system remains read-only apart from that one "

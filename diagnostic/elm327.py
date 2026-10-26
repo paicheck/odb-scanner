@@ -238,6 +238,15 @@ class Elm327Transport(OBDInterface):
     def send_command(self, command: str) -> list[str]:
         if self._dev is None:
             raise CommunicationError("Adapter not open")
+        # The adapter ends a command at CR, so an embedded CR/LF would turn one
+        # (validated) command into several, the later ones never checked.
+        # ReadOnlyViolationError, not CommunicationError: callers swallow the
+        # latter per read, and this must be loud.
+        if "\r" in command or "\n" in command:
+            from .uds import ReadOnlyViolationError
+            raise ReadOnlyViolationError(
+                f"Refusing to send {command!r}: a command must be a single "
+                "line. This system is strictly READ-ONLY.")
         # Discard anything already in the buffer before asking a new question.
         # Only when something might be there: a desync can only begin with a
         # read that did not complete, and _read_until_prompt already drains on

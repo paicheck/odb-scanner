@@ -130,9 +130,10 @@ class Doctor:
     # -- low-level helpers ---------------------------------------------------
     def _vehicle(self, cmd: str) -> list[str]:
         """Send a request to the car, refusing anything off the read-only list."""
-        uds.validate_request(cmd)          # raises ReadOnlyViolationError
+        wire = uds.canonical_request(cmd)  # the string checked is the one sent
+        uds.validate_request(wire)         # raises ReadOnlyViolationError
         assert self.transport is not None
-        return self.transport.send_command(cmd)
+        return self.transport.send_command(wire)
 
     def _is_silent(self, lines: list[str]) -> bool:
         blob = " ".join(lines).upper()

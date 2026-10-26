@@ -60,3 +60,10 @@ def test_writes_and_session_changes_are_refused(cmd):
                                  "STPX H:7E0, D:14FFFFFF"])
 def test_raw_unsafe_sends_anything(cmd):
     assert refusal(cmd, raw_unsafe=True) is None
+
+
+def test_read_only_mode_sends_the_canonical_form_it_checked():
+    from tools.elm_console import wire_form
+    assert wire_form("22 f1 90", raw_unsafe=False) == "22F190"
+    assert wire_form("at sh 7e0", raw_unsafe=False) == "ATSH7E0"
+    assert wire_form(" 1003 ", raw_unsafe=True) == "1003"

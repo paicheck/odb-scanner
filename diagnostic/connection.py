@@ -44,6 +44,12 @@ class DiagnosticConnection:
         # hex by hand -- can put a write service on the wire. The only caller
         # that passes a different validator is approved_extended_session(),
         # which can accept exactly 0x10 0x03 and nothing else.
+        #
+        # The canonical form is computed first and is the ONLY string used from
+        # here on: validated, logged and transmitted. Validating one string and
+        # sending another let "22F190\r2EF19000" pass as a read while the
+        # adapter received a read and then a write.
+        hexcmd = uds.canonical_request(hexcmd)
         validator(hexcmd)
         # Addressing: functional by default (see Elm327Transport.set_header --
         # field clones refuse 29-bit headers outright). When the transport
