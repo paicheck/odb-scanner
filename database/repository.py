@@ -87,6 +87,43 @@ def _did(text: str | None) -> int | None:
     return _can(text)
 
 
+class _RollbackOnErrorConnection(sqlite3.Connection):
+    """A connection that does not keep a failed statement's transaction open.
+
+    sqlite3 opens a transaction implicitly before the first write and keeps it
+    until commit() or rollback(). When a write raised -- a foreign-key failure
+    on POST /investigations/<missing id>/observe was enough -- nothing rolled it
+    back, so that thread's connection kept the database's write lock and every
+    other writer, the collector included, got "database is locked" until that
+    same thread happened to commit something unrelated (which would then also
+    have committed the failed method's partial work). A statement that raises
+    now rolls back the open transaction before the error propagates. Nothing
+    in this codebase catches a SQLite error and carries on inside the same
+    transaction, so no caller relied on the old behaviour.
+    """
+
+    def _rollback_pending(self) -> None:
+        if self.in_transaction:
+            try:
+                self.rollback()
+            except sqlite3.Error:  # pragma: no cover - the original error wins
+                pass
+
+    def execute(self, *args, **kwargs):
+        try:
+            return super().execute(*args, **kwargs)
+        except sqlite3.Error:
+            self._rollback_pending()
+            raise
+
+    def executemany(self, *args, **kwargs):
+        try:
+            return super().executemany(*args, **kwargs)
+        except sqlite3.Error:
+            self._rollback_pending()
+            raise
+
+
 class Repository:
     """One per-process handle to the SQLite database.
 
@@ -144,7 +181,8 @@ class Repository:
         conn = getattr(self._local, "conn", None)
         if conn is None:
             conn = sqlite3.connect(self.path, check_same_thread=False,
-                                   timeout=30.0)
+                                   timeout=30.0,
+                                   factory=_RollbackOnErrorConnection)
             conn.row_factory = sqlite3.Row
             # foreign_keys is per-connection and is not persisted in the file,
             # so it has to be set on every connection the process opens.

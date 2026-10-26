@@ -24,6 +24,21 @@ def register(app, ctx) -> None:
     trend_days = ctx.trend_days
     vehicle_and_id = ctx.vehicle_and_id
 
+    def _owned_investigation(investigation_id: int):
+        """The investigation row if it exists AND belongs to this vehicle.
+
+        Otherwise 404, before anything is written. Writing evidence for an id
+        that does not exist failed a foreign-key check mid-request; the
+        dashboard shows one vehicle (first_vehicle()), so another vehicle's
+        investigation is "not found" here exactly as /dtcs/{id} and
+        /charging/{id} treat other vehicles' rows.
+        """
+        _, vid = vehicle_and_id()
+        row = repo.investigation(investigation_id) if vid else None
+        if row is None or row["vehicle_id"] != vid:
+            raise HTTPException(status_code=404, detail="No such investigation")
+        return row
+
     @app.get("/investigations", response_class=HTMLResponse)
     def investigations_page(request: Request):
         _, vid = vehicle_and_id()
@@ -72,8 +87,8 @@ def register(app, ctx) -> None:
     def investigation_observe(request: Request, investigation_id: int,
                               key: str = Form(...)):
         from analysis import investigation as inv_mod
-        _, vid = vehicle_and_id()
-        inv_mod.observe_key(repo, vid, key.strip(), _profile(),
+        row = _owned_investigation(investigation_id)
+        inv_mod.observe_key(repo, row["vehicle_id"], key.strip(), _profile(),
                             inv_id=investigation_id)
         return _redirect(f"/investigations/{investigation_id}")
 
@@ -82,6 +97,7 @@ def register(app, ctx) -> None:
                                summary: str = Form(""),
                                criteria_confirmed: bool = Form(False)):
         from analysis import investigation as inv_mod
+        _owned_investigation(investigation_id)
         inv_mod.finalize(repo, investigation_id, summary=summary.strip(),
                          criteria_confirmed=criteria_confirmed)
         return _redirect(f"/investigations/{investigation_id}")
