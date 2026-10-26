@@ -200,17 +200,50 @@ class CollectorTest {
 
     @Test
     fun `a DID that never answers is retired after three silent passes`() = runBlocking {
-        val port = ReadingPort(mapOf("221E3B" to listOf("NO DATA")))
-        val c = collector(listOf(scalar("fast", 0x1E3B)), port)
+        // Its module answers another DID in the same pass, so the module was
+        // reached and this DID's silence is evidence it does not exist.
+        val port = ReadingPort(mapOf(
+            "221E3B" to listOf("NO DATA"),
+            "221E3C" to listOf(single("221E3C", "0BB8")),
+        ))
+        val c = collector(listOf(scalar("fast", 0x1E3B), scalar("alive", 0x1E3C)), port)
 
         repeat(3) {
             val readings = c.collectOnce()
-            assertEquals("no-response", readings.single().status)
+            assertEquals("no-response", readings.first { it.key == "fast" }.status)
         }
         assertEquals(3, port.reads["221E3B"])
 
-        assertTrue("silent DID not retired at the threshold", c.collectOnce().isEmpty())
+        assertTrue("silent DID not retired at the threshold",
+            c.collectOnce().none { it.key == "fast" })
         assertEquals(3, port.reads["221E3B"])
+    }
+
+    @Test
+    fun `silence from a module that answered nothing never retires its DIDs`() = runBlocking {
+        // The car asleep, or the bus unreachable: every DID of the module says
+        // NO DATA. That is not evidence about any one DID. Without this guard
+        // a phone that boots with the ignition off retired the whole map.
+        val port = ReadingPort(mapOf(
+            "221E3B" to listOf("NO DATA"),
+            "221E3C" to listOf("NO DATA"),
+        ))
+        val c = collector(listOf(scalar("a", 0x1E3B), scalar("b", 0x1E3C)), port)
+
+        repeat(6) { assertEquals(2, c.collectOnce().size) }
+        assertEquals(6, port.reads["221E3B"])
+    }
+
+    @Test
+    fun `adapter refusals never count as silence`() = runBlocking {
+        val port = ReadingPort(mapOf(
+            "221E3B" to listOf("?"),
+            "221E3C" to listOf(single("221E3C", "0BB8")),
+        ))
+        val c = collector(listOf(scalar("refused", 0x1E3B), scalar("alive", 0x1E3C)), port)
+
+        repeat(6) { c.collectOnce() }
+        assertEquals("a refused DID was retired", 6, port.reads["221E3B"])
     }
 
     @Test

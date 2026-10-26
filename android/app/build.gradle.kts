@@ -22,6 +22,13 @@ android {
     namespace = "com.odbscanner"
     compileSdk = 34
 
+    // The collector logs refusals and timeouts with android.util.Log. On the
+    // plain JVM those stubs throw "not mocked", which would make the paths
+    // that matter most for retirement (refused, timed out) untestable.
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     defaultConfig {
         applicationId = "com.odbscanner"
         minSdk = 26

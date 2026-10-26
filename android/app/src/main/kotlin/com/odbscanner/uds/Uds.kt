@@ -7,8 +7,27 @@ class NegativeResponseError(val service: Int, val nrc: Int) :
     Exception("UDS negative response: service 0x" + service.toString(16) +
         ", NRC 0x" + nrc.toString(16).padStart(2, '0'))
 
-class NoResponseError(val did: Int) :
-    Exception("No decodable response to DID 0x" + did.toString(16).padStart(4, '0'))
+/**
+ * The DID produced no usable answer. Only the base class means "the ECU said
+ * nothing" (NO DATA) and counts toward silent-DID retirement; the subclasses
+ * below are failures that say nothing about whether the DID exists, so the
+ * collector must not retire on them (collector.py treats them the same way).
+ */
+open class NoResponseError(val did: Int, message: String? = null) :
+    Exception(message ?: ("No decodable response to DID 0x" + did.toString(16).padStart(4, '0')))
+
+/** An ECU answered, but not with a usable 0x62 for this DID (echo mismatch,
+ *  another service marker): an addressing/decoder problem, not silence. */
+class UnexpectedResponseError(did: Int, detail: String) :
+    NoResponseError(did, "Unexpected response to DID 0x" +
+        did.toString(16).padStart(4, '0') + ": " + detail)
+
+/** The request never got an answer for a reason on our side -- the adapter
+ *  refused it ('?') or timed out: the module was not reached, so its silence
+ *  is uninformative. */
+class UnreachableError(did: Int, cause: Exception) :
+    NoResponseError(did, "DID 0x" + did.toString(16).padStart(4, '0') +
+        " not reached: " + cause)
 
 /**
  * UDS read path over the ELM327 transport, ported from `diagnostic/uds.py`
@@ -35,14 +54,15 @@ object Uds {
                 ) {
                     payload.copyOfRange(3, payload.size)
                 } else {
-                    throw NoResponseError(did)  // DID echo mismatch
+                    throw UnexpectedResponseError(did, "DID echo mismatch")
                 }
             }
             0x7F -> {
                 val nrc = if (payload.size > 2) payload[2].toInt() and 0xFF else 0
                 throw NegativeResponseError(0x22, nrc)
             }
-            else -> throw NoResponseError(did)
+            else -> throw UnexpectedResponseError(
+                did, "service marker 0x" + (payload[0].toInt() and 0xFF).toString(16))
         }
     }
 

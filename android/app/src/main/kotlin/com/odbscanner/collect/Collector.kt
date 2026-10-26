@@ -13,6 +13,8 @@ import com.odbscanner.uds.NegativeResponseError
 import com.odbscanner.uds.NoResponseError
 import com.odbscanner.uds.ReadOnlyGuardImpl
 import com.odbscanner.uds.Uds
+import com.odbscanner.uds.UnexpectedResponseError
+import com.odbscanner.uds.UnreachableError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -62,6 +64,13 @@ class Collector(
     private val retired = mutableSetOf<Pair<String, Int>>()
     private val everSucceeded = mutableSetOf<Pair<String, Int>>()
     private val silentCount = mutableMapOf<Pair<String, Int>, Int>()
+    // Reachability guard for silent-DID retirement, ported from collector.py
+    // (_phase_ok_ecus / _pending_silent): silent reads are buffered for the
+    // pass and only counted for modules that answered something in it. On
+    // 2026-10-17 an unreachable bus retired 72 DIDs in one pass on the desktop;
+    // a car-phone that boots with the ignition off would do the same here.
+    private val phaseOkEcus = mutableSetOf<String>()
+    private val pendingSilent = mutableMapOf<Pair<String, Int>, Int>()
     private var silentRetireThreshold = 3
     private var tsNow: String = ""
 
@@ -172,6 +181,8 @@ class Collector(
         tsNow = Instant.now().toString()
         val slowDue = slowPhaseDue()
         val readings = mutableListOf<Reading>()
+        phaseOkEcus.clear()
+        pendingSilent.clear()
         // The spec lists DIDs alphabetically, so reading it as-is makes almost
         // every DID belong to a different module than the one before it -- the
         // ELM327 would be told to switch addressing ~287 times a pass, and this
@@ -189,6 +200,7 @@ class Collector(
                 readings.add(poll(m, did))
             }
         }
+        endSilencePhase(tsNow)
         // Computed values and charging state are derived from what this pass
         // just read (and from carried-forward values), every pass; DTCs are
         // re-read once per slow rotation.
@@ -217,14 +229,20 @@ class Collector(
             _recordSuccess(m, record, tsNow)
             everSucceeded.add(m.ecuKey to did)
             silentCount.remove(m.ecuKey to did)
+            phaseOkEcus.add(m.ecuKey)
             Reading(m.key, value, toHex(record), "ok")
         } catch (e: NegativeResponseError) {
             _recordFailure(m, e.toString(), tsNow)
             if (e.nrc == 0x31) retire(m.ecuKey, did, tsNow)
             Reading(m.key, null, "", "nrc-0x" + e.nrc.toString(16).padStart(2, '0'))
-        } catch (_: NoResponseError) {
-            _recordFailure(m, "No/undecodable response to DID 0x${hex4(did)}", tsNow)
-            noteSilent(m.ecuKey, did, tsNow)
+        } catch (e: NoResponseError) {
+            _recordFailure(m, e.message ?: "No/undecodable response to DID 0x${hex4(did)}", tsNow)
+            // Only genuine NO DATA is evidence about the DID. A refusal, a
+            // timeout or an unexpected reply means the module was not reached
+            // or answered something else -- never a reason to retire.
+            if (e !is UnreachableError && e !is UnexpectedResponseError) {
+                noteSilent(m.ecuKey, did)
+            }
             Reading(m.key, null, "", "no-response")
         }
     }
@@ -259,11 +277,11 @@ class Collector(
             // is unreadable, not the link.
             Log.w("odbscanner", "DID 0x${hex4(did)} (${m.key}) timeout: $e")
             logTx("RX", m.ecuKey, e.toString(), "response")
-            throw NoResponseError(did)
+            throw UnreachableError(did, e)
         } catch (e: Elm327RefusedError) {
             Log.w("odbscanner", "DID 0x${hex4(did)} (${m.key}) refused: $e")
             logTx("RX", m.ecuKey, e.toString(), "response")
-            throw NoResponseError(did)
+            throw UnreachableError(did, e)
         } catch (e: IOException) {
             // The Bluetooth link is dead; propagate so the caller reconnects
             // instead of spinning through the whole DID map on a broken pipe.
@@ -272,7 +290,7 @@ class Collector(
         } catch (e: Exception) {
             Log.w("odbscanner", "DID 0x${hex4(did)} (${m.key}) unreadable: $e")
             logTx("RX", m.ecuKey, e.toString(), "response")
-            throw NoResponseError(did)
+            throw UnreachableError(did, e)
         }
     }
 
@@ -311,15 +329,31 @@ class Collector(
         repository?.markUnsupported(vehicleId, ecuKey, did, ts)
     }
 
-    private suspend fun noteSilent(ecuKey: String, did: Int, ts: String) {
+    /** Buffer one NO DATA read for [endSilencePhase] to judge. */
+    private fun noteSilent(ecuKey: String, did: Int) {
         val key = ecuKey to did
         if (everSucceeded.contains(key)) return  // answered before -> car asleep
-        val count = (silentCount[key] ?: 0) + 1
-        silentCount[key] = count
-        if (count >= silentRetireThreshold) {
-            retire(ecuKey, did, ts)
-            silentCount.remove(key)
+        pendingSilent[key] = (pendingSilent[key] ?: 0) + 1
+    }
+
+    /**
+     * Count this pass's silent reads -- but only for modules that produced at
+     * least one successful read in the same pass. A module that said nothing
+     * at all was unreachable, and "we never reached it" is not evidence about
+     * what it implements.
+     */
+    private suspend fun endSilencePhase(ts: String) {
+        for ((key, silent) in pendingSilent) {
+            if (key.first !in phaseOkEcus) continue
+            val count = (silentCount[key] ?: 0) + silent
+            if (count >= silentRetireThreshold) {
+                retire(key.first, key.second, ts)
+                silentCount.remove(key)
+            } else {
+                silentCount[key] = count
+            }
         }
+        pendingSilent.clear()
     }
 
     /** Compute the derived values (power, spreads, SoH) and persist them. */
