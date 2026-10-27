@@ -135,6 +135,10 @@ web:
   host: "0.0.0.0"
   port: 8000                # the tablet: http://<PC-IP>:8000
   # auth_token: "..."       # normally not set here; see config.local.yaml
+  # Car-position map on the overview. "osm" loads OpenStreetMap tiles, which
+  # tells their servers roughly where the car is (the tiles around it); "off"
+  # requests nothing from outside this machine and shows coordinates only.
+  map_tiles: osm
 
 analysis:
   trend_window_days: 30     # battery trend + overview/chart window

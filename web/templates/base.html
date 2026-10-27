@@ -34,6 +34,9 @@
   <!-- Local assets, not a CDN: the dashboard must work offline in a garage,
        and loading from 'self' lets the CSP stay at script-src 'self'. -->
   <script src="/static/vendor/chart.umd.min.js" defer></script>
+  {#- Page-specific libraries. Before dashboard.js: deferred scripts run in
+      document order, and dashboard.js wires the page as soon as it runs. #}
+  {% block head %}{% endblock %}
   <script src="/static/dashboard.js" defer></script>
 </head>
 <body>

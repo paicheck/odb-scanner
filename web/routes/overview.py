@@ -24,6 +24,7 @@ from web.dashboard import OVERVIEW_PANELS, _int_param
 def register(app, ctx) -> None:
     _fresh_window = ctx._fresh_window
     _profile = ctx._profile
+    map_tiles = ctx.map_tiles
     bms_refusal = ctx.bms_refusal
     charging_days = ctx.charging_days
     chart_gap_s = ctx.chart_gap_s
@@ -85,6 +86,8 @@ def register(app, ctx) -> None:
         from analysis import data_quality
         quality = (data_quality.snapshot(repo, vid, days, _profile(), chart_gap_s)
                    if vid else None)
+        from analysis import position
+        where = position.positions(repo, vid, days) if vid else None
         # The headline tiles read the newest live reading of each NAMED signal
         # -- the same rows the charts draw -- and carry its time. They used to
         # mix sources: "State of charge" showed the display SoC from the last
@@ -117,6 +120,8 @@ def register(app, ctx) -> None:
             gap_s=chart_gap_s,
             bms_refusal=bms_refusal(),
             quality=quality,
+            where=where,
+            map_tiles=map_tiles,
             **panels,
         )
 

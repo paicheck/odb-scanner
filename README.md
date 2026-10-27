@@ -87,6 +87,12 @@ the assumption for a home network. Further boundaries:
   browser submit `/ai/ask` or create investigations. A request carrying
   neither header (curl, a script) is not browser-driven and is let through;
   on a network bind it still needs the token.
+* **Car-position map:** the overview's map loads OpenStreetMap tiles in your
+  browser, and the tiles requested reveal roughly where the car is to
+  OpenStreetMap's servers (with only this dashboard's origin as referrer, never
+  a path or the token). `web.map_tiles: off` stops every outside request and
+  shows the position as coordinates; it is the only outside origin the CSP
+  ever allows.
 * **DNS rebinding:** a page on `attacker.example` can point that name at
   `127.0.0.1` and so read a loopback dashboard (which needs no token) as if
   same-origin. `HostAllowListMiddleware` refuses any `Host` header that is not

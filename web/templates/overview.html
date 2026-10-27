@@ -1,4 +1,8 @@
 {% extends "base.html" %}
+{% block head %}
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+  <script src="/static/vendor/leaflet/leaflet.js" defer></script>
+{% endblock %}
 {% block content %}
 <h2>Overview</h2>
 {% if not vehicle %}
@@ -36,6 +40,46 @@
   <div class="card"><h3>Charging (90 d)</h3>
     <div class="big">{{ charging.get('count', 0) }} sessions</div></div>
 </div>
+
+{% if where %}
+{% from "_panels.html" import evidence_badge %}
+{% set f = where.latest %}
+<section class="chart-card position-card" aria-labelledby="h-position">
+  <h3 id="h-position">Car position</h3>
+  <p class="chart-sub">Where the car's own GPS module last said it was. "Current" means
+    the newest fix recorded, so it is as old as the last collection session.</p>
+  {% if f %}
+  <div class="pos-facts">
+    <span><strong>{{ "%.5f"|format(f.lat) }}, {{ "%.5f"|format(f.lon) }}</strong></span>
+    <span class="age{% if f.ts | stale %} age-stale{% endif %}" title="{{ f.ts | fmtts }}">fix {{ f.ts | age }}</span>
+    {% if f.altitude_m is not none %}<span>altitude {{ f.altitude_m }} m</span>{% endif %}
+    {% if where.satellites is not none %}<span>{{ where.satellites }} satellites tracked</span>{% endif %}
+    <span>{{ where.trail | length }} fix{{ 'es' if where.trail | length != 1 }} in the last {{ where.days }} days</span>
+    {{ evidence_badge('unknown') }}
+    <a href="https://www.openstreetmap.org/?mlat={{ f.lat }}&amp;mlon={{ f.lon }}#map=16/{{ f.lat }}/{{ f.lon }}"
+       target="_blank" rel="noopener noreferrer">open in OpenStreetMap</a>
+  </div>
+  {% if map_tiles == 'osm' %}
+  <div id="position-map" class="position-map" role="img"
+       aria-label="Map of the car's last recorded position at {{ '%.5f'|format(f.lat) }}, {{ '%.5f'|format(f.lon) }}"></div>
+  <p class="chart-note">Map tiles come from OpenStreetMap, so viewing this map tells their
+    servers roughly where the car is. Set <code>web.map_tiles: off</code> to show coordinates only.</p>
+  {% else %}
+  <p class="chart-note">Map tiles are off (<code>web.map_tiles: off</code>): nothing is requested
+    from outside this machine.</p>
+  {% endif %}
+  <p class="chart-note">Decoder unverified on this car: the layout of DID 0x2430 comes from evDash's
+    parser and one sample from another MEB car. If the marker is clearly wrong, the decode is.</p>
+  <script type="application/json" id="position-data">{{ dict(where, tiles=map_tiles) | tojson }}</script>
+  {% else %}
+  <div class="chart-empty show">No GPS position recorded yet.
+    {% if where.reads %}The GPS module was asked {{ where.reads }} time{{ 's' if where.reads != 1 }}
+    ({{ where.reads_ok }} answered) without a usable fix.{% else %}The collector reads it
+    (DID 0x2430 on the GPS module) from the next collection session; a position appears once
+    the car has a satellite fix.{% endif %}</div>
+  {% endif %}
+</section>
+{% endif %}
 
 {% if quality %}
 {% from "_panels.html" import evidence_badge %}

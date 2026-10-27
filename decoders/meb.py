@@ -63,6 +63,7 @@ nothing but a re-decode later.
 from __future__ import annotations
 
 import math
+import re
 import struct
 
 from .registry import (
@@ -649,6 +650,64 @@ def _gear(raw: bytes) -> str:
 
 def _vin(raw: bytes) -> str:
     return raw.decode("ascii", errors="replace").strip("\x00 ")
+
+
+# 0x2430 on the GPS module (0x767): the receiver's fix as two ASCII
+# degrees-minutes-seconds strings plus an altitude word. Layout from evDash's
+# CarVWID3 parser and its sample record (another MEB car):
+#   31 38 B0 33 36 27 36 2E 30 22 45 | 00 00 00 | 34 38 B0 31 32 27 33 34 2E 33
+#   22 4E | 00 00 02 A1 AA
+#   = 18°36'6.0"E, 48°12'34.3"N, altitude 0x02A1 - 501 = 172 m.
+# Fields: record[0:14] and record[14:28], each NUL-terminated; altitude u16 at
+# record[28:30] minus 501. evDash's comments call the first field latitude and
+# assign it to longitude; the code (and the sample) are right that it is the
+# E/W one, so each field is placed by its OWN hemisphere letter, not its slot.
+# Not yet read on this car: the catalogue keeps it UNKNOWN until it is.
+_DMS = re.compile(r"(\d{1,3})\D+(\d{1,2})'(\d{1,2}(?:\.\d+)?)\"?\s*([NSEW])")
+GPS_ALTITUDE_OFFSET = 501
+
+
+def _dms_to_degrees(text: str) -> tuple[float, str] | None:
+    m = _DMS.search(text)
+    if not m:
+        return None
+    deg, minutes, seconds, hemi = int(m[1]), int(m[2]), float(m[3]), m[4]
+    if minutes >= 60 or seconds >= 60:
+        return None
+    value = deg + minutes / 60.0 + seconds / 3600.0
+    return (-value if hemi in "SW" else value), hemi
+
+
+def _gps_position(raw: bytes) -> dict | None:
+    """Latitude/longitude (decimal degrees, WGS84 as reported) and altitude.
+
+    None when there is no usable fix -- an empty or zero field, a value out of
+    range, or both fields on the same axis -- never a 0,0 point in the Gulf of
+    Guinea.
+    """
+    if len(raw) < 30:
+        return None
+    lat = lon = None
+    for field in (raw[0:14], raw[14:28]):
+        text = field.split(b"\x00", 1)[0].decode("latin-1")
+        parsed = _dms_to_degrees(text)
+        if parsed is None:
+            continue
+        value, hemi = parsed
+        if hemi in "NS":
+            lat = value
+        else:
+            lon = value
+    if lat is None or lon is None or not (-90 <= lat <= 90) \
+            or not (-180 <= lon <= 180) or (lat == 0 and lon == 0):
+        return None
+    altitude = int.from_bytes(raw[28:30], "big") - GPS_ALTITUDE_OFFSET
+    return {
+        "lat": round(lat, 6),
+        "lon": round(lon, 6),
+        # evDash's own sanity bound; below it the word is not an altitude.
+        "altitude_m": altitude if altitude > -500 else None,
+    }
 
 
 _ABS_FIELDS: tuple[tuple[str, int, str], ...] = (
@@ -1546,6 +1605,21 @@ def _register_modules(reg: DIDRegistry) -> None:
             doc_status=_EXP,
             slow=True,
             notes="u16 / 512 [evDash CarMEB]",
+        )
+    )
+    reg.register(
+        DIDSpec(
+            "gps_position",
+            ECU_GPS,
+            0x2430,
+            "GPS position (latitude, longitude, altitude)",
+            "",
+            decode=_gps_position,
+            doc_status=_EXP,
+            slow=True,
+            notes="ASCII DMS lat/lon + u16 altitude - 501 at record[28:30] "
+            "[evDash CarVWID3 parser + sample record]; multi-frame; not yet "
+            "read on this car",
         )
     )
     reg.register(

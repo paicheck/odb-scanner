@@ -27,6 +27,7 @@
 #   # and this machine's hostname (DNS-rebinding guard). Add the name you
 #   # type in the browser if it is none of those, e.g. a reverse proxy.
 #   # allowed_hosts: ["car-pc.home.arpa"]
+#   map_tiles: off          # no OpenStreetMap tiles: position as coordinates only
 
 # database:
 #   # If this checkout lives in OneDrive/Dropbox/iCloud, keep the LIVE database

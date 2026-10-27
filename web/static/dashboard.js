@@ -1018,7 +1018,10 @@
     });
 
     if (pageTimeline) {
-      var firstCard = document.querySelector(".chart-card");
+      // The first card holding a time-series panel -- not just the first
+      // card (the overview's position map comes before the charts).
+      var firstCanvas = document.querySelector('.chart-card canvas[id^="panel-"]');
+      var firstCard = firstCanvas ? firstCanvas.closest(".chart-card") : null;
       var anchor = firstCard && firstCard.parentElement &&
         firstCard.parentElement.classList.contains("chart-grid")
         ? firstCard.parentElement : firstCard;
@@ -1186,6 +1189,53 @@
     });
   }
 
+  /** Overview car-position map: OpenStreetMap tiles via the vendored Leaflet,
+   *  the newest fix as the marker and earlier fixes in the window as a trail.
+   *  Nothing is drawn between fixes beyond a straight line: the route between
+   *  two sessions is unknown. */
+  function initMap() {
+    var data = readJSON("position-data");
+    var el = document.getElementById("position-map");
+    if (!data || !data.latest || !el) return;
+    if (!window.L) {
+      el.textContent = "Map library failed to load; the coordinates above are the position.";
+      el.classList.add("chart-empty", "show");
+      return;
+    }
+    var latest = [data.latest.lat, data.latest.lon];
+    var map = L.map(el, { scrollWheelZoom: false, attributionControl: true });
+    if (data.tiles === "osm") {
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        // The page sends no Referer (it is policy: the URL can carry the
+        // token). OSM's tile policy wants one from web pages; the origin
+        // alone carries no path and no token.
+        referrerPolicy: "origin",
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" ' +
+          'target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
+      }).addTo(map);
+    }
+    var trail = (data.trail || []).map(function (f) { return [f.lat, f.lon]; });
+    if (trail.length > 1) {
+      L.polyline(trail, { color: INK_3, weight: 2, opacity: 0.55,
+                          dashArray: "4 4" }).addTo(map);
+      data.trail.slice(0, -1).forEach(function (f) {
+        L.circleMarker([f.lat, f.lon], {
+          radius: 4, color: "#ffffff", weight: 1, fillColor: INK_3, fillOpacity: 0.8,
+        }).bindPopup(fmtFull(Date.parse(f.ts))).addTo(map);
+      });
+    }
+    L.circleMarker(latest, {
+      radius: 9, color: "#ffffff", weight: 3, fillColor: COLORS[0], fillOpacity: 1,
+    }).bindPopup("Last recorded position<br>" + fmtFull(Date.parse(data.latest.ts)))
+      .addTo(map);
+    if (trail.length > 1) {
+      map.fitBounds(L.latLngBounds(trail).extend(latest), { padding: [24, 24], maxZoom: 16 });
+    } else {
+      map.setView(latest, 15);
+    }
+  }
+
   function boot() {
     if (window.Chart) {
       Chart.defaults.font.family = "'Segoe UI', Arial, sans-serif";
@@ -1196,6 +1246,7 @@
     initExplore();
     initPanels();
     initProgress();
+    initMap();
   }
 
   if (document.readyState === "loading") {

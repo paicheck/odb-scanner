@@ -139,6 +139,10 @@ _templates.env.filters["stale"] = _is_stale
 # have their own caps in web/routes/investigations.py.)
 MAX_QUESTION_CHARS = 1000
 
+# The only third-party origin the dashboard may ever load from: OpenStreetMap's
+# standard tile server, for the car-position map (web.map_tiles = "osm").
+OSM_TILE_ORIGIN = "https://tile.openstreetmap.org"
+
 # ---------------------------------------------------------------------------
 # Chart panels. Each panel answers one question; `assemble_panels` refuses to
 # put two units on one axis unless a panel explicitly asks for a labelled
@@ -298,6 +302,12 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     )
 
     host = bind_host if bind_host is not None else cfg.get("web.host", "127.0.0.1")
+    # "osm": OpenStreetMap tiles behind the car-position map. "off": no map
+    # tiles and no request leaves this machine; the position is shown as
+    # coordinates. Viewing tiles tells the tile server roughly where the car is.
+    map_tiles = str(cfg.get("web.map_tiles", "osm")).strip().lower()
+    if map_tiles not in ("osm", "off"):
+        map_tiles = "off"
     token = resolve_token(cfg, host)
     # The value actually enforced. `main.py serve` prints from this rather
     # than resolving again: if persisting a generated token failed, a second
@@ -333,7 +343,8 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     app.add_middleware(SameOriginMiddleware)
     app.add_middleware(HostAllowListMiddleware,
                        allowed=allowed_host_names(cfg, host))
-    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware,
+                       img_src_extra=OSM_TILE_ORIGIN if map_tiles == "osm" else "")
 
     # Analysis windows come from config so the dashboard, the charts and the
     # CLI agree. Previously each route hardcoded its own 30/90 and silently
@@ -730,6 +741,7 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     )
 
     ctx = SimpleNamespace(
+        map_tiles=map_tiles,
         _fresh_window=_fresh_window,
         _profile=_profile,
         _registry_for_meta=_registry_for_meta,

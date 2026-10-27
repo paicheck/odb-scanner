@@ -278,7 +278,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     sniffing into the dashboard, framing it to clickjack a session, leaking the
     full request URL (which carries the access token) to any third party, and
     a cached copy of vehicle diagnostics sitting in a shared proxy.
+
+    `img_src_extra` adds image origins to img-src -- only the map tile server,
+    and only when web.map_tiles enables it. Nothing else is ever loaded from
+    outside this origin.
     """
+
+    def __init__(self, app, img_src_extra: str = ""):
+        super().__init__(app)
+        self.img_src = "'self' data:" + (f" {img_src_extra}" if img_src_extra else "")
 
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
@@ -292,7 +300,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # not inline scripts, so the chart initialisation in every template
             # was silently refused and no chart ever drew.
             "default-src 'self'; script-src 'self'; "
-            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "style-src 'self' 'unsafe-inline'; img-src " + self.img_src + "; "
             "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         # Vehicle history is not something an intermediary should keep.
         response.headers.setdefault("Cache-Control", "no-store")

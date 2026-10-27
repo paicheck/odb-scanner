@@ -26,3 +26,23 @@ and the charts work offline.
 
 To update: download the same path for the new version, replace the file, and
 update the version/hash/date in this table. Do not edit the minified file.
+
+# Vendored: Leaflet
+
+The overview's car-position map. Served from here for the same reasons as
+Chart.js (`script-src 'self'`, works offline). Only the map *tiles* come from
+outside, from OpenStreetMap, and only when `web.map_tiles` is `osm`.
+
+| | |
+|---|---|
+| Package | `leaflet` |
+| Version | `1.9.4` |
+| Files | `leaflet/leaflet.js`, `leaflet/leaflet.css` (from `dist/`) |
+| Source | `https://unpkg.com/leaflet@1.9.4/dist/` |
+| Downloaded | 2026-10-27 |
+| SHA-256 (hex) | js `db49d009c841f5ca34a888c96511ae936fd9f5533e90d8b2c4d57596f4e5641a`, css `a7837102824184820dfa198d1ebcd109ff6d0ff9a2672a074b9a1b4d147d04c6` |
+| SRI (as published by leafletjs.com) | js `sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=`, css `sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=` |
+| License | BSD-2-Clause (Volodymyr Agafonkin, CloudMade) |
+
+The CSS references marker and layer-control images that are not vendored:
+the map draws its own circle markers and has no layer control.
