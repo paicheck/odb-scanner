@@ -38,7 +38,7 @@ from config import load_config
 from database.repository import Repository
 from diagnostic.interface import AdapterNotFoundError, CommunicationError
 from version import __version__
-from web.auth import is_loopback, resolve_token
+from web.auth import masked
 
 
 def cmd_discover(cfg) -> int:
@@ -192,18 +192,17 @@ def cmd_serve(cfg) -> int:
 
     shown = "localhost" if host in ("0.0.0.0", "127.0.0.1") else host
     print(f"Dashboard: http://{shown}:{port}")
-    if not is_loopback(host):
-        token = resolve_token(cfg, host)
-        # resolve_token already ran inside create_app and, having found nothing
-        # configured, minted and persisted one. Read it back so the printed URL
-        # is guaranteed to be the value actually enforced.
-        token = token or str(cfg.get("web.auth_token", "")).strip()
-        if token:
-            print(f"Access token required (network-reachable bind {host}).")
-            print(f"Open once:  http://<this-machine>:{port}/?k={token}")
-            print("Your browser then remembers it. Stored in config.local.yaml,")
-            print("which is gitignored. To close the dashboard to the network,")
-            print("set web.host to 127.0.0.1 instead.")
+    token = getattr(app.state, "auth_token", None)
+    if token:
+        # Not the full value: this goes to stdout, which the launcher writes to
+        # data/logs/web.out on every start. The full token is printed once, in
+        # the warning logged when it is first generated, and lives in
+        # config.local.yaml (web.auth_token) -- gitignored.
+        print(f"Access token required (network-reachable bind {host}).")
+        print(f"Open once:  http://<this-machine>:{port}/?k=<token>  "
+              f"(token {masked(token)}: web.auth_token in config.local.yaml)")
+        print("Your browser then remembers it. To close the dashboard to the "
+              "network, set web.host to 127.0.0.1 instead.")
     uvicorn.run(app, host=host, port=port, log_level="info")
     return 0
 

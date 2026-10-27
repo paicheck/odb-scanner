@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets
 from urllib.parse import urlencode, urlsplit
 
@@ -140,6 +141,44 @@ def _generate_and_persist(cfg, bind_host: str) -> str:
         "in version control. Open the dashboard with: http://<this-machine>:%s"
         "/?%s=%s", bind_host, target, cfg.get("web.port", 8000), QUERY, token)
     return token
+
+
+_TOKEN_IN_URL = re.compile(rf"([?&]{QUERY}=)[^&\s\"]+")
+
+
+def redact_token(text: str) -> str:
+    """Replace the value of every ?k=... in `text` with <redacted>."""
+    return _TOKEN_IN_URL.sub(r"\1<redacted>", text)
+
+
+class RedactTokenFilter(logging.Filter):
+    """Keep the access token out of uvicorn's access log.
+
+    The cookie promotion means a ?k= request is answered with a redirect, but
+    the access logger had already written the full request line -- token and
+    all -- to data/logs/web.out, so any log handed over for a bug report
+    carried the credential.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact_token(a) if isinstance(a, str) else a
+                                for a in record.args)
+        if isinstance(record.msg, str):
+            record.msg = redact_token(record.msg)
+        return True
+
+
+def install_access_log_redaction() -> None:
+    """Attach RedactTokenFilter to uvicorn's access logger, once."""
+    logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, RedactTokenFilter) for f in logger.filters):
+        logger.addFilter(RedactTokenFilter())
+
+
+def masked(token: str) -> str:
+    """Enough of the token to recognise it, not enough to use it."""
+    return f"{token[:4]}...{token[-2:]}" if len(token) > 8 else "..."
 
 
 def _origin_of(url: str) -> str:

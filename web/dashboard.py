@@ -31,6 +31,7 @@ from web.auth import (
     SecurityHeadersMiddleware,
     TokenAuthMiddleware,
     allowed_host_names,
+    install_access_log_redaction,
     resolve_token,
 )
 
@@ -255,6 +256,11 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
 
     host = bind_host if bind_host is not None else cfg.get("web.host", "127.0.0.1")
     token = resolve_token(cfg, host)
+    # The value actually enforced. `main.py serve` prints from this rather
+    # than resolving again: if persisting a generated token failed, a second
+    # resolve_token() minted a DIFFERENT one and the printed URL did not work.
+    app.state.auth_token = token
+    install_access_log_redaction()
     if token:
         log.info(
             "Dashboard bound to %s, so access requires ?%s=... once per "
