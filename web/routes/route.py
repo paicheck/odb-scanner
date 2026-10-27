@@ -78,12 +78,9 @@ def register(app, ctx) -> None:
             return render("route.html", request, **context)
 
         try:
-            ors = providers.OpenRouteService(ors_key)
+            ors = providers.OpenRouteService(ors_key, providers.countries(cfg))
             ocm = providers.OpenChargeMap(ocm_key, min_kw=min_kw)
             near = (fix["lat"], fix["lon"]) if fix else None
-            dests = ors.geocode(form["to"], near=near)
-            if not dests:
-                raise providers.RoutingError(f"No place found for “{form['to']}”.")
             if form["frm"]:
                 starts = ors.geocode(form["frm"], near=near)
                 if not starts:
@@ -95,6 +92,10 @@ def register(app, ctx) -> None:
             else:
                 raise providers.RoutingError(
                     "No GPS position recorded for the car yet: enter a start point.")
+            # The destination is looked for near the start, not near the car.
+            dests = ors.geocode(form["to"], near=(origin.lat, origin.lon))
+            if not dests:
+                raise providers.RoutingError(f"No place found for “{form['to']}”.")
             dest = dests[0]
             context.update(origin=origin, destination=dest, alternatives=dests[1:])
             route = ors.route((origin.lat, origin.lon), (dest.lat, dest.lon))

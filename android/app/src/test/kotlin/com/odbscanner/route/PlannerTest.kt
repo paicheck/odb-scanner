@@ -152,4 +152,12 @@ class PlannerTest {
     fun noRouteIsAPlainError() {
         RouteServices.parseRoute(JSONObject("""{"features":[]}"""))
     }
+
+    @Test
+    fun countryListMatchesTheDashboard() {     // tests/test_route_planner.py::test_country_list
+        mapOf("gb" to "GB", " gb, fr " to "GB,FR", "GB FR" to "GB,FR", "GBR" to "GBR",
+            "" to "", "UK!, x, england" to "").forEach { (raw, want) ->
+            assertEquals(raw, want, RouteServices.countryList(raw))
+        }
+    }
 }

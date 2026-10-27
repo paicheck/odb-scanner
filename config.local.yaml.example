@@ -35,6 +35,7 @@
 #   # https://openchargemap.org/site/profile/applications
 #   ors_api_key: "paste-the-key-here"
 #   ocm_api_key: "paste-the-key-here"
+#   countries: "GB"                   # place search only here ("GB,FR" for both)
 #   consumption_kwh_per_100km: 18.5   # override the measured/default figure
 
 # database:

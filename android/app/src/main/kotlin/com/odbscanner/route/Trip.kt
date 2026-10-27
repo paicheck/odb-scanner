@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import com.odbscanner.db.AppDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /** Route settings: the two free API keys and the driver's planning margins. */
 data class RouteSettings(
@@ -17,6 +18,7 @@ data class RouteSettings(
     val reservePct: Double,
     val chargeToPct: Double,
     val consumptionKwhPer100km: Double?,   // null: this car's figure or the default
+    val countries: String,                 // place search limit, "GB,FR"; "" = anywhere
 ) {
     val missingKeys: List<String>
         get() = listOfNotNull(
@@ -37,6 +39,9 @@ object RoutePrefs {
             chargeToPct = p.getFloat("charge_to_pct", 80f).toDouble(),
             consumptionKwhPer100km = p.getFloat("consumption", -1f).toDouble()
                 .takeIf { it > 0 },
+            // Until set, the phone's own region: a UK phone searches the UK.
+            countries = p.getString("countries", null)
+                ?: RouteServices.countryList(Locale.getDefault().country),
         )
     }
 
@@ -47,6 +52,7 @@ object RoutePrefs {
             .putFloat("reserve_pct", s.reservePct.coerceIn(0.0, 50.0).toFloat())
             .putFloat("charge_to_pct", s.chargeToPct.coerceIn(20.0, 100.0).toFloat())
             .putFloat("consumption", (s.consumptionKwhPer100km ?: -1.0).toFloat())
+            .putString("countries", RouteServices.countryList(s.countries))
             .apply()
     }
 
@@ -149,7 +155,7 @@ object TripPlanner {
             ?.let { Place("Your location", it.latitude, it.longitude) }
             ?: throw RoutingException(
                 "No location for the start: allow location access, or enter a start.")
-        val services = RouteServices(s.orsKey, s.ocmKey)
+        val services = RouteServices(s.orsKey, s.ocmKey, countries = s.countries)
         val route = services.route(origin.lat to origin.lon, to.lat to to.lon)
         val consumption = s.consumptionKwhPer100km ?: CarEnergy.DEFAULT_CONSUMPTION
         val plan = Planner.planTrip(
@@ -161,11 +167,12 @@ object TripPlanner {
         TripResult(origin, to, plan, car, consumption)
     }
 
-    /** Place search near the phone, for the destination box. */
-    suspend fun search(context: Context, text: String): List<Place> =
+    /** Place search near [near], else near the phone. */
+    suspend fun search(context: Context, text: String, near: Place? = null): List<Place> =
         withContext(Dispatchers.IO) {
             val s = RoutePrefs.load(context)
-            val near = PhoneLocation.lastKnown(context)?.let { it.latitude to it.longitude }
-            RouteServices(s.orsKey, s.ocmKey).geocode(text, near)
+            val focus = near?.let { it.lat to it.lon }
+                ?: PhoneLocation.lastKnown(context)?.let { it.latitude to it.longitude }
+            RouteServices(s.orsKey, s.ocmKey, countries = s.countries).geocode(text, focus)
         }
 }

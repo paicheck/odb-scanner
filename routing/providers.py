@@ -48,6 +48,16 @@ def keys(cfg) -> tuple[str, str]:
     return one("ors_api_key", "ODB_ORS_KEY"), one("ocm_api_key", "ODB_OCM_KEY")
 
 
+def country_list(raw) -> str:
+    """'gb, fr' -> 'GB,FR': the ISO codes place search is limited to ('' = anywhere)."""
+    codes = str(raw or "").replace(",", " ").upper().split()
+    return ",".join(c for c in codes if c.isalpha() and len(c) in (2, 3))
+
+
+def countries(cfg) -> str:
+    return country_list(cfg.get("routing.countries", ""))
+
+
 def _get_json(method: str, url: str, **kw):
     try:
         r = requests.request(method, url, timeout=TIMEOUT_S, **kw)
@@ -68,19 +78,24 @@ def _get_json(method: str, url: str, **kw):
 
 
 class OpenRouteService:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, countries: str = ""):
         if not api_key:
             raise RoutingError(
                 "No OpenRouteService key. Get a free key at "
                 "https://openrouteservice.org/dev/#/signup and set "
                 "routing.ors_api_key in config.local.yaml.")
         self.key = api_key
+        self.countries = country_list(countries)
 
     def geocode(self, text: str, near: tuple[float, float] | None = None,
                 size: int = 5) -> list[Place]:
         params = {"api_key": self.key, "text": text, "size": size}
         if near:
             params["focus.point.lat"], params["focus.point.lon"] = near
+        # A focus point barely moves the ranking: "Brighton" is Brighton, NY
+        # even when searched from Surrey. Only a country limit fixes that.
+        if self.countries:
+            params["boundary.country"] = self.countries
         data = _get_json("GET", f"{ORS_BASE}/geocode/search", params=params)
         out = []
         for f in (data.get("features") or [])[:size]:

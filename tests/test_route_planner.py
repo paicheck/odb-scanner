@@ -224,6 +224,23 @@ def test_geocode_and_route_parse(http):
     assert body["coordinates"] == [[-0.17, 51.24], [-0.1, 51.5]]
     assert body["elevation"] is True
     assert calls[1][2]["headers"] == {"Authorization": "k"}
+    assert "boundary.country" not in calls[0][2]["params"]     # no limit configured
+
+
+@pytest.mark.parametrize("raw,want", [
+    ("gb", "GB"), (" gb, fr ", "GB,FR"), ("GB FR", "GB,FR"), ("GBR", "GBR"),
+    ("", ""), (None, ""), ("UK!, x, england", ""),
+])
+def test_country_list(raw, want):
+    assert providers.country_list(raw) == want
+
+
+def test_geocode_is_limited_to_the_configured_countries(http):
+    calls, replies = http
+    replies.append(_Reply(200, {"features": []}))
+    cfg = Config({"routing": {"countries": "gb, fr"}})
+    providers.OpenRouteService("k", providers.countries(cfg)).geocode("Brighton")
+    assert calls[0][2]["params"]["boundary.country"] == "GB,FR"
 
 
 def test_chargers_keep_ccs_power_and_operator(http):
@@ -338,6 +355,19 @@ def test_form_values_override_the_car(db, services):
     assert "Consumption 12.0 kWh/100 km" in body and "Arrive with at least 15 %" in body
     # 400 km at 12 kWh/100 km is 48 kWh; 100 % down to 15 % is 45.2 kWh.
     assert "after 1 charging stop\n" in body
+
+
+def test_destination_is_searched_near_the_typed_start(db, services, monkeypatch):
+    seen = []
+
+    def geocode(self, text, near=None, size=5):
+        seen.append((text, near, self.countries))
+        return [providers.Place(text, 53.0 if text == "Leeds" else 51.5, 0.0)]
+    monkeypatch.setattr(providers.OpenRouteService, "geocode", geocode)
+    _client(db, {**KEYS, "countries": "gb"}).get(
+        "/route", params={"to": "Leeds", "from": "London"})
+    assert seen[0][0] == "London"
+    assert seen[1] == ("Leeds", (51.5, 0.0), "GB")
 
 
 def test_unreachable_and_unknown_places_are_explained(db, services, monkeypatch):

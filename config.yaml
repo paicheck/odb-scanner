@@ -154,6 +154,10 @@ routing:
   reserve_pct: 10           # never plan to arrive below this
   charge_to_pct: 80         # charge to this at each stop
   min_charger_kw: 50        # ignore slower chargers
+  # Countries place search is limited to, ISO codes: "GB" or "GB,FR". Blank
+  # searches everywhere, and a town name may then resolve abroad ("Brighton"
+  # comes back as Brighton, NY). Set it in config.local.yaml.
+  countries: ""
   # Flat-road consumption, kWh/100 km. Empty: measured from this car's own
   # driving once 50 km is recorded, else 17 (ID.3, mixed driving, mild weather).
   consumption_kwh_per_100km:

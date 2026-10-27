@@ -29,7 +29,9 @@ class RouteServices(
     private val ocmKey: String,
     private val minChargerKw: Double = 50.0,
     private val timeoutMs: Int = 20_000,
+    countries: String = "",
 ) {
+    private val countries = countryList(countries)
     private val chargerCache = HashMap<Triple<Double, Double, Double>, List<Charger>>()
 
     fun geocode(text: String, near: Pair<Double, Double>? = null, size: Int = 5): List<Place> {
@@ -41,6 +43,9 @@ class RouteServices(
                 append("&focus.point.lat=").append(near.first)
                 append("&focus.point.lon=").append(near.second)
             }
+            // A focus point barely moves the ranking ("Brighton" is Brighton, NY
+            // even from Surrey); only a country limit fixes that.
+            if (countries.isNotEmpty()) append("&boundary.country=").append(enc(countries))
         }
         return parseGeocode(JSONObject(request("GET", q)), text, size)
     }
@@ -119,6 +124,12 @@ class RouteServices(
         const val CCS2 = 33          // OpenChargeMap ConnectionTypeID: CCS (Type 2)
 
         private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
+
+        /** "gb, fr" -> "GB,FR": the ISO codes place search is limited to ("" = anywhere). */
+        fun countryList(raw: String): String =
+            raw.replace(',', ' ').uppercase().split(' ')
+                .filter { c -> c.length in 2..3 && c.all { it in 'A'..'Z' } }
+                .joinToString(",")
 
         /** A string field, "" when absent or JSON null (Android's optString
          *  turns null into the text "null"). */

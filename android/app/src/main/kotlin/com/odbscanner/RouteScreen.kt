@@ -107,11 +107,11 @@ fun RouteDialog(onDismiss: () -> Unit) {
         result = null
         scope.launch {
             try {
-                val dest = TripPlanner.search(context, to.trim()).firstOrNull()
-                    ?: throw RoutingException("No place found for “${to.trim()}”.")
                 val origin: Place? = if (from.isBlank()) null else
                     TripPlanner.search(context, from.trim()).firstOrNull()
                         ?: throw RoutingException("No place found for “${from.trim()}”.")
+                val dest = TripPlanner.search(context, to.trim(), near = origin).firstOrNull()
+                    ?: throw RoutingException("No place found for “${to.trim()}”.")
                 result = TripPlanner.plan(context, dest, origin,
                     startPct.toDoubleOrNull()?.takeIf { it in 1.0..100.0 })
                 RoutePrefs.remember(context, dest)        // offered on the car screen
@@ -231,6 +231,7 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
     var consumption by remember {
         mutableStateOf(s.consumptionKwhPer100km?.let { String.format(Locale.ROOT, "%.1f", it) } ?: "")
     }
+    var countries by remember { mutableStateOf(s.countries) }
     AlertDialog(
         onDismissRequest = onDone,
         title = { Text("Route settings") },
@@ -255,6 +256,9 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                     label = { Text("Consumption kWh/100 km (blank: 17)") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(countries, { countries = it.take(40) },
+                    label = { Text("Search places in (e.g. GB or GB,FR; blank: anywhere)") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth())
             }
         },
         confirmButton = {
@@ -265,6 +269,7 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                     chargeToPct = chargeTo.toDoubleOrNull() ?: s.chargeToPct,
                     consumptionKwhPer100km = consumption.toDoubleOrNull()
                         ?.takeIf { it in 8.0..40.0 },
+                    countries = countries,
                 ))
                 onDone()
             }) { Text("Save") }
