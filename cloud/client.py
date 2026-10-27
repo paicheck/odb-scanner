@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import socket
 import threading
+import uuid
 
 import requests
 
@@ -32,6 +33,16 @@ log = logging.getLogger(__name__)
 # the `meta` table. Read with a leading probe every sync, so it is the one
 # piece of cloud state that lives on this machine.
 WATERMARK_KEY = "cloud_sync.measurements.last_id"
+
+# The per-database namespace cloud row ids are derived from. It used to be the
+# host's source_id, so two databases on one machine (the car's and an older
+# copy, or a re-created file) produced the SAME ids for their row 1, 2, 3...,
+# and the server's INSERT IGNORE kept whichever arrived first and counted the
+# other database's real readings as "duplicates". A fresh database now gets a
+# random namespace. A database that has already uploaded keeps the old
+# source_id-based one, so its rows keep exactly the ids they were uploaded
+# under and nothing is sent twice.
+ID_NAMESPACE_KEY = "cloud_sync.id_namespace"
 
 # Simulated rows (provenance='simulated', written when the collector is talking
 # to the vehicle simulator) are excluded here rather than filtered later: the
@@ -82,6 +93,57 @@ def set_watermark(repo, value: int) -> None:
     repo.conn.commit()
 
 
+def _set_meta(repo, key: str, value: str) -> None:
+    repo.conn.execute(
+        "INSERT INTO meta(key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+
+
+def id_namespace(repo, source_id: str) -> str:
+    """This database's cloud id namespace, created on first use."""
+    row = repo.conn.execute(
+        "SELECT value FROM meta WHERE key = ?", (ID_NAMESPACE_KEY,)).fetchone()
+    if row is not None and row["value"]:
+        return row["value"]
+    namespace = source_id if get_watermark(repo) > 0 else f"db:{uuid.uuid4()}"
+    _set_meta(repo, ID_NAMESPACE_KEY, namespace)
+    repo.conn.commit()
+    return namespace
+
+
+def reconcile_reused_ids(repo) -> bool:
+    """Handle measurement ids that deletes made reusable. True if it acted.
+
+    The repository records (Repository.ID_REUSE_KEY) the MAX(id) left after a
+    delete removed the newest rows; ids above it will be handed out again.
+    With the watermark above that point the next readings would never count as
+    pending, and once past it would reuse ids already uploaded. So: a new id
+    namespace (new readings get new cloud ids, whatever their local id), and
+    the watermark lowered to the marker so they are pending.
+    """
+    from database.repository import Repository
+
+    row = repo.conn.execute("SELECT value FROM meta WHERE key = ?",
+                            (Repository.ID_REUSE_KEY,)).fetchone()
+    if row is None:
+        return False
+    try:
+        marker = int(row["value"])
+    except (TypeError, ValueError):
+        marker = 0
+    acted = False
+    if get_watermark(repo) > marker:
+        _set_meta(repo, ID_NAMESPACE_KEY, f"db:{uuid.uuid4()}")
+        _set_meta(repo, WATERMARK_KEY, str(marker))
+        acted = True
+        log.warning("Measurement ids above %d were freed by a delete and will "
+                    "be reused; new readings get a new cloud id namespace.",
+                    marker)
+    repo.conn.execute("DELETE FROM meta WHERE key = ?", (Repository.ID_REUSE_KEY,))
+    repo.conn.commit()
+    return acted
+
+
 # -- payload -----------------------------------------------------------------
 def pending_rows(repo, after_id: int, limit: int) -> list[dict]:
     return [dict(row) for row in repo.conn.execute(_PENDING_SQL, (after_id, limit))]
@@ -113,14 +175,18 @@ def _row_payload(source_id: str, row: dict) -> dict:
 
 
 def build_payload(source_id: str, rows: list[dict],
-                  label: str | None = None) -> dict:
+                  label: str | None = None,
+                  id_namespace: str | None = None) -> dict:
+    """`id_namespace` (see ID_NAMESPACE_KEY) defaults to `source_id`, the
+    derivation every already-uploaded row used."""
+    namespace = id_namespace or source_id
     return {
         "source": {
             "source_id": source_id,
             "kind": "python",
             "label": label or socket.gethostname(),
         },
-        "measurements": [_row_payload(source_id, row) for row in rows],
+        "measurements": [_row_payload(namespace, row) for row in rows],
     }
 
 
@@ -168,12 +234,15 @@ def sync_pending(repo, client: CloudClient, settings: ClientSettings,
     waiting for the next one.
     """
     batches = uploaded = duplicates = 0
+    reconcile_reused_ids(repo)
+    namespace = id_namespace(repo, settings.source_id)
     while True:
         rows = pending_rows(repo, get_watermark(repo), settings.batch_size)
         if not rows:
             break
 
-        result = client.upload(build_payload(settings.source_id, rows))
+        result = client.upload(build_payload(settings.source_id, rows,
+                                             id_namespace=namespace))
         # Only now is it safe to move the watermark: the API has durably stored
         # these rows, so the next run starts after the last id in this batch.
         set_watermark(repo, max(row["id"] for row in rows))

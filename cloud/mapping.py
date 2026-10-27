@@ -96,8 +96,13 @@ def cloud_measurement_id(source_id: str, local_id: int) -> str:
     Deterministic (uuid5) rather than random precisely because it is derived
     at UPLOAD time, on every attempt: a random id generated per attempt would
     make every retry after a dropped response a new row, which is the one thing
-    idempotency exists to prevent. The local `id` is monotonic and unique
-    within a database, so the pair (source_id, id) is unique across sources.
+    idempotency exists to prevent.
+
+    The first argument is the database's id namespace (cloud/client.py
+    ID_NAMESPACE_KEY), not just a host name: the local `id` is unique within a
+    database but NOT monotonic -- SQLite reuses the ids of deleted newest rows
+    -- and two databases on one host both start at 1. The namespace is what
+    keeps (namespace, id) unique; the client rotates it when deletes free ids.
     """
     return str(uuid.uuid5(CLOUD_ID_NAMESPACE, f"{source_id}:measurement:{local_id}"))
 

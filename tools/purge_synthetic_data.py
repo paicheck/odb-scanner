@@ -134,6 +134,7 @@ def purge(repo: Repository, cutoff: str, *, keep_tx_log: bool = False) -> dict:
     # state, because the synthetic and real rows are interleaved in the same
     # tables and no report could say which half survived.
     with repo.conn:
+        max_id_before = repo.max_measurement_id()
         for table, col, extra in rules:
             cur = repo.conn.execute(
                 f'DELETE FROM "{table}" WHERE {_where(col, extra)}', (cutoff,))
@@ -161,6 +162,9 @@ def purge(repo: Repository, cutoff: str, *, keep_tx_log: bool = False) -> dict:
             ") WHERE first_seen < ? AND EXISTS ("
             "  SELECT 1 FROM measurements WHERE vehicle_id = vehicles.id)",
             (cutoff,))
+        # Deleting the newest rows makes their ids reusable; the cloud
+        # uploader must know before it uploads the next readings.
+        repo.note_measurement_deletes(max_id_before)
     return removed
 
 

@@ -796,15 +796,51 @@ class Repository:
                     "WHERE ts < ? AND raw_response IS NOT NULL", (cutoff,))
                 removed["measurements_raw"] = cur.rowcount
             else:
+                max_id_before = self.max_measurement_id()
                 for table in tables:
                     cur = self.conn.execute(f"DELETE FROM {table} WHERE ts < ?",
                                             (cutoff,))
                     removed[table] = cur.rowcount
+                self.note_measurement_deletes(max_id_before)
             self.conn.commit()
         except Exception:
             self.conn.rollback()
             raise
         return removed
+
+    # -- measurement id reuse --------------------------------------------------
+    # measurements.id is a plain INTEGER PRIMARY KEY (no AUTOINCREMENT, and an
+    # existing table cannot gain it without a rebuild), so SQLite gives a new
+    # row MAX(id)+1. Deleting the NEWEST rows therefore makes their ids come
+    # back for the next readings -- and anything keyed on the local id (the
+    # cloud uploader's watermark and row ids) would skip those readings or
+    # merge them with the deleted ones. Deleters record that here, inside their
+    # own transaction, and cloud.client acts on it before the next upload.
+    ID_REUSE_KEY = "measurements.ids_reused_above"
+
+    def max_measurement_id(self) -> int:
+        return self.conn.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM measurements").fetchone()[0]
+
+    def note_measurement_deletes(self, max_id_before: int) -> None:
+        """Record that ids above the new MAX(id) will be handed out again.
+
+        Call after deleting measurements, before committing; does not commit.
+        """
+        now_max = self.max_measurement_id()
+        if now_max >= max_id_before:
+            return
+        row = self.conn.execute("SELECT value FROM meta WHERE key=?",
+                                (self.ID_REUSE_KEY,)).fetchone()
+        if row is not None:
+            try:
+                now_max = min(now_max, int(row["value"]))
+            except (TypeError, ValueError):
+                pass
+        self.conn.execute(
+            "INSERT INTO meta(key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (self.ID_REUSE_KEY, str(now_max)))
 
     def _table_exists(self, name: str) -> bool:
         return self.conn.execute(

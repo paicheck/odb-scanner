@@ -16,6 +16,7 @@ from cloud.client import (  # noqa: E402
     CloudSyncError,
     build_payload,
     get_watermark,
+    id_namespace,
     pending_rows,
     set_watermark,
     sync_pending,
@@ -138,7 +139,8 @@ def test_a_retry_after_a_failure_re_sends_the_same_ids(repo):
     first_ids = [m["id"] for m in retry.payloads[0]["measurements"]]
     assert len(set(first_ids)) == 5
     assert first_ids == [m["id"] for m in build_payload(
-        "python:test-host", pending_rows(repo, 0, 5))["measurements"]]
+        "python:test-host", pending_rows(repo, 0, 5),
+        id_namespace=id_namespace(repo, "python:test-host"))["measurements"]]
 
 
 # ---------------------------------------------------- value vs text_value
@@ -196,3 +198,65 @@ def test_split_value_carries_a_value_mysql_cannot_store(repo):
     # A number already accompanied by structured data keeps both: the text
     # column is not overwritten by the numeric one.
     assert split_value(31.4, '{"a": 1}') == (31.4, '{"a": 1}')
+
+
+# ------------------------------------------------------- cloud id identity
+# Cloud ids were uuid5(host source_id, local id). Two databases on one host
+# both start at id 1, and SQLite reuses the ids of deleted newest rows, so the
+# server's INSERT IGNORE silently dropped real readings as "duplicates".
+
+def _fill(repo, n, start_ts=0):
+    vid = repo.ensure_vehicle(VIN)
+    for i in range(n):
+        repo.record_measurement(
+            vid, f"2026-10-18T12:{(start_ts + i) // 60:02d}:{(start_ts + i) % 60:02d}Z",
+            "hvb_energy_content_kwh", "bms", "UDS-0x22", "0x2AB8", "kWh",
+            "reported", "scalar", "verified", raw_response="62 2AB8 00",
+            value=1.0 * i)
+    repo.conn.commit()
+
+
+def _sent_ids(client):
+    return [m["id"] for p in client.payloads for m in p["measurements"]]
+
+
+def test_two_fresh_databases_on_one_host_get_distinct_ids(tmp_path):
+    a, b = Repository(tmp_path / "a.db"), Repository(tmp_path / "b.db")
+    _fill(a, 3)
+    _fill(b, 3)
+    ca, cb = FakeClient(), FakeClient()
+    sync_pending(a, ca, settings())
+    sync_pending(b, cb, settings())
+    assert set(_sent_ids(ca)).isdisjoint(_sent_ids(cb))
+    a.close()
+    b.close()
+
+
+def test_an_already_uploaded_database_keeps_its_ids(repo):
+    # A database that synced before namespaces existed: watermark > 0, no
+    # namespace stored. Its rows must keep the ids they were uploaded under.
+    legacy = [m["id"] for m in build_payload(
+        "python:test-host", pending_rows(repo, 0, 5))["measurements"]]
+    set_watermark(repo, 2)
+    client = FakeClient()
+    sync_pending(repo, client, settings())
+    assert _sent_ids(client) == legacy[2:]
+    assert id_namespace(repo, "python:test-host") == "python:test-host"
+
+
+def test_readings_after_a_prune_of_the_newest_rows_are_uploaded(tmp_path):
+    repo = Repository(tmp_path / "p.db")
+    _fill(repo, 5)
+    first = FakeClient()
+    sync_pending(repo, first, settings())
+    assert get_watermark(repo) == 5
+    repo.prune(days=0, keep_raw=False)          # deletes every measurement
+    _fill(repo, 3, start_ts=30)                  # SQLite hands out ids 1..3 again
+    assert [r["id"] for r in repo.conn.execute("SELECT id FROM measurements")] \
+        == [1, 2, 3]
+    second = FakeClient()
+    sync_pending(repo, second, settings())
+    sent = _sent_ids(second)
+    assert len(sent) == 3, "new readings were skipped as already uploaded"
+    assert set(sent).isdisjoint(_sent_ids(first)), "ids collide with old rows"
+    repo.close()
