@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -19,6 +20,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -36,6 +38,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.odbscanner.route.CarEnergy
 import com.odbscanner.route.MAX_LINK_STOPS
+import com.odbscanner.route.MODES
 import com.odbscanner.route.PhoneLocation
 import com.odbscanner.route.Place
 import com.odbscanner.route.RoutePrefs
@@ -82,6 +85,30 @@ fun TripResult.headline(): String = when (plan.status) {
         "${Math.round(plan.unreachableAtKm ?: 0.0)} km and no fast charger found before it"
 }
 
+val MODE_LABELS = mapOf("fastest" to "Fastest", "balanced" to "Balanced", "cheapest" to "Cheapest")
+
+/** "Charging £23.40 · Balanced", shared with the car screen. */
+fun TripResult.costLine(): String =
+    String.format(Locale.ROOT, "Charging £%.2f · %s", plan.cost, MODE_LABELS[plan.mode] ?: plan.mode)
+
+/** Fastest / Balanced / Cheapest, as three buttons; the chosen one filled. */
+@Composable
+fun ModeChooser(mode: String, onChange: (String) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+        for (m in MODES) {
+            val pad = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+            val label: @Composable () -> Unit = { Text(MODE_LABELS[m] ?: m, maxLines = 1) }
+            if (m == mode) {
+                Button(onClick = { onChange(m) }, contentPadding = pad,
+                    modifier = Modifier.weight(1f)) { label() }
+            } else {
+                OutlinedButton(onClick = { onChange(m) }, contentPadding = pad,
+                    modifier = Modifier.weight(1f)) { label() }
+            }
+        }
+    }
+}
+
 /**
  * The phone's route planner: the same plan as the dashboard's Route page
  * (routing/planner.py, ported in route/Planner.kt), started from the phone's
@@ -101,6 +128,7 @@ fun RouteDialog(onDismiss: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var result by remember { mutableStateOf<TripResult?>(null) }
     var showSettings by remember { mutableStateOf(settings.missingKeys.isNotEmpty()) }
+    var mode by remember { mutableStateOf(settings.mode) }
 
     LaunchedEffect(Unit) {
         val car = CarEnergy.load(context)
@@ -122,7 +150,7 @@ fun RouteDialog(onDismiss: () -> Unit) {
                 val dest = TripPlanner.search(context, to.trim(), near = origin).firstOrNull()
                     ?: throw RoutingException("No place found for “${to.trim()}”.")
                 result = TripPlanner.plan(context, dest, origin,
-                    startPct.toDoubleOrNull()?.takeIf { it in 1.0..100.0 })
+                    startPct.toDoubleOrNull()?.takeIf { it in 1.0..100.0 }, mode)
                 RoutePrefs.remember(context, dest)        // offered on the car screen
             } catch (e: RoutingException) {
                 error = e.message
@@ -170,6 +198,11 @@ fun RouteDialog(onDismiss: () -> Unit) {
                     modifier = Modifier.fillMaxWidth())
                 Text(carNote, style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(vertical = 4.dp))
+                ModeChooser(mode) {
+                    mode = it
+                    settings = settings.copy(mode = it)
+                    RoutePrefs.save(context, settings)             // the next trip's default
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         enabled = !busy && to.isNotBlank() && settings.missingKeys.isEmpty(),
@@ -208,6 +241,7 @@ private fun TripResultView(r: TripResult) {
             fmtDuration(p.driveS) + " driving" +
             (if (p.chargeS > 0) " + " + fmtDuration(p.chargeS) + " charging" else ""),
             style = MaterialTheme.typography.bodySmall)
+        if (p.stops.isNotEmpty()) Text(r.costLine(), style = MaterialTheme.typography.bodySmall)
         Column(modifier = Modifier.padding(vertical = 6.dp)) { TripMap(r) }
         if (p.status != "unreachable") {
             Button(onClick = { startTrip(context, r) }, modifier = Modifier.fillMaxWidth()) {
@@ -231,6 +265,10 @@ private fun TripResultView(r: TripResult) {
                     "at %.0f km · %.0f kW · %.0f %% → %.0f %% · %d min",
                     s.km, s.charger.powerKw, s.arrivePct, s.departPct, s.chargeMin),
                     style = MaterialTheme.typography.bodySmall)
+                Text(String.format(Locale.ROOT, "%.1f kWh at £%.2f/kWh%s = £%.2f · %s",
+                    s.kwh, s.pricePerKwh,
+                    if (s.charger.fee > 0) String.format(Locale.ROOT, " + £%.2f", s.charger.fee) else "",
+                    s.cost, s.priceSource), style = MaterialTheme.typography.bodySmall)
                 if (s.charger.address.isNotBlank()) {
                     Text(s.charger.address, style = MaterialTheme.typography.bodySmall)
                 }
@@ -238,7 +276,8 @@ private fun TripResultView(r: TripResult) {
         }
         Text("Assumptions", fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
         p.assumptions.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
-        Text("Charger data: Open Charge Map (community-maintained; check before relying on it).",
+        Text("Charger data and listed prices: Open Charge Map (community-maintained; check " +
+            "before relying on them). Set what you pay per network in Route settings.",
             style = MaterialTheme.typography.bodySmall)
     }
 }
@@ -255,6 +294,9 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
         mutableStateOf(s.consumptionKwhPer100km?.let { String.format(Locale.ROOT, "%.1f", it) } ?: "")
     }
     var countries by remember { mutableStateOf(s.countries) }
+    var timeValue by remember { mutableStateOf(String.format(Locale.ROOT, "%.0f", s.timeValuePerHour)) }
+    var defaultPrice by remember { mutableStateOf(String.format(Locale.ROOT, "%.2f", s.defaultPricePerKwh)) }
+    var ownPrices by remember { mutableStateOf(s.ownPrices) }
     AlertDialog(
         onDismissRequest = onDone,
         title = { Text("Route settings") },
@@ -283,6 +325,21 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                 OutlinedTextField(countries, { countries = it.take(40) },
                     label = { Text("Countries to search (e.g. GB,FR)") },
                     singleLine = true, modifier = Modifier.fillMaxWidth())
+                Text("Prices", fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 8.dp))
+                OutlinedTextField(timeValue, { timeValue = it.take(4) },
+                    label = { Text("Balanced: my time is worth £/hour") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(defaultPrice, { defaultPrice = it.take(5) },
+                    label = { Text("Price when unknown, £/kWh") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(ownPrices, { ownPrices = it.take(2000) },
+                    label = { Text("What I pay, one network per line") },
+                    placeholder = { Text("Ionity = 0.39\nTesla = 0.55") },
+                    minLines = 2, modifier = Modifier.fillMaxWidth())
+                Text("Your prices beat the price Open Charge Map lists; matched on the " +
+                    "network's name.", style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {
@@ -294,6 +351,9 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                     consumptionKwhPer100km = consumption.toDoubleOrNull()
                         ?.takeIf { it in 8.0..40.0 },
                     countries = countries,
+                    timeValuePerHour = timeValue.toDoubleOrNull() ?: s.timeValuePerHour,
+                    defaultPricePerKwh = defaultPrice.toDoubleOrNull() ?: s.defaultPricePerKwh,
+                    ownPrices = ownPrices,
                 ))
                 onDone()
             }) { Text("Save") }

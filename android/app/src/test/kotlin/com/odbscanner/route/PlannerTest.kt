@@ -31,7 +31,9 @@ class PlannerTest {
         reservePct = o.optDouble("reserve_pct", 10.0),
         chargeToPct = o.optDouble("charge_to_pct", 80.0),
         minChargerKw = o.optDouble("min_charger_kw", 50.0),
-        maxStops = o.optInt("max_stops", 8),
+        mode = o.optString("mode", "balanced"),
+        timeValuePerHour = o.optDouble("time_value_per_hour", 15.0),
+        defaultPricePerKwh = o.optDouble("default_price_per_kwh", 0.79),
     )
 
     private fun points(a: JSONArray) = (0 until a.length()).map { i ->
@@ -42,7 +44,9 @@ class PlannerTest {
     private fun chargers(a: JSONArray) = (0 until a.length()).map { i ->
         val c = a.getJSONObject(i)
         Charger(c.getString("name"), c.getDouble("lat"), c.getDouble("lon"),
-            c.getDouble("power_kw"), c.optString("operator"), c.optString("address"))
+            c.getDouble("power_kw"), c.optString("operator"), c.optString("address"),
+            pricePerKwh = if (c.isNull("price_per_kwh")) null else c.getDouble("price_per_kwh"),
+            fee = c.optDouble("fee", 0.0))
     }
 
     @Test
@@ -73,12 +77,11 @@ class PlannerTest {
         for (i in 0 until cases.length()) {
             val c = cases.getJSONObject(i)
             val name = c.getString("name")
-            val all = chargers(c.getJSONArray("chargers"))
             val plan = Planner.planTrip(
                 points(c.getJSONArray("points")), c.getDouble("drive_s"),
                 c.getDouble("start_pct"), car(c.getJSONObject("car")),
-                settings(c.getJSONObject("settings")),
-            ) { lat, lon, r -> all.filter { Planner.haversineKm(lat, lon, it.lat, it.lon) <= r } }
+                settings(c.getJSONObject("settings")), chargers(c.getJSONArray("chargers")),
+            )
             val want = c.getJSONObject("expect")
 
             assertEquals(name, want.getString("status"), plan.status)
@@ -88,6 +91,7 @@ class PlannerTest {
             if (want.isNull("unreachable_at_km")) assertNull(name, plan.unreachableAtKm)
             else assertEquals(name, want.getDouble("unreachable_at_km"), plan.unreachableAtKm!!, 0.051)
             assertEquals(name, want.getDouble("charge_s"), plan.chargeS, 1.0)
+            assertEquals(name, want.getDouble("cost"), plan.cost, 0.011)
 
             val stops = want.getJSONArray("stops")
             assertEquals(name, stops.length(), plan.stops.size)
@@ -99,12 +103,65 @@ class PlannerTest {
                 assertEquals("$name stop $k", s.getDouble("arrive_pct"), got.arrivePct, 0.051)
                 assertEquals("$name stop $k", s.getDouble("depart_pct"), got.departPct, 0.051)
                 assertEquals("$name stop $k", s.getLong("charge_min"), got.chargeMin)
+                assertEquals("$name stop $k", s.getDouble("kwh"), got.kwh, 0.051)
+                assertEquals("$name stop $k", s.getDouble("cost"), got.cost, 0.011)
             }
             assertEquals(name, want.getInt("profile_points"), plan.profile.size)
             val last = want.getJSONArray("profile_last")
             assertEquals(name, last.getDouble(0), plan.profile.last().first, 0.011)
             assertEquals(name, last.getDouble(1), plan.profile.last().second, 0.051)
         }
+    }
+
+    @Test
+    fun leaveLevelsMatchPython() {
+        val rows = vectors.getJSONArray("leave_levels")
+        for (i in 0 until rows.length()) {
+            val r = rows.getJSONArray(i)
+            val want = r.getJSONArray(2).let { a -> (0 until a.length()).map { a.getDouble(it) } }
+            assertEquals("row $i", want, Planner.leaveLevels(
+                PlanSettings(reservePct = r.getDouble(0), chargeToPct = r.getDouble(1))))
+        }
+    }
+
+    @Test
+    fun usageCostTextIsReadLikePython() {
+        val rows = vectors.getJSONArray("usage_cost")
+        for (i in 0 until rows.length()) {
+            val r = rows.getJSONArray(i)
+            val got = Prices.parseUsageCost(r.getString(0))
+            if (r.isNull(1)) assertNull(r.getString(0), got)
+            else assertEquals(r.getString(0), r.getDouble(1) to r.getDouble(2), got)
+        }
+    }
+
+    @Test
+    fun pricesResolveLikePython() {
+        val own = vectors.getJSONArray("own_prices")
+        val ownGot = Prices.ownPrices(own.getString(0))
+        val ownWant = own.getJSONArray(1).let { a ->
+            (0 until a.length()).map { a.getJSONArray(it).let { p -> p.getString(0) to p.getDouble(1) } }
+        }
+        assertEquals(ownWant, ownGot)
+        val rows = vectors.getJSONArray("price_for")
+        for (i in 0 until rows.length()) {
+            val r = rows.getJSONArray(i)
+            assertEquals("row $i", Triple(r.getDouble(2), r.getDouble(3), r.getString(4)),
+                Prices.priceFor(r.getString(0), r.getString(1), ownGot, 0.79))
+        }
+    }
+
+    @Test
+    fun polylineMatchesPython() {
+        val row = vectors.getJSONArray("polyline")
+        val pts = row.getJSONArray(0).let { a ->
+            (0 until a.length()).map { a.getJSONArray(it).let { p -> RoutePoint(p.getDouble(0), p.getDouble(1)) } }
+        }
+        assertEquals(row.getString(1), RouteServices.encodePolyline(pts))
+        val long = (0 until 1000).map { RoutePoint(it.toDouble(), 0.0) }
+        val thin = RouteServices.thinLine(long)
+        assertTrue(thin.size <= RouteServices.POLYLINE_MAX_POINTS + 1)
+        assertEquals(long.last(), thin.last())
     }
 
     @Test
@@ -138,11 +195,23 @@ class PlannerTest {
                  "Connections":[{"ConnectionTypeID":25,"PowerKW":22}]},
                 {"AddressInfo":{"Title":"Broken"},"Connections":[{"ConnectionTypeID":33}]},
                 {"AddressInfo":{"Title":null,"Latitude":51.0,"Longitude":0.0,"Town":null},
-                 "OperatorInfo":null,"Connections":[{"ConnectionTypeID":33,"PowerKW":null}]}]"""))
+                 "OperatorInfo":null,"Connections":[{"ConnectionTypeID":33,"PowerKW":null}]},
+                {"AddressInfo":{"Title":"Supercharger","Latitude":51.1,"Longitude":-0.2},
+                 "OperatorInfo":{"Title":"Tesla (Tesla-only charging)"},
+                 "Connections":[{"ConnectionTypeID":33,"PowerKW":250}]},
+                {"AddressInfo":{"Title":"Hotel","Latitude":51.1,"Longitude":-0.2},"UsageTypeID":6,
+                 "Connections":[{"ConnectionTypeID":33,"PowerKW":50}]},
+                {"AddressInfo":{"Title":"Soon","Latitude":51.1,"Longitude":-0.2},
+                 "StatusType":{"IsOperational":false},
+                 "Connections":[{"ConnectionTypeID":33,"PowerKW":150}]},
+                {"AddressInfo":{"Title":"Open","Latitude":51.2,"Longitude":-0.2},
+                 "UsageCost":"£0.79/kWh","UsageTypeID":5,"StatusType":{"IsOperational":true},
+                 "Connections":[{"ConnectionTypeID":33,"PowerKW":150}]}]"""))
         assertEquals(
             listOf(
                 Charger("Services", 51.1, -0.2, 350.0, "Ionity", "M23, Crawley"),
                 Charger("Charger", 51.0, 0.0, 0.0, "", ""),
+                Charger("Open", 51.2, -0.2, 150.0, "", "", usageCost = "£0.79/kWh"),
             ),
             chargers,
         )

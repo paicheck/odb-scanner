@@ -19,6 +19,7 @@ import androidx.lifecycle.lifecycleScope
 import com.odbscanner.db.AppDatabase
 import com.odbscanner.db.DtcEntity
 import com.odbscanner.db.MeasurementEntity
+import com.odbscanner.costLine
 import com.odbscanner.fmtDuration
 import com.odbscanner.headline
 import com.odbscanner.route.PhoneLocation
@@ -279,12 +280,13 @@ class TripScreen(carContext: CarContext, private val dest: Place) : Screen(carCo
             .addText(String.format(Locale.ROOT, "%.0f km · ", p.distanceKm) +
                 fmtDuration(p.driveS + p.chargeS) +
                 if (p.chargeS > 0) " incl. ${fmtDuration(p.chargeS)} charging" else "")
+            .apply { if (p.stops.isNotEmpty()) addText(r.costLine()) }
             .build())
         p.stops.take(carContext.listLimit() - 2).forEachIndexed { i, s ->
             list.addItem(Row.Builder().setTitle("${i + 1}. ${s.charger.name}")
                 .addText(String.format(Locale.ROOT,
-                    "%.0f km · %.0f kW · %.0f → %.0f %% · %d min",
-                    s.km, s.charger.powerKw, s.arrivePct, s.departPct, s.chargeMin))
+                    "%.0f km · %.0f kW · %.0f → %.0f %% · %d min · £%.2f",
+                    s.km, s.charger.powerKw, s.arrivePct, s.departPct, s.chargeMin, s.cost))
                 .setOnClickListener { navigate(carContext, s.charger.lat, s.charger.lon) }
                 .build())
         }

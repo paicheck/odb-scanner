@@ -32,7 +32,6 @@ class RouteServices(
     countries: String = "",
 ) {
     private val countries = countryList(countries)
-    private val chargerCache = HashMap<Triple<Double, Double, Double>, List<Charger>>()
 
     fun geocode(text: String, near: Pair<Double, Double>? = null, size: Int = 5): List<Place> {
         requireOrs()
@@ -63,19 +62,18 @@ class RouteServices(
         return parseRoute(JSONObject(reply))
     }
 
-    /** Fast CCS chargers near a point; cached per rounded location. */
-    fun chargersNear(lat: Double, lon: Double, radiusKm: Double): List<Charger> {
+    /**
+     * Every fast CCS charger within [radiusKm] of the route, in one request
+     * (OCM's polyline search), with its listed price text.
+     */
+    fun chargersAlong(points: List<RoutePoint>, radiusKm: Double): List<Charger> {
         if (ocmKey.isBlank()) throw RoutingException(
             "No OpenChargeMap key. Get a free key at openchargemap.org and enter " +
                 "it under Route settings.")
-        val key = Triple(Planner.round(lat, 2), Planner.round(lon, 2), radiusKm)
-        chargerCache[key]?.let { return it }
-        val q = "$OCM_BASE?output=json&latitude=$lat&longitude=$lon&distance=$radiusKm" +
-            "&distanceunit=KM&maxresults=25&connectiontypeid=$CCS2" +
-            "&minpowerkw=$minChargerKw&verbose=false&key=${enc(ocmKey)}"
-        val out = parseChargers(JSONArray(request("GET", q, headers = mapOf("X-API-Key" to ocmKey))))
-        chargerCache[key] = out
-        return out
+        val q = "$OCM_BASE?output=json&polyline=${enc(encodePolyline(thinLine(points)))}" +
+            "&distance=$radiusKm&distanceunit=KM&maxresults=$OCM_MAX_RESULTS" +
+            "&connectiontypeid=$CCS2&minpowerkw=$minChargerKw&verbose=false&key=${enc(ocmKey)}"
+        return parseChargers(JSONArray(request("GET", q, headers = mapOf("X-API-Key" to ocmKey))))
     }
 
     private fun requireOrs() {
@@ -124,6 +122,41 @@ class RouteServices(
         const val ORS_BASE = "https://api.openrouteservice.org"
         const val OCM_BASE = "https://api.openchargemap.io/v3/poi/"
         const val CCS2 = 33          // OpenChargeMap ConnectionTypeID: CCS (Type 2)
+        const val OCM_MAX_RESULTS = 500
+        const val POLYLINE_MAX_POINTS = 300
+        // OCM UsageTypeID: private (restricted), privately owned (notice
+        // required), private (staff, visitors or customers).
+        val PRIVATE_USAGE = setOf(2, 3, 6)
+
+        /** Every n-th point and the last, so the polyline fits in a URL. */
+        fun thinLine(points: List<RoutePoint>, limit: Int = POLYLINE_MAX_POINTS): List<RoutePoint> {
+            val step = maxOf(1, (points.size + limit - 1) / limit)
+            val out = points.filterIndexed { i, _ -> i % step == 0 }.toMutableList()
+            if (out.last() !== points.last()) out.add(points.last())
+            return out
+        }
+
+        /** Google's encoded-polyline format, 5 decimals (as providers.py). */
+        fun encodePolyline(points: List<RoutePoint>): String {
+            val out = StringBuilder()
+            var plat = 0L
+            var plon = 0L
+            for (p in points) {
+                val lat = Planner.round(p.lat * 1e5).toLong()
+                val lon = Planner.round(p.lon * 1e5).toLong()
+                for (d in longArrayOf(lat - plat, lon - plon)) {
+                    var v = if (d < 0) (d shl 1).inv() else d shl 1
+                    while (v >= 0x20) {
+                        out.append(((0x20 or (v and 0x1F).toInt()) + 63).toChar())
+                        v = v shr 5
+                    }
+                    out.append((v + 63).toInt().toChar())
+                }
+                plat = lat
+                plon = lon
+            }
+            return out.toString()
+        }
 
         private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
@@ -170,10 +203,18 @@ class RouteServices(
                 summary.optDouble("duration", 0.0))
         }
 
+        /** Chargers this car can use: CCS, not Tesla-only, not private, not
+         *  marked out of operation. */
         fun parseChargers(data: JSONArray): List<Charger> {
             val out = mutableListOf<Charger>()
             for (i in 0 until data.length()) {
                 val poi = data.optJSONObject(i) ?: continue
+                val operator = poi.optJSONObject("OperatorInfo")?.let { str(it, "Title") } ?: ""
+                if ("tesla-only" in operator.lowercase()) continue
+                if (!poi.isNull("UsageTypeID") && poi.optInt("UsageTypeID", 0) in PRIVATE_USAGE) continue
+                val status = poi.optJSONObject("StatusType")
+                if (status != null && !status.isNull("IsOperational") &&
+                    !status.optBoolean("IsOperational", true)) continue
                 val addr = poi.optJSONObject("AddressInfo") ?: continue
                 if (!addr.has("Latitude") || !addr.has("Longitude")) continue
                 val conns = poi.optJSONArray("Connections") ?: JSONArray()
@@ -190,8 +231,8 @@ class RouteServices(
                 out.add(Charger(
                     name = str(addr, "Title").ifBlank { "Charger" },
                     lat = lat, lon = lon, powerKw = powers.max(),
-                    operator = poi.optJSONObject("OperatorInfo")?.let { str(it, "Title") } ?: "",
-                    address = street,
+                    operator = operator, address = street,
+                    usageCost = str(poi, "UsageCost"),
                 ))
             }
             return out

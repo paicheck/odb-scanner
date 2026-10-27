@@ -19,6 +19,10 @@ data class RouteSettings(
     val chargeToPct: Double,
     val consumptionKwhPer100km: Double?,   // null: this car's figure or the default
     val countries: String,                 // place search limit, "GB,FR"; "" = anywhere
+    val mode: String = "balanced",         // fastest | balanced | cheapest
+    val timeValuePerHour: Double = 15.0,
+    val defaultPricePerKwh: Double = 0.79,
+    val ownPrices: String = "",            // "Ionity = 0.39" lines
 ) {
     val missingKeys: List<String>
         get() = listOfNotNull(
@@ -42,6 +46,10 @@ object RoutePrefs {
             // Until set, the phone's own region: a UK phone searches the UK.
             countries = p.getString("countries", null)
                 ?: RouteServices.countryList(Locale.getDefault().country),
+            mode = p.getString("mode", "balanced")?.takeIf { it in MODES } ?: "balanced",
+            timeValuePerHour = p.getFloat("time_value", 15f).toDouble(),
+            defaultPricePerKwh = p.getFloat("default_price", 0.79f).toDouble(),
+            ownPrices = p.getString("own_prices", "") ?: "",
         )
     }
 
@@ -53,6 +61,11 @@ object RoutePrefs {
             .putFloat("charge_to_pct", s.chargeToPct.coerceIn(20.0, 100.0).toFloat())
             .putFloat("consumption", (s.consumptionKwhPer100km ?: -1.0).toFloat())
             .putString("countries", RouteServices.countryList(s.countries))
+            .putString("mode", s.mode.takeIf { it in MODES } ?: "balanced")
+            .putFloat("time_value", s.timeValuePerHour.coerceIn(0.0, 500.0).toFloat())
+            .putFloat("default_price", s.defaultPricePerKwh
+                .coerceIn(Prices.MIN_PRICE, Prices.MAX_PRICE).toFloat())
+            .putString("own_prices", s.ownPrices.take(2000))
             .apply()
     }
 
@@ -149,6 +162,8 @@ object TripPlanner {
         to: Place,
         from: Place?,
         startPct: Double? = null,
+        mode: String? = null,
+        consumptionKwhPer100km: Double? = null,
     ): TripResult = withContext(Dispatchers.IO) {
         val s = RoutePrefs.load(context)
         val car = CarEnergy.load(context)
@@ -158,12 +173,23 @@ object TripPlanner {
                 "No location for the start: allow location access, or enter a start.")
         val services = RouteServices(s.orsKey, s.ocmKey, countries = s.countries)
         val route = services.route(origin.lat to origin.lon, to.lat to to.lon)
-        val consumption = s.consumptionKwhPer100km ?: CarEnergy.DEFAULT_CONSUMPTION
+        val consumption = consumptionKwhPer100km ?: s.consumptionKwhPer100km
+            ?: CarEnergy.DEFAULT_CONSUMPTION
+        val settings = PlanSettings(
+            reservePct = s.reservePct, chargeToPct = s.chargeToPct,
+            mode = mode?.takeIf { it in MODES } ?: s.mode,
+            timeValuePerHour = s.timeValuePerHour, defaultPricePerKwh = s.defaultPricePerKwh,
+        )
+        val own = Prices.ownPrices(s.ownPrices)
+        val chargers = services.chargersAlong(route.points, settings.searchRadiusKm).map { c ->
+            val (price, fee, source) = Prices.priceFor(c.operator, c.usageCost, own,
+                settings.defaultPricePerKwh)
+            c.copy(pricePerKwh = price, fee = fee, priceSource = source)
+        }
         val plan = Planner.planTrip(
             route.points, route.durationS, startPct ?: car.startPct,
             CarModel(usableKwh = car.usableKwh, consumptionKwhPerKm = consumption / 100.0),
-            PlanSettings(reservePct = s.reservePct, chargeToPct = s.chargeToPct),
-            ChargerLookup { lat, lon, r -> services.chargersNear(lat, lon, r) },
+            settings, chargers,
         )
         TripResult(origin, to, plan, car, consumption, MapMath.thinLine(route.points))
     }
