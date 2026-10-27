@@ -129,6 +129,17 @@ class DecodeTest {
     }
 
     @Test
+    fun chargeModeIsOneBitField() {
+        // Parity with tests/test_charge_mode_bits.py. 0x0E used to read as
+        // 0 (idle), which closes a live charging session.
+        val cases = mapOf(
+            "00" to 0, "01" to 0, "04" to 1, "05" to 1, "06" to 2, "07" to 2,
+            "02" to null, "08" to null, "0E" to null, "FF" to null,
+        )
+        for ((raw, want) in cases) assertEquals(raw, want, decode("charge_mode", raw))
+    }
+
+    @Test
     fun subZeroTemperaturesAreSigned() {
         // Parity with tests/test_signed_temperatures.py: decoded unsigned,
         // -1 C coolant read as 1023 C and -5 C pack max as 1019 C.

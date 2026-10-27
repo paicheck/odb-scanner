@@ -50,7 +50,18 @@ object Decoder {
                 val v = u16(record, 0) ?: return null
                 if (v > CELL_T_MAX) null else v / 8.0 - 40.0
             }
-            "charge_mode" -> mapOf(4 to 1, 6 to 2)[record[0].toInt() and 0xFF] ?: 0
+            // Bit field, as decoders/meb.py _charge_mode: bit 2 = charging,
+            // plus bit 1 = DC; undocumented bits are unknown (null), never
+            // "idle" -- idle closes a live charging session.
+            "charge_mode" -> {
+                val b = record[0].toInt() and 0xFF
+                when {
+                    b and 0x07.inv() != 0 -> null
+                    b and 0x04 != 0 -> if (b and 0x02 != 0) 2 else 1
+                    b == 0x00 || b == 0x01 -> 0
+                    else -> null
+                }
+            }
             "float32" -> {
                 if (record.size < 4) return null
                 val bits = u32(record, 0) ?: return null

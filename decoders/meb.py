@@ -199,10 +199,8 @@ ENERGY_CONTENT_OFFSET = 2
 # See docs/investigation/meb_gateway_energy_passive_capture_20261015.md.
 # ---------------------------------------------------------------------------
 
-# 0x7448 operation modes seen in evDash, mapped onto the app-wide convention
-# (decoders.charging.CHARGE_MODE_CODES) so charging tracking keeps working.
-_OP_MODE_AC = 4
-_OP_MODE_DC = 6
+# 0x7448 byte 0 is a bit field; see _charge_mode for how it maps onto the
+# app-wide convention (decoders.charging.CHARGE_MODE_CODES).
 
 _GEAR_CODES = {6: "N", 5: "D", 12: "B", 8: "P", 7: "R"}
 
@@ -328,9 +326,24 @@ def _u16_over(raw: bytes, div: float) -> float:
     return u16be(raw) / div
 
 
-def _charge_mode(raw: bytes) -> int:
-    """MEB 0x7448 -> app-wide charge-mode convention (0/1/2)."""
-    return {_OP_MODE_AC: 1, _OP_MODE_DC: 2}.get(raw[0], 0)
+def _charge_mode(raw: bytes) -> int | None:
+    """MEB 0x7448 byte 0 -> app-wide charge-mode convention (0/1/2), or None.
+
+    Byte 0 is a bit field, which is how the Car Scanner profile reads it
+    (standby = NOT bit 0; DC charging = bit 1 AND bit 2) and which evDash's
+    enum values fit exactly: 0 standby, 1 driving (bit 0), 4 AC (bit 2),
+    6 DC (bits 1+2). This used to be an exact match on 4/6 with everything
+    else mapped to 0, so a charging byte with any further bit set -- 0x05,
+    0x0E -- read as "idle" and _charging_tracking closed a live session on it.
+    A value with bits the sources do not describe is unknown (None), which the
+    collector treats as "no evidence" rather than as not charging.
+    """
+    b = raw[0]
+    if b & ~0x07:
+        return None              # bits beyond 0-2: undocumented
+    if b & 0x04:
+        return 2 if b & 0x02 else 1
+    return 0 if b in (0x00, 0x01) else None   # bit 1 alone: undocumented
 
 
 def _op_mode(raw: bytes) -> int:
@@ -1213,8 +1226,9 @@ def _register_bms(reg: DIDRegistry) -> None:
             "code",
             decode=_charge_mode,
             doc_status=_EXP,
-            notes="byte0; MEB op mode 4=AC, 6=DC mapped to 1/2 (see "
-            "decoders.charging.CHARGE_MODE_CODES) [evDash]",
+            notes="byte0 bit field: bit2 = charging, +bit1 = DC -> 1 AC / "
+            "2 DC, 0/1 -> 0, other bits -> unknown (see "
+            "decoders.charging.CHARGE_MODE_CODES) [evDash; CS profile]",
         )
     )
     reg.register(
