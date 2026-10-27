@@ -152,8 +152,18 @@ routing:
   ors_api_key: ""
   ocm_api_key: ""
   reserve_pct: 10           # never plan to arrive below this
-  charge_to_pct: 80         # charge to this at each stop
+  charge_to_pct: 80         # never charge above this at a stop
   min_charger_kw: 50        # ignore slower chargers
+  # How stops are chosen: fastest | balanced | cheapest (the Route form can
+  # change it per trip). Balanced counts your time at time_value_per_hour.
+  mode: balanced
+  time_value_per_hour: 15
+  # Price for chargers whose price is unknown, per kWh.
+  default_price_per_kwh: 0.79
+  # Your own price per network, which beats the price Open Charge Map lists
+  # (matched against the charger's operator name). Put yours in
+  # config.local.yaml, e.g.  prices: {Ionity: 0.39, Tesla: 0.55}
+  prices: {}
   # Countries place search is limited to, ISO codes: "GB" or "GB,FR". Blank
   # searches everywhere, and a town name may then resolve abroad ("Brighton"
   # comes back as Brighton, NY). Set it in config.local.yaml.

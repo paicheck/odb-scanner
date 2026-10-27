@@ -1,8 +1,8 @@
-"""EV trip planner: energy along a route, and where to charge.
+"""EV trip planner: energy along a route, where to charge, and what it costs.
 
-Pure functions, no I/O: the route geometry and a charger lookup are passed in.
-The Android app ports this file line for line (Planner.kt) and both are held
-to tests/data/route_vectors.json, so the phone and the dashboard give the
+Pure functions, no I/O: the route geometry and the chargers near it are passed
+in. The Android app ports this file line for line (Planner.kt) and both are
+held to tests/data/route_vectors.json, so the phone and the dashboard give the
 same answer for the same trip.
 
 THE MODEL, AND WHAT IT LEAVES OUT
@@ -12,16 +12,36 @@ Energy for a stretch of road = distance x flat consumption + climbing energy
 fraction of m g |dh|). Consumption is either measured from this car or a
 stated default; speed, temperature, wind and HVAC are not modelled
 separately -- they live inside that one consumption figure. The detour from
-the route to a charger is ignored. Every result carries these assumptions, so
-it is read as an estimate, which is what it is.
+the route to a charger costs time but its energy is ignored. Every result
+carries these assumptions, so it is read as an estimate, which is what it is.
 
 Charging time integrates a charging-power curve (kW available at each SoC,
 capped by the charger) in 1 % steps.
+
+CHOOSING THE STOPS
+------------------
+Every fast charger within search_radius_km of the route is a candidate. A plan
+is a sequence of stops, each with a charge level to leave at; it is feasible
+when the charge never falls below the reserve. Of the feasible plans, the one
+with the lowest total cost is chosen:
+
+    money   price x energy billed (+ any session fee)
+  + time    value of time x (charging + a fixed stop overhead + the detour)
+
+The mode sets the value of time: Fastest makes time so expensive that money
+only breaks ties; Balanced uses the driver's own value (default 15/hour);
+Cheapest counts time at a token 3/hour, so it will not add a stop or an hour
+of charging to save pennies. The search is exact over its grid: dynamic
+programming over (charger, leave-at level), levels in 5 % steps up to the
+charge-to limit; a stop adds at least 10 % (on a 5 % grid the search would
+otherwise find one-minute top-ups that save pennies). Feasibility between
+stops uses the route's net energy without the full-battery cap on
+regeneration; the profile shown is then simulated with the cap, so a long
+descent from 100 % reads correctly.
 """
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 G = 9.81
@@ -34,6 +54,13 @@ ID3_58_CURVE: tuple[tuple[float, float], ...] = (
     (0, 110), (30, 110), (40, 95), (50, 80), (60, 66), (70, 55),
     (80, 43), (90, 25), (100, 7),
 )
+
+MODES = ("fastest", "balanced", "cheapest")
+FASTEST_TIME_VALUE = 1000.0       # per hour: time dominates, money breaks ties
+CHEAPEST_TIME_VALUE = 3.0         # per hour: enough to refuse silly detours
+DETOUR_ROAD_FACTOR = 1.4          # road km per straight-line km off the route
+DETOUR_SPEED_KMH = 40.0
+NEAREST_STRIDE = 10               # coarse step when matching a charger to the route
 
 
 @dataclass
@@ -49,12 +76,23 @@ class CarModel:
 @dataclass
 class PlanSettings:
     reserve_pct: float = 10.0         # never plan to arrive below this
-    charge_to_pct: float = 80.0       # charge up to this at each stop
+    charge_to_pct: float = 80.0       # never charge above this
     min_charger_kw: float = 50.0      # ignore chargers slower than this
-    search_step_km: float = 15.0      # spacing of charger searches
-    search_back_km: float = 120.0     # how far back to look for a stop
     search_radius_km: float = 5.0     # charger distance from the route
-    max_stops: int = 8
+    mode: str = "balanced"            # "fastest" | "balanced" | "cheapest"
+    time_value_per_hour: float = 15.0  # Balanced: what an hour is worth
+    default_price_per_kwh: float = 0.79  # for chargers with no known price
+    stop_overhead_min: float = 10.0   # pulling in, plugging in, paying
+    level_step_pct: float = 5.0       # leave-at levels the search considers
+    min_charge_pct: float = 10.0      # a stop adds at least this much
+    charging_eff: float = 0.92        # battery kWh per kWh billed
+
+    def time_value(self) -> float:
+        if self.mode == "fastest":
+            return FASTEST_TIME_VALUE
+        if self.mode == "cheapest":
+            return CHEAPEST_TIME_VALUE
+        return self.time_value_per_hour
 
 
 @dataclass
@@ -65,6 +103,10 @@ class Charger:
     power_kw: float
     operator: str = ""
     address: str = ""
+    price_per_kwh: float | None = None    # None: settings.default_price_per_kwh
+    fee: float = 0.0                      # per session
+    price_source: str = ""
+    usage_cost: str = ""                  # Open Charge Map's price text, as listed
 
 
 @dataclass
@@ -78,6 +120,8 @@ class Plan:
     profile: list[list[float]] = field(default_factory=list)   # [km, pct]
     unreachable_at_km: float | None = None
     charge_s: float = 0.0
+    cost: float = 0.0                 # money for all stops
+    mode: str = "balanced"
     assumptions: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -90,6 +134,7 @@ class Plan:
             "stops": self.stops, "profile": self.profile,
             "unreachable_at_km": None if self.unreachable_at_km is None
             else round(self.unreachable_at_km, 1),
+            "cost": round(self.cost, 2), "mode": self.mode,
             "assumptions": self.assumptions,
         }
 
@@ -148,83 +193,287 @@ def charge_seconds(from_pct: float, to_pct: float, car: CarModel,
     return seconds
 
 
-ChargerLookup = Callable[[float, float, float], list[Charger]]
+def charge_table(car: CarModel, charger_kw: float) -> list[float]:
+    """Seconds to charge from 0 % to each whole percent; the search reads
+    charging time off this (interpolated) instead of integrating each time."""
+    step_kwh = car.usable_kwh / 100.0
+    t = [0.0] * 101
+    for s in range(100):
+        t[s + 1] = t[s] + step_kwh / charge_power_kw(s + 0.5, car.charge_curve,
+                                                     charger_kw) * 3600.0
+    return t
+
+
+def table_seconds(t: list[float], pct: float) -> float:
+    pct = min(100.0, max(0.0, pct))
+    i = min(99, int(pct))
+    return t[i] + (pct - i) * (t[i + 1] - t[i])
+
+
+def leave_levels(settings: PlanSettings) -> list[float]:
+    """Charge levels a stop may leave at: whole steps above the reserve and
+    below the charge-to limit, then the limit itself."""
+    out = []
+    k = 1
+    while k * settings.level_step_pct < settings.charge_to_pct - 1e-9:
+        x = k * settings.level_step_pct
+        if x > settings.reserve_pct + 1e-9:
+            out.append(x)
+        k += 1
+    out.append(settings.charge_to_pct)
+    return out
+
+
+def nearest_point(points: list[tuple], lat: float, lon: float) -> tuple[int, float]:
+    """(index, km) of the route point nearest a place: every NEAREST_STRIDE-th
+    point first, then every point around the best of those."""
+    best_k, best_d = 0, math.inf
+    for k in range(0, len(points), NEAREST_STRIDE):
+        d = haversine_km(lat, lon, points[k][0], points[k][1])
+        if d < best_d:
+            best_k, best_d = k, d
+    lo = max(0, best_k - NEAREST_STRIDE)
+    hi = min(len(points) - 1, best_k + NEAREST_STRIDE)
+    for k in range(lo, hi + 1):
+        d = haversine_km(lat, lon, points[k][0], points[k][1])
+        if d < best_d:
+            best_k, best_d = k, d
+    return best_k, best_d
+
+
+@dataclass
+class _Candidate:
+    idx: int                          # nearest route point
+    offset_km: float                  # straight-line distance from it
+    charger: Charger
+    price: float
+    table: list[float]
+    level_cost: list[float]           # per leave level: price + time terms
+    fixed_cost: float                 # fee + overhead + detour
 
 
 def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
               car: CarModel, settings: PlanSettings,
-              find_chargers: ChargerLookup) -> Plan:
+              chargers: list[Charger]) -> Plan:
     """Plan a trip along `points` [(lat, lon, elevation_m or None), ...].
 
     `drive_s` is the routing provider's driving time for the whole route;
-    `find_chargers(lat, lon, radius_km)` returns chargers near a point.
+    `chargers` are the chargers near it (any order; slow or distant ones are
+    dropped here).
     """
     if len(points) < 2:
         raise ValueError("a route needs at least two points")
+    n = len(points)
     cum = cumulative_km(points)
-    total_km = cum[-1]
     cap = car.usable_kwh
-    reserve_kwh = cap * settings.reserve_pct / 100.0
+    reserve = cap * settings.reserve_pct / 100.0
+    tv = settings.time_value()
 
-    def seg(i: int) -> float:
+    seg = [0.0] * n
+    net = [0.0] * n                   # net energy used from the start to point k
+    for i in range(1, n):
         a, b = points[i - 1], points[i]
         dh = (b[2] - a[2]) if (a[2] is not None and b[2] is not None) else 0.0
-        return segment_kwh(cum[i] - cum[i - 1], dh, car)
+        seg[i] = segment_kwh(cum[i] - cum[i - 1], dh, car)
+        net[i] = net[i - 1] + seg[i]
 
-    def pct(kwh: float) -> float:
+    levels = leave_levels(settings)
+    level_kwh = [cap * x / 100.0 for x in levels]
+    min_add = cap * settings.min_charge_pct / 100.0
+    tables: dict[float, list[float]] = {}
+    cands: list[_Candidate] = []
+    for c in chargers:
+        if c.power_kw < settings.min_charger_kw:
+            continue
+        idx, off = nearest_point(points, c.lat, c.lon)
+        if off > settings.search_radius_km or idx == n - 1:
+            continue
+        table = tables.setdefault(c.power_kw, charge_table(car, c.power_kw))
+        price = c.price_per_kwh if c.price_per_kwh is not None \
+            else settings.default_price_per_kwh
+        detour_s = 2 * off * DETOUR_ROAD_FACTOR / DETOUR_SPEED_KMH * 3600.0
+        cands.append(_Candidate(
+            idx, off, c, price, table,
+            [price * e / settings.charging_eff + tv * table_seconds(table, x) / 3600.0
+             for x, e in zip(levels, level_kwh)],
+            c.fee + tv * (settings.stop_overhead_min * 60.0 + detour_s) / 3600.0))
+    cands.sort(key=lambda d: d.idx)   # stable: equal points keep input order
+
+    # Node 0 is the start; node j >= 1 is cands[j - 1].
+    def node_idx(j):
+        return 0 if j == 0 else cands[j - 1].idx
+
+    big = math.inf
+    # best[j][l] = (cost so far, parent node, parent level); the start has one
+    # state (level -1: it leaves with start_pct).
+    best: list[list[tuple[float, int, int]]] = [[(big, -1, -1)] * len(levels)
+                                                for _ in range(len(cands) + 1)]
+    start_e = cap * start_pct / 100.0
+    final = None                      # (cost, arrival kWh, node, level)
+
+    def departures(j):
+        if j == 0:
+            return [(-1, start_e, 0.0)]
+        return [(li, level_kwh[li], best[j][li][0]) for li in range(len(levels))
+                if best[j][li][0] < big]
+
+    for j in range(len(cands) + 1):
+        deps = departures(j)
+        if not deps:
+            continue
+        top = max(e for _, e, _ in deps)
+        reach = _reach(j, node_idx, cands, net, top - reserve, n)
+        for li, dep, cost in deps:
+            dest = reach[-1]
+            if dest is not None and dest[1] <= dep - reserve + 1e-9:
+                arrive = min(cap, dep - dest[2])
+                if final is None or cost < final[0] - 1e-9 or (
+                        cost <= final[0] + 1e-9 and arrive > final[1] + 1e-9):
+                    final = (cost, arrive, j, li)
+            for k, dip, used in reach[:-1]:
+                if dip > dep - reserve + 1e-9:
+                    break
+                cand = cands[k - 1]
+                arrive = min(cap, dep - used)
+                base = cost + cand.fixed_cost \
+                    - cand.price * arrive / settings.charging_eff \
+                    - tv * table_seconds(cand.table, arrive / cap * 100.0) / 3600.0
+                row = best[k]
+                for l2 in range(len(levels)):
+                    if level_kwh[l2] < arrive + min_add - 1e-9:
+                        continue
+                    c2 = base + cand.level_cost[l2]
+                    if c2 < row[l2][0] - 1e-9:
+                        row[l2] = (c2, j, li)
+
+    if final is not None:
+        path = _path(best, final[2], final[3])
+        return _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct,
+                         car, settings, None)
+
+    # Unreachable: follow the plan that gets furthest, and say where it fails.
+    far = (-1.0, big, 0, -1)          # (km reached, cost, node, level)
+    for j in range(len(cands) + 1):
+        deps = departures(j)
+        if not deps:
+            continue
+        li, dep, cost = max(deps, key=lambda d: (d[1], -d[2]))
+        km = cum[_fail_index(node_idx(j), net, dep - reserve, n)]
+        if km > far[0] + 1e-9 or (km >= far[0] - 1e-9 and cost < far[1] - 1e-9):
+            far = (km, cost, j, li)
+    path = _path(best, far[2], far[3])
+    return _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct,
+                     car, settings, reserve)
+
+
+def _reach(j, node_idx, cands, net, budget, n):
+    """From node j: [(node, deepest dip, net used)] for the later candidates in
+    order while the dip stays within `budget`, then the destination as
+    (None-able) (n - 1, dip, used) -- None when it is out of reach."""
+    a = node_idx(j)
+    out = []
+    dip = 0.0
+    k = a
+    nxt = j + 1
+    while nxt <= len(cands):
+        target = cands[nxt - 1].idx
+        while k < target:
+            k += 1
+            dip = max(dip, net[k] - net[a])
+        if dip > budget + 1e-9:
+            break
+        out.append((nxt, dip, net[target] - net[a]))
+        nxt += 1
+    dest = None
+    if nxt > len(cands):
+        while k < n - 1:
+            k += 1
+            dip = max(dip, net[k] - net[a])
+        if dip <= budget + 1e-9:
+            dest = (n - 1, dip, net[n - 1] - net[a])
+    out.append(dest)
+    return out
+
+
+def _fail_index(a, net, budget, n):
+    """First point after `a` where the energy used exceeds `budget`."""
+    for k in range(a + 1, n):
+        if net[k] - net[a] > budget + 1e-9:
+            return k
+    return n - 1
+
+
+def _path(best, j, li):
+    """The stops leading to state (j, li), first stop first (start excluded)."""
+    out = []
+    while j > 0:
+        out.append((j, li))
+        _, j, li = best[j][li]
+    out.reverse()
+    return out
+
+
+def _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct, car,
+              settings, fail_reserve):
+    """Drive the chosen stops point by point (regeneration capped at a full
+    battery): the profile, each stop's real arrival, time and cost. With
+    `fail_reserve`, keep driving after the last stop until the charge falls
+    below it, and report where."""
+    n = len(points)
+    cap = car.usable_kwh
+
+    def pct(kwh):
         return kwh / cap * 100.0
 
-    # energy[k]: energy on arriving at point k (after charging, at a stop).
-    # Kept exact per point so a rewind to a stop never goes through rounding.
-    energy = [0.0] * len(points)
-    energy[0] = cap * start_pct / 100.0
-    profile: list[tuple[int, float]] = [(0, energy[0])]     # (point, kWh)
-    stops: list[dict] = []
-    charge_total = 0.0
-    last_stop_idx = 0
-    i = 1
-    while i < len(points):
-        e = min(cap, energy[i - 1] - seg(i))
-        if e >= reserve_kwh:
-            energy[i] = e
-            profile.append((i, e))
-            i += 1
-            continue
-        # Below the reserve at point i: find a charger behind it, searching
-        # back from here in steps, never at or behind the previous stop.
-        found = None
-        if len(stops) < settings.max_stops:
-            found = _find_stop(points, cum, i, cum[last_stop_idx], settings,
-                               find_chargers)
-        if found is None:
-            return _unreachable(cum[i], total_km, drive_s, start_pct, stops,
-                                _profile(profile, cum, cap), charge_total,
-                                car, settings)
-        idx, charger = found
-        arrive = energy[idx]
-        depart = max(arrive, cap * settings.charge_to_pct / 100.0)
-        secs = charge_seconds(pct(arrive), pct(depart), car, charger.power_kw)
+    energy = cap * start_pct / 100.0
+    profile = [(0, energy)]
+    stops, charge_total, money_total = [], 0.0, 0.0
+    k = 0
+    for j, li in path:
+        cand = cands[j - 1]
+        while k < cand.idx:
+            k += 1
+            energy = min(cap, energy - seg[k])
+            profile.append((k, energy))
+        arrive = energy
+        depart = max(arrive, cap * levels[li] / 100.0)
+        secs = charge_seconds(pct(arrive), pct(depart), car, cand.charger.power_kw)
+        added = depart - arrive
+        money = cand.charger.fee + cand.price * added / settings.charging_eff
         charge_total += secs
+        money_total += money
+        c = cand.charger
         stops.append({
-            "km": round(cum[idx], 1), "name": charger.name,
-            "operator": charger.operator, "address": charger.address,
-            "lat": charger.lat, "lon": charger.lon,
-            "power_kw": charger.power_kw,
+            "km": round(cum[cand.idx], 1), "name": c.name,
+            "operator": c.operator, "address": c.address,
+            "lat": c.lat, "lon": c.lon, "power_kw": c.power_kw,
             "arrive_pct": round(pct(arrive), 1), "depart_pct": round(pct(depart), 1),
-            "charge_min": round(secs / 60.0),
+            "charge_min": round(secs / 60.0), "kwh": round(added, 1),
+            "price_per_kwh": round(cand.price, 4), "fee": round(c.fee, 2),
+            "price_source": c.price_source or "default price",
+            "cost": round(money, 2), "detour_km": round(cand.offset_km, 1),
         })
-        profile = [p for p in profile if p[0] <= idx]
-        profile.append((idx, depart))           # vertical step: arrive -> depart
-        energy[idx] = depart
-        last_stop_idx = idx
-        i = idx + 1
-
+        profile.append((cand.idx, depart))      # vertical step: arrive -> depart
+        energy = depart
+    unreachable_at = None
+    while k < n - 1:
+        e = min(cap, energy - seg[k + 1])
+        if fail_reserve is not None and e < fail_reserve:
+            unreachable_at = cum[k + 1]
+            break
+        k += 1
+        energy = e
+        profile.append((k, energy))
+    if fail_reserve is not None and unreachable_at is None:
+        unreachable_at = cum[n - 1]       # only the cap saved it; still say so
+    status = "unreachable" if fail_reserve is not None else (
+        "with_stops" if stops else "direct")
     return Plan(
-        status="with_stops" if stops else "direct", distance_km=total_km,
-        drive_s=drive_s, start_pct=start_pct,
-        arrival_pct=pct(energy[-1]), stops=stops,
-        profile=_profile(profile, cum, cap), charge_s=charge_total,
-        assumptions=assumptions(car, settings))
+        status=status, distance_km=cum[-1], drive_s=drive_s, start_pct=start_pct,
+        arrival_pct=None if fail_reserve is not None else pct(energy),
+        stops=stops, profile=_profile(profile, cum, cap),
+        unreachable_at_km=unreachable_at, charge_s=charge_total, cost=money_total,
+        mode=settings.mode, assumptions=assumptions(car, settings))
 
 
 def _profile(points: list[tuple[int, float]], cum, cap) -> list[list[float]]:
@@ -232,44 +481,6 @@ def _profile(points: list[tuple[int, float]], cum, cap) -> list[list[float]]:
     the same km (arrival, then departure), which draws the charging step."""
     return _thin([[round(cum[k], 2), round(e / cap * 100.0, 1)]
                   for k, e in points])
-
-
-def _index_at(cum: list[float], km: float) -> int:
-    best = 0
-    for k, c in enumerate(cum):
-        if c <= km + 1e-9:
-            best = k
-    return best
-
-
-def _find_stop(points, cum, fail_idx, last_stop_km, settings, find_chargers):
-    """The best charger reachable before `fail_idx`: search points stepping
-    back from just before the failure, highest power first at each point.
-    Stops strictly after the previous stop, and never at the start."""
-    target = cum[fail_idx] - 1.0
-    floor = max(last_stop_km + 1.0, cum[fail_idx] - settings.search_back_km)
-    km = target
-    while km >= floor:
-        idx = min(_index_at(cum, km), fail_idx - 1)
-        if idx == 0 or cum[idx] <= last_stop_km:
-            break
-        lat, lon = points[idx][0], points[idx][1]
-        found = [c for c in find_chargers(lat, lon, settings.search_radius_km)
-                 if c.power_kw >= settings.min_charger_kw]
-        if found:
-            found.sort(key=lambda c: (-c.power_kw,
-                                      haversine_km(lat, lon, c.lat, c.lon)))
-            return idx, found[0]
-        km -= settings.search_step_km
-    return None
-
-
-def _unreachable(at_km, total_km, drive_s, start_pct, stops, profile,
-                 charge_total, car, settings) -> Plan:
-    return Plan(status="unreachable", distance_km=total_km, drive_s=drive_s,
-                start_pct=start_pct, arrival_pct=None, stops=stops,
-                profile=_thin(profile), unreachable_at_km=at_km,
-                charge_s=charge_total, assumptions=assumptions(car, settings))
 
 
 def _thin(profile: list[list[float]], limit: int = 400) -> list[list[float]]:
@@ -286,16 +497,32 @@ def _thin(profile: list[list[float]], limit: int = 400) -> list[list[float]]:
 
 
 def assumptions(car: CarModel, settings: PlanSettings) -> list[str]:
+    mode = {
+        "fastest": "Fastest: stops chosen for the least time charging and "
+                   "stopping; price only breaks ties.",
+        "cheapest": f"Cheapest: stops chosen for the lowest charging bill; time "
+                    f"counts at only £{CHEAPEST_TIME_VALUE:.0f}/hour, so a stop is "
+                    "not added to save pennies.",
+    }.get(settings.mode,
+          f"Balanced: stops chosen for the lowest bill plus your time at "
+          f"£{settings.time_value_per_hour:.0f}/hour.")
     return [
         f"Usable battery {car.usable_kwh:.1f} kWh.",
         f"Consumption {car.consumption_kwh_per_km * 100:.1f} kWh/100 km on the "
         "flat; speed, temperature, wind and heating are inside this one figure.",
         f"Hills: {car.mass_kg:.0f} kg, {car.regen_eff * 100:.0f} % of descent "
         "energy recovered.",
-        f"Arrive with at least {settings.reserve_pct:.0f} %; charge to "
+        f"Arrive with at least {settings.reserve_pct:.0f} %; charge to at most "
         f"{settings.charge_to_pct:.0f} % at chargers of at least "
         f"{settings.min_charger_kw:.0f} kW within {settings.search_radius_km:.0f} km "
-        "of the route; the detour to the charger is not counted.",
+        "of the route; the detour to a charger counts as time, not energy.",
+        mode + f" Each stop also counts {settings.stop_overhead_min:.0f} min for "
+        f"pulling in and plugging in, and adds at least "
+        f"{settings.min_charge_pct:.0f} %.",
+        "Prices: your own network prices first, then the price listed on Open "
+        "Charge Map (community-entered; can be out of date), else "
+        f"£{settings.default_price_per_kwh:.2f}/kWh. Billed energy is the energy "
+        f"added divided by {settings.charging_eff:.2f} (charging losses).",
         "Charging time follows the ID.3 58 kWh DC curve, capped by the "
         "charger's rated power; real sessions are often slower.",
     ]

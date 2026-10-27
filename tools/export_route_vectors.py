@@ -9,9 +9,10 @@ is stale; regenerate with
     python tools/export_route_vectors.py
 
 The routes are synthetic (straight lines due north from 50 N, one point per
-km) so the file stays small and the arithmetic is easy to check by hand; the
-charger lookup is "every charger within radius_km of the query point, in file
-order", which each test suite implements in a few lines.
+km) so the file stays small and the arithmetic is easy to check by hand; each
+case passes its chargers to the planner in file order. The file also carries
+the price-text cases (routing/prices.py <-> route/Prices.kt) and the leave-at
+levels.
 """
 from __future__ import annotations
 
@@ -30,9 +31,11 @@ from routing.planner import (  # noqa: E402
     PlanSettings,
     charge_power_kw,
     charge_seconds,
-    haversine_km,
+    leave_levels,
     plan_trip,
 )
+from routing.prices import own_prices, parse_usage_cost, price_for  # noqa: E402
+from routing.providers import encode_polyline  # noqa: E402
 
 OUT = os.path.join(ROOT, "tests", "data", "route_vectors.json")
 KM_PER_DEG_LAT = 2 * math.pi * 6371.0088 / 360
@@ -48,12 +51,13 @@ def _line(km: int, elevation=None) -> list[list]:
     return pts
 
 
-def _charger_at(points, km, name, kw, offset_km=1.0):
+def _charger_at(points, km, name, kw, offset_km=1.0, price=None, fee=0.0):
     lat, lon = points[km][0], points[km][1]
     km_per_deg_lon = KM_PER_DEG_LAT * math.cos(math.radians(lat))
     return {"name": name, "lat": lat,
             "lon": round(lon + offset_km / km_per_deg_lon, 6),
-            "power_kw": kw, "operator": "", "address": ""}
+            "power_kw": kw, "operator": "", "address": "",
+            "price_per_kwh": price, "fee": fee}
 
 
 def _hill(k):
@@ -100,6 +104,29 @@ def _cases():
            "points": long, "drive_s": 15000, "start_pct": 100,
            "car": {"consumption_kwh_per_km": 0.24},
            "chargers": every50}
+    priced = []
+    for k in range(40, 400, 40):
+        priced.append(_charger_at(long, k, f"Fast{k}", 150, price=0.79))
+        priced.append(_charger_at(long, k + 3, f"Cheap{k}", 50, price=0.45))
+        priced.append(_charger_at(long, k + 6, f"Fee{k}", 100, price=0.30, fee=6.0))
+    for mode in ("fastest", "balanced", "cheapest"):
+        yield {"name": f"prices: {mode}", "points": long, "drive_s": 15000,
+               "start_pct": 90, "settings": {"mode": mode}, "chargers": priced}
+    yield {"name": "prices: balanced, time worth 40/h", "points": long,
+           "drive_s": 15000, "start_pct": 90,
+           "settings": {"mode": "balanced", "time_value_per_hour": 40},
+           "chargers": priced}
+    yield {"name": "unknown prices use the default", "points": long, "drive_s": 15000,
+           "start_pct": 90,
+           "settings": {"mode": "cheapest", "default_price_per_kwh": 0.5},
+           "chargers": [_charger_at(long, k, f"U{k}", 150) for k in range(60, 400, 60)]
+           + [_charger_at(long, 200, "Dear", 150, price=0.95)]}
+    yield {"name": "start low, charge at the start", "points": _line(200),
+           "drive_s": 7200, "start_pct": 12,
+           "chargers": [_charger_at(_line(200), 0, "Here", 150, offset_km=0.5),
+                        _charger_at(_line(200), 120, "Later", 150)]}
+    yield {"name": "start below the reserve, nothing near", "points": _line(100),
+           "drive_s": 3600, "start_pct": 5, "chargers": []}
 
 
 def _run(case):
@@ -108,16 +135,13 @@ def _run(case):
         setattr(car, k, v)
     settings = PlanSettings(**(case.get("settings") or {}))
     chargers = [Charger(**c) for c in case["chargers"]]
-
-    def near(lat, lon, radius_km):
-        return [c for c in chargers if haversine_km(lat, lon, c.lat, c.lon) <= radius_km]
-
     plan = plan_trip([tuple(p) for p in case["points"]], case["drive_s"],
-                     case["start_pct"], car, settings, near).as_dict()
+                     case["start_pct"], car, settings, chargers).as_dict()
     return {k: plan[k] for k in ("status", "distance_km", "arrival_pct",
-                                 "unreachable_at_km", "charge_s")} | {
+                                 "unreachable_at_km", "charge_s", "cost")} | {
         "stops": [{k: s[k] for k in ("km", "name", "arrive_pct", "depart_pct",
-                                     "charge_min")} for s in plan["stops"]],
+                                     "charge_min", "kwh", "cost")}
+                  for s in plan["stops"]],
         "profile_points": len(plan["profile"]),
         "profile_last": plan["profile"][-1],
     }
@@ -143,8 +167,38 @@ def build() -> dict:
                            for a, b, kw in ((10, 80, 150), (10, 80, 50),
                                             (5, 100, 350), (79.5, 80, 150),
                                             (80, 80, 150), (12.3, 47.9, 75))],
+        "leave_levels": [
+            [r, t, leave_levels(PlanSettings(reserve_pct=r, charge_to_pct=t))]
+            for r, t in ((10, 80), (20, 62), (0, 100), (50, 55))],
+        "usage_cost": [[text, *(parse_usage_cost(text) or (None, None))]
+                       for text in USAGE_COST_TEXTS],
+        "price_for": [[op, text, *price_for(op, text, own_prices(OWN), 0.79)]
+                      for op, text in (("IONITY GmbH", "£0.69/kWh"),
+                                       ("InstaVolt Ltd", "£0.85/kWh"),
+                                       ("Shell Recharge", ""),
+                                       ("Lidl", "Free to use"),
+                                       ("Tesla (including non-tesla)", "£0.60/kWh"))],
+        "own_prices": [OWN, own_prices(OWN)],
+        "polyline": [[list(p) for p in POLYLINE_EXAMPLE],
+                     encode_polyline(POLYLINE_EXAMPLE)],
         "cases": cases,
     }
+
+
+# Price texts as Open Charge Map lists them (UK rapid chargers, 2026), and
+# the awkward ones: pence, fees, DC/AC splits, other currencies, nonsense.
+USAGE_COST_TEXTS = (
+    "£0.79/kWh", "£0.79/kWh; other tariffs available", "DC: £0.79/kWh",
+    "DC: £0.79/kWh,AC: £0.49/kWh",
+    "DC (contactless): £0.85/kWh, DC (GRIDSERVE app): £0.79/kWh, AC: £0.49/kWh",
+    "£0.20/kWh; min £1.50", "£0.30/kWh;min £1.50",
+    "Rapid £1.00 fee then £0.30p per kWh AC socket 50p fee then 30p per kWh",
+    "£1.00 + £0.30/kWh", "29p/kWh", "0.69 GBP per kWh", "50p connection fee, 45p/kWh",
+    "75p", "Free", "Free to use", "€0.59/kWh", "£12/kWh", "Pay at location", "",
+)
+OWN = "Ionity = 0.39\nTesla=£0.55\nnonsense\nCheap = 9"
+# Google's worked example for the encoded-polyline format.
+POLYLINE_EXAMPLE = ((38.5, -120.2), (40.7, -120.95), (43.252, -126.453))
 
 
 def render(data: dict) -> str:

@@ -36,6 +36,10 @@
 #   ors_api_key: "paste-the-key-here"
 #   ocm_api_key: "paste-the-key-here"
 #   countries: "GB"                   # place search only here ("GB,FR" for both)
+#   mode: cheapest                    # fastest | balanced | cheapest
+#   prices:                           # what you pay per kWh, by network
+#     Ionity: 0.39
+#     Tesla: 0.55
 #   consumption_kwh_per_100km: 18.5   # override the measured/default figure
 
 # database:

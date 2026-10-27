@@ -36,9 +36,13 @@
     <label>Arrive with at least %
       <input name="reserve" type="number" min="0" max="50" step="1"
              value="{{ form.reserve | round | int }}"></label>
-    <label>Charge to %
+    <label>Charge to at most %
       <input name="charge_to" type="number" min="20" max="100" step="1"
              value="{{ form.charge_to | round | int }}"></label>
+    <label>Optimise for
+      <select name="mode">
+        {% for m in modes %}<option value="{{ m }}"{% if m == form.mode %} selected{% endif %}>{{ {'fastest': 'Fastest', 'balanced': 'Balanced (time £' ~ (time_value | round | int) ~ '/h)', 'cheapest': 'Cheapest'}[m] }}</option>{% endfor %}
+      </select></label>
     <button type="submit">Plan</button>
   </div>
   {% if car %}
@@ -66,6 +70,9 @@
     {% set total_min = ((pl.drive_s + pl.charge_s) / 60) | round | int %}
     <div class="big">{{ total_min // 60 }} h {{ '%02d' | format(total_min % 60) }}</div>
     <div class="note">{{ (pl.drive_s / 60) | round | int }} min driving{% if pl.charge_s %} + {{ (pl.charge_s / 60) | round | int }} min charging{% endif %}</div></div>
+  <div class="card"><h3>Charging cost</h3>
+    <div class="big">£{{ '%.2f' | format(pl.cost) }}</div>
+    <div class="note">{{ {'fastest': 'fastest', 'balanced': 'balanced', 'cheapest': 'cheapest'}[pl.mode] }} plan{% if pl.stops %}; {{ pl.stops | sum(attribute='kwh') | round(1) }} kWh added{% endif %}</div></div>
   <div class="card"><h3>Start charge</h3>
     <div class="big">{{ pl.start_pct }} %</div>
     <div class="note">reserve kept: {{ form.reserve | round | int }} %</div></div>
@@ -73,8 +80,8 @@
 
 {% if pl.status == 'unreachable' %}
 <div class="err">The charge would fall below the reserve at about {{ pl.unreachable_at_km | round | int }} km
-  and no charger of at least {{ min_charger_kw | round | int }} kW within 5 km of the route was
-  found in the stretch before it. Start with more charge, lower the reserve, or plan via a town with chargers.</div>
+  and no charger of at least {{ min_charger_kw | round | int }} kW within 5 km of the route
+  gets past it. Start with more charge, lower the reserve, or plan via a town with chargers.</div>
 {% endif %}
 {% if alternatives %}
 <p class="chart-note">Destination taken as <strong>{{ destination.label }}</strong>. Other matches:
@@ -103,7 +110,7 @@
 {% if pl.stops %}
 <h3 class="section-h">Charging stops</h3>
 <table class="route-stops">
-  <tr><th>#</th><th>At</th><th>Charger</th><th>Power</th><th>Arrive</th><th>Leave</th><th>Charging</th></tr>
+  <tr><th>#</th><th>At</th><th>Charger</th><th>Power</th><th>Arrive</th><th>Leave</th><th>Charging</th><th>Price</th><th>Cost</th></tr>
   {% for s in pl.stops %}
   <tr><td>{{ loop.index }}</td><td>{{ s.km | round | int }} km</td>
     <td><strong>{{ s.name }}</strong>{% if s.operator %} · {{ s.operator }}{% endif %}
@@ -111,10 +118,15 @@
       <br><a href="https://www.openstreetmap.org/?mlat={{ s.lat }}&amp;mlon={{ s.lon }}#map=17/{{ s.lat }}/{{ s.lon }}"
              target="_blank" rel="noopener noreferrer">map</a></td>
     <td>{{ s.power_kw | round | int }} kW</td><td>{{ s.arrive_pct }} %</td>
-    <td>{{ s.depart_pct }} %</td><td>{{ s.charge_min }} min</td></tr>
+    <td>{{ s.depart_pct }} %</td><td>{{ s.charge_min }} min</td>
+    <td>£{{ '%.2f' | format(s.price_per_kwh) }}/kWh{% if s.fee %} + £{{ '%.2f' | format(s.fee) }}{% endif %}
+      <br><span class="note">{{ s.price_source }}</span></td>
+    <td>£{{ '%.2f' | format(s.cost) }}<br><span class="note">{{ s.kwh }} kWh</span></td></tr>
   {% endfor %}
 </table>
-<p class="chart-note">Charger data: Open Charge Map (community-maintained; check availability before relying on a stop).</p>
+<p class="chart-note">Charger data and listed prices: Open Charge Map (community-maintained; check
+  availability and the price before relying on a stop).{% if not own_prices %} Set what you actually pay
+  per network under <code>routing.prices</code> in <code>config.local.yaml</code> and it is used instead.{% endif %}</p>
 {% endif %}
 
 <h3 class="section-h">Assumptions</h3>

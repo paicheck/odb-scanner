@@ -22,6 +22,11 @@ ORS_BASE = "https://api.openrouteservice.org"
 OCM_BASE = "https://api.openchargemap.io/v3/poi/"
 TIMEOUT_S = 20.0
 CCS2 = 33            # OpenChargeMap ConnectionTypeID: CCS (Type 2)
+OCM_MAX_RESULTS = 500     # chargers along one route
+POLYLINE_MAX_POINTS = 300  # route points sent to OCM (URL length)
+# OCM UsageTypeID: 2 private (restricted), 3 privately owned (notice
+# required), 6 private (staff, visitors or customers) -- not for a passing car.
+PRIVATE_USAGE = {2, 3, 6}
 
 
 class RoutingError(RuntimeError):
@@ -128,7 +133,7 @@ class OpenRouteService:
 
 
 class OpenChargeMap:
-    """Fast CCS chargers near a point; results cached per rounded location."""
+    """Fast CCS chargers along a route, in one request (OCM's polyline search)."""
 
     def __init__(self, api_key: str, min_kw: float = 50.0):
         if not api_key:
@@ -138,37 +143,64 @@ class OpenChargeMap:
                 "routing.ocm_api_key in config.local.yaml.")
         self.key = api_key
         self.min_kw = min_kw
-        self._cache: dict[tuple, list[Charger]] = {}
 
-    def near(self, lat: float, lon: float, radius_km: float) -> list[Charger]:
-        cache_key = (round(lat, 2), round(lon, 2), radius_km)
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-        params = {"output": "json", "latitude": lat, "longitude": lon,
-                  "distance": radius_km, "distanceunit": "KM", "maxresults": 25,
-                  "connectiontypeid": CCS2, "minpowerkw": self.min_kw,
-                  # Not compact: compact drops OperatorInfo, which the stop
-                  # list shows (who runs the charger matters for paying).
+    def along(self, points: list[tuple], radius_km: float) -> list[Charger]:
+        """Every fast CCS charger within radius_km of the route, with its
+        listed price text (Charger.usage_cost) for routing.prices to read."""
+        params = {"output": "json", "polyline": encode_polyline(thin_line(points)),
+                  "distance": radius_km, "distanceunit": "KM",
+                  "maxresults": OCM_MAX_RESULTS, "connectiontypeid": CCS2,
+                  "minpowerkw": self.min_kw,
+                  # Not compact: compact drops OperatorInfo, which prices are
+                  # matched on and the stop list shows.
                   "verbose": "false", "key": self.key}
         data = _get_json("GET", OCM_BASE, params=params,
                          headers={"X-API-Key": self.key})
-        out = [c for c in map(_charger, data if isinstance(data, list) else []) if c]
-        self._cache[cache_key] = out
-        return out
+        return [c for c in map(_charger, data if isinstance(data, list) else []) if c]
+
+
+def thin_line(points: list[tuple], limit: int = POLYLINE_MAX_POINTS) -> list[tuple]:
+    """Every n-th point and the last, so the polyline fits in a URL."""
+    step = max(1, -(-len(points) // limit))
+    out = [p for p in points[::step]]
+    if out[-1] is not points[-1]:
+        out.append(points[-1])
+    return out
+
+
+def encode_polyline(points: list[tuple]) -> str:
+    """Google's encoded-polyline format, 5 decimals: what OCM's polyline takes."""
+    out, plat, plon = [], 0, 0
+    for p in points:
+        lat, lon = round(p[0] * 1e5), round(p[1] * 1e5)
+        for v in (lat - plat, lon - plon):
+            v = ~(v << 1) if v < 0 else v << 1
+            while v >= 0x20:
+                out.append(chr((0x20 | (v & 0x1F)) + 63))
+                v >>= 5
+            out.append(chr(v + 63))
+        plat, plon = lat, lon
+    return "".join(out)
 
 
 def _charger(poi: dict) -> Charger | None:
+    """A Charger this car can use, or None: no CCS, Tesla-only, private, or
+    marked not operational (planned, removed, broken)."""
     try:
+        op = (poi.get("OperatorInfo") or {}).get("Title") or ""
+        if "tesla-only" in op.lower() or poi.get("UsageTypeID") in PRIVATE_USAGE:
+            return None
+        if (poi.get("StatusType") or {}).get("IsOperational") is False:
+            return None
         addr = poi.get("AddressInfo") or {}
         powers = [float(c.get("PowerKW") or 0) for c in poi.get("Connections") or []
                   if c.get("ConnectionTypeID") == CCS2]
         if not powers:
             return None
-        op = (poi.get("OperatorInfo") or {}).get("Title") or ""
         street = ", ".join(x for x in (addr.get("AddressLine1"), addr.get("Town")) if x)
         return Charger(name=addr.get("Title") or "Charger",
                        lat=float(addr["Latitude"]), lon=float(addr["Longitude"]),
                        power_kw=max(powers), operator=op,
-                       address=street)
+                       address=street, usage_cost=str(poi.get("UsageCost") or ""))
     except (KeyError, TypeError, ValueError):
         return None

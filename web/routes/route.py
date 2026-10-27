@@ -34,6 +34,15 @@ def _pick(*values):
     return next(v for v in values if v is not None)
 
 
+def _cfg_num(cfg, key, default, lo, hi):
+    """A bounded number from config; the default when absent or unusable."""
+    try:
+        v = float(cfg.get(key, default))
+    except (TypeError, ValueError):
+        return default
+    return v if lo <= v <= hi else default
+
+
 def register(app, ctx) -> None:
     cfg = ctx.cfg
     map_tiles = ctx.map_tiles
@@ -44,9 +53,9 @@ def register(app, ctx) -> None:
     @app.get("/route", response_class=HTMLResponse)
     def route_page(request: Request):
         from analysis.position import positions
-        from routing import providers
+        from routing import prices, providers
         from routing.car import DEFAULT_CONSUMPTION, DEFAULT_USABLE_KWH, car_energy
-        from routing.planner import CarModel, PlanSettings, plan_trip
+        from routing.planner import MODES, CarModel, PlanSettings, plan_trip
 
         p = request.query_params
         _, vid = vehicle_and_id()
@@ -67,11 +76,17 @@ def register(app, ctx) -> None:
                              float(cfg.get("routing.reserve_pct", 10))),
             "charge_to": _pick(_num(p, "charge_to", 20, 100),
                                float(cfg.get("routing.charge_to_pct", 80))),
+            "mode": next(m for m in (p.get("mode"), cfg.get("routing.mode"), "balanced")
+                         if m in MODES),
         }
         min_kw = float(cfg.get("routing.min_charger_kw", 50))
+        own = prices.own_prices(cfg.get("routing.prices", {}) or {})
+        default_price = _cfg_num(cfg, "routing.default_price_per_kwh", 0.79, 0.05, 2.0)
+        time_value = _cfg_num(cfg, "routing.time_value_per_hour", 15.0, 0.0, 500.0)
         context = dict(car=car, fix=fix, form=form, plan=None, error=None,
                        origin=None, destination=None, alternatives=[],
-                       min_charger_kw=min_kw, map_tiles=map_tiles,
+                       min_charger_kw=min_kw, map_tiles=map_tiles, modes=MODES,
+                       time_value=time_value, own_prices=own,
                        keys_missing=[n for n, k in (("OpenRouteService", ors_key),
                                                     ("OpenChargeMap", ocm_key)) if not k])
         if not form["to"]:
@@ -102,12 +117,18 @@ def register(app, ctx) -> None:
 
             settings = PlanSettings(reserve_pct=form["reserve"],
                                     charge_to_pct=form["charge_to"],
-                                    min_charger_kw=min_kw)
+                                    min_charger_kw=min_kw, mode=form["mode"],
+                                    time_value_per_hour=time_value,
+                                    default_price_per_kwh=default_price)
             model = CarModel(
                 usable_kwh=car["usable_kwh"] if car else DEFAULT_USABLE_KWH,
                 consumption_kwh_per_km=form["consumption"] / 100.0)
+            chargers = ocm.along(route.points, settings.search_radius_km)
+            for c in chargers:
+                c.price_per_kwh, c.fee, c.price_source = prices.price_for(
+                    c.operator, c.usage_cost, own, default_price)
             plan = plan_trip(route.points, route.duration_s, form["start_pct"],
-                             model, settings, ocm.near)
+                             model, settings, chargers)
             step = max(1, -(-len(route.points) // ROUTE_LINE_MAX))
             line = [[pt[0], pt[1]] for pt in route.points[::step]]
             if line[-1] != list(route.points[-1][:2]):
