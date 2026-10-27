@@ -41,12 +41,9 @@ internal suspend fun runContinuousCollection(
 
         val collector = Collector(spec, profile, protocol, guard, repository, 1L)
         collector.setSilentRetireThreshold(3)
-        val vin = collector.identifyVehicle()
+        val vin = awaitVehicle(collector, pollIntervalMs.coerceAtLeast(10_000L), onStatus)
         onVehicleId(collector.vehicleId)
-        onStatus(
-            if (vin != null) "Vehicle identified: $vin" else
-                "VIN not readable; using the stored vehicle",
-        )
+        onStatus("Vehicle identified: $vin")
         collector.loadState()
         val ecus = collector.discover()
         onStatus("ECU discovery: $ecus")
@@ -75,5 +72,29 @@ internal suspend fun runContinuousCollection(
         }
     } finally {
         port.close()
+    }
+}
+
+/**
+ * Read the VIN until the car answers; nothing is collected before that.
+ *
+ * Collection used to go ahead under the fallback vehicle id 1 when the VIN
+ * could not be read -- the usual case for a car phone booting with the
+ * ignition off. Those rows (and DID retirements and sessions) then belonged to
+ * whichever car owns row 1, or, on an empty database, to whichever VIN was read
+ * first. Waiting costs nothing: an asleep car has nothing to record anyway.
+ */
+internal suspend fun awaitVehicle(
+    collector: Collector,
+    retryDelayMs: Long,
+    onStatus: (String) -> Unit,
+): String {
+    while (true) {
+        collector.identifyVehicle()?.let { return it }
+        onStatus(
+            "VIN not readable yet (car asleep or out of reach); nothing is " +
+                "recorded until the vehicle is identified. Retrying.",
+        )
+        delay(retryDelayMs)
     }
 }

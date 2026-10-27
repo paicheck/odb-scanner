@@ -261,6 +261,25 @@ class CollectorTest {
     }
 
     @Test
+    fun `collection waits for the VIN instead of using vehicle 1`() = runBlocking {
+        // A car phone booting with the ignition off cannot read the VIN; the
+        // runner used to collect anyway under fallback vehicle id 1.
+        val answers = mutableMapOf("22F802" to listOf("NO DATA"))
+        val port = ReadingPort(answers)
+        val c = collector(listOf(vinMeasurement()), port)
+        val waits = mutableListOf<String>()
+        var reads = 0
+        val result = com.odbscanner.service.awaitVehicle(c, 0L) { msg ->
+            waits.add(msg)
+            reads++
+            if (reads == 2) answers["22F802"] = multi("62F802" + asciiHex(vin))
+        }
+        assertEquals(vin, result)
+        assertEquals(2, waits.size)
+        assertTrue(waits.all { "nothing is recorded" in it })
+    }
+
+    @Test
     fun `identifyVehicle decodes the VIN and rejects a malformed one`() = runBlocking {
         val good = ReadingPort(
             mapOf("22F802" to multi("62F802" + asciiHex(vin))),
