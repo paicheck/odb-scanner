@@ -190,3 +190,18 @@ def test_seed_command_refuses_the_cars_database(tmp_path, monkeypatch, capsys):
     assert cli.cmd_seed(Config(data)) == 2
     assert "refusing" in capsys.readouterr().err
     assert not (tmp_path / "car.db").exists(), "seeded the car's database anyway"
+
+
+def test_absolute_and_relative_paths_to_the_same_file_are_caught(tmp_path,
+                                                                monkeypatch):
+    # The car's database configured absolutely and the simulator's relatively:
+    # different strings, same file. Comparing strings let it through.
+    from config import ConfigError, load_config
+    monkeypatch.chdir(tmp_path)
+    car = (tmp_path / "data" / "car.db").resolve()
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        f"database:\n  path: '{car.as_posix()}'\n"
+        "simulation:\n  db_path: data/car.db\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_config(cfg_file, local_path=tmp_path / "none.local.yaml")

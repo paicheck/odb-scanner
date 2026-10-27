@@ -152,6 +152,13 @@ _REQUIRED_POSITIVE = (
 )
 
 
+def _resolved(path) -> Path:
+    try:
+        return Path(str(path)).resolve()
+    except OSError:
+        return Path(str(path))
+
+
 def _validate(data: dict) -> None:
     cfg = Config(data)
     for key in _REQUIRED_POSITIVE:
@@ -187,7 +194,10 @@ def _validate(data: dict) -> None:
         other = cfg.get(key)
         if not other or not cfg.get("database.path"):
             continue
-        if Path(str(other)) == Path(str(cfg.get("database.path"))):
+        # Resolved, as main.py cmd_seed does: an absolute database.path and a
+        # relative simulation.db_path naming the same file compared unequal as
+        # strings and passed.
+        if _resolved(other) == _resolved(cfg.get("database.path")):
             raise ConfigError(
                 f"{key} and database.path are the same file ({other}). The "
                 f"{label} writes synthetic data; pointing it at the car's "

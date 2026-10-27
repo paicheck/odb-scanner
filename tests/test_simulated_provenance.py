@@ -106,6 +106,7 @@ def test_a_full_simulator_run_is_tagged_simulated(tmp_path):
         config = _tcp_config()
         config._data["adapter"]["tcp_port"] = port
         config._data["collector"]["slow_poll_interval"] = 3600.0
+        config._data.setdefault("simulation", {})["db_path"] = repo.path
         col = Collector(config, repo)
         try:
             col.open_and_identify()
@@ -171,3 +172,40 @@ def test_the_cloud_uploader_never_sends_a_simulated_row(repo):
 
     rows = pending_rows(repo, 0, 100)
     assert [row["provenance"] for row in rows] == ["reported", "reported"]
+
+
+def test_a_simulator_run_into_another_database_is_refused(tmp_path):
+    """Labelling is not separation: refuse before anything is written.
+
+    `main.py collect` pointed at the simulator wrote a new vehicle (the demo
+    VIN) into the car's database, and first_vehicle() then showed the
+    simulated car on the dashboard; snapshots, sessions and DTCs carry no
+    provenance column to tell them apart.
+    """
+    import socket
+
+    import pytest
+
+    from collector import Collector, SimulatorIntoCarDatabaseError
+    from database.repository import Repository
+    from simulator.vehicle import SimServer
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = SimServer("127.0.0.1", port, strict=True)
+    server.start()
+    repo = Repository(str(tmp_path / "car.db"))
+    try:
+        config = _tcp_config()
+        config._data["adapter"]["tcp_port"] = port
+        config._data.setdefault("simulation", {})["db_path"] = str(tmp_path / "sim.db")
+        col = Collector(config, repo)
+        with pytest.raises(SimulatorIntoCarDatabaseError):
+            col.open_and_identify()
+        for table in ("vehicles", "measurements", "diagnostic_events"):
+            assert repo.conn.execute(
+                f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
+    finally:
+        repo.close()
+        server.stop()

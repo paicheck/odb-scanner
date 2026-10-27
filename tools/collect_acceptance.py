@@ -406,6 +406,9 @@ def sim_config(tcp_port: int, db_path: str) -> Config:
     with open(DEFAULT_PATH, encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
     data.setdefault("database", {})["path"] = db_path
+    # Declared as the simulator's database: the collector refuses to write
+    # simulator output anywhere else.
+    data.setdefault("simulation", {})["db_path"] = db_path
     adapter = data.setdefault("adapter", {})
     adapter["type"] = "elm327_tcp"
     adapter["tcp_host"] = "127.0.0.1"

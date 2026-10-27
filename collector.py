@@ -44,6 +44,18 @@ def is_simulator(description: str) -> bool:
     return any(marker in low for marker in SIMULATOR_MARKERS)
 
 
+class SimulatorIntoCarDatabaseError(RuntimeError):
+    """The adapter is the simulator but the database is not the simulator's."""
+
+
+def _same_file(a, b) -> bool:
+    from pathlib import Path
+    try:
+        return Path(str(a)).resolve() == Path(str(b)).resolve()
+    except OSError:
+        return str(a) == str(b)
+
+
 # standard OBD-II PIDs to poll on BEVs (0x42 = control module voltage ~12V)
 OBD_PIDS = (0x00, 0x0D, 0x42)
 
@@ -229,6 +241,23 @@ class Collector:
     # -- phase 1: connect & identify -----------------------------------------
     def open_and_identify(self) -> str:
         self.conn.open()
+        # Decide what this adapter is BEFORE anything is written. A simulator
+        # run used to be detected only after ensure_vehicle() had created its
+        # vehicle row in whatever database this was -- and the car's database
+        # then showed the simulated car (first_vehicle() picks the newest), with
+        # battery snapshots, sessions and DTCs that carry no provenance column.
+        # Labelling measurements 'simulated' is not separation; refusing is.
+        description = self.conn.t.description()
+        self.simulated = is_simulator(description)
+        if self.simulated and not _same_file(
+                self.repo.path, self.cfg.simulator_db_path):
+            self.close()
+            raise SimulatorIntoCarDatabaseError(
+                f"The adapter is the odb_scanner simulator ({description}), but "
+                f"the database is {self.repo.path}, not simulation.db_path "
+                f"({self.cfg.simulator_db_path}). Refusing to write simulated "
+                "data there. Start it with tools/start_scanner.py --sim, or set "
+                "ODB_DB_PATH to the simulator database.")
         vin = self.conn.read_vin()
         self.vin = vin
         year = obd2.decode_vin_year(vin)
@@ -239,8 +268,6 @@ class Collector:
             variant=self.cfg.get("vehicle.variant", ""),
             year=year,
         )
-        description = self.conn.t.description()
-        self.simulated = is_simulator(description)
         self.repo.add_event(self.vehicle_id, utcnow(), "adapter",
                             f"Connected via {description}; "
                             f"VIN read = {vin}")
@@ -249,10 +276,9 @@ class Collector:
         self._ever_succeeded = self.repo.ever_succeeded_keys(self.vehicle_id)
         if self.simulated:
             log.warning(
-                "Adapter identifies as the simulator (%s): this run writes "
-                "provenance='simulated' and is never uploaded to the cloud. "
-                "Simulator output belongs in its own database "
-                "(simulation.db_path), not the car's.", description)
+                "Adapter identifies as the simulator (%s): writing to the "
+                "simulator database with provenance='simulated'; never "
+                "uploaded to the cloud.", description)
         log.info("Identified vehicle VIN=%s year=%s unsupported_dids=%d "
                  "ever_succeeded=%d", vin, year, len(self._unsupported),
                  len(self._ever_succeeded))
