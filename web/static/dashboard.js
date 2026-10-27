@@ -1205,17 +1205,7 @@
       return;
     }
     var map = L.map(el, { scrollWheelZoom: false, attributionControl: true });
-    if (data.tiles === "osm") {
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        // The page sends no Referer (it is policy: the URL can carry the
-        // token). OSM's tile policy wants one from web pages; the origin
-        // alone carries no path and no token.
-        referrerPolicy: "origin",
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" ' +
-          'target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
-      }).addTo(map);
-    }
+    if (data.tiles === "osm") osmLayer().addTo(map);
     if (!data.latest) {
       // No fix yet: the configured default view and no marker -- the card's
       // overlay says why. A guessed dot would be worse than an empty map.
@@ -1245,6 +1235,96 @@
     }
   }
 
+  function osmLayer() {
+    return L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      // The page sends no Referer (it is policy: the URL can carry the
+      // token). OSM's tile policy wants one from web pages; the origin
+      // alone carries no path and no token.
+      referrerPolicy: "origin",
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" ' +
+        'target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
+    });
+  }
+
+  /** A popup body built from text nodes: charger names and addresses come
+   *  from Open Charge Map and geocoder labels from OpenRouteService, so they
+   *  never go through innerHTML. */
+  function textPopup(lines) {
+    var div = document.createElement("div");
+    lines.forEach(function (t, i) {
+      if (i) div.appendChild(document.createElement("br"));
+      div.appendChild(document.createTextNode(String(t)));
+    });
+    return div;
+  }
+
+  /** Route planner page: the route line with start, destination and numbered
+   *  charging stops on the map, and state of charge against distance. */
+  function initRoute() {
+    var data = readJSON("route-data");
+    if (!data) return;
+    var el = document.getElementById("route-map");
+    if (el && window.L && data.line && data.line.length) {
+      var map = L.map(el, { scrollWheelZoom: false, zoomSnap: 0.25 });
+      if (data.tiles === "osm") osmLayer().addTo(map);
+      var line = L.polyline(data.line, { color: COLORS[0], weight: 4, opacity: 0.85 }).addTo(map);
+      [[data.origin, "Start"], [data.destination, "Destination"]].forEach(function (p) {
+        L.circleMarker([p[0].lat, p[0].lon], {
+          radius: 7, color: "#ffffff", weight: 2, fillColor: INK_2, fillOpacity: 1,
+        }).bindPopup(textPopup([p[1], p[0].label])).addTo(map);
+      });
+      (data.stops || []).forEach(function (s, k) {
+        L.marker([s.lat, s.lon], {
+          icon: L.divIcon({ className: "route-stop-icon", html: String(k + 1),
+                            iconSize: [22, 22] }),
+          title: "Stop " + (k + 1) + ": " + s.name,
+        }).bindPopup(textPopup([(k + 1) + ". " + s.name,
+          Math.round(s.power_kw) + " kW · " + s.arrive_pct + " % → " + s.depart_pct +
+          " % · " + s.charge_min + " min"])).addTo(map);
+      });
+      map.fitBounds(line.getBounds(), { padding: [24, 24] });
+    } else if (el) {
+      el.textContent = "Map library failed to load.";
+      el.classList.add("chart-empty", "show");
+    }
+
+    var canvas = document.getElementById("route-soc");
+    if (!canvas || !window.Chart || !data.profile || !data.profile.length) return;
+    var pts = data.profile.map(function (p) { return { x: p[0], y: p[1] }; });
+    var endKm = pts[pts.length - 1].x;
+    new Chart(canvas, {
+      type: "line",
+      data: { datasets: [
+        { label: "State of charge", data: pts, borderColor: COLORS[0],
+          backgroundColor: COLORS[0], borderWidth: 2, pointRadius: 0, tension: 0 },
+        { label: "Reserve (" + data.reserve + " %)",
+          data: [{ x: 0, y: data.reserve }, { x: endKm, y: data.reserve }],
+          borderColor: INK_3, borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0 },
+      ] },
+      options: {
+        maintainAspectRatio: false, animation: false, parsing: false,
+        interaction: { mode: "nearest", axis: "x", intersect: false },
+        plugins: {
+          legend: { position: "top", align: "end" },
+          tooltip: { callbacks: {
+            title: function (items) { return fmtFixed(items[0].parsed.x, 0) + " km"; },
+            label: function (item) {
+              return item.dataset.label + ": " + fmtFixed(item.parsed.y, 1) + " %";
+            },
+          } },
+        },
+        scales: {
+          x: { type: "linear", min: 0, max: endKm, grid: { color: GRID },
+               ticks: { callback: function (v) { return Math.round(v); } },
+               title: { display: true, text: "Distance (km)" } },
+          y: { min: 0, max: 100, grid: { color: GRID },
+               title: { display: true, text: "State of charge (%)" } },
+        },
+      },
+    });
+  }
+
   function boot() {
     if (window.Chart) {
       Chart.defaults.font.family = "'Segoe UI', Arial, sans-serif";
@@ -1256,6 +1336,7 @@
     initPanels();
     initProgress();
     initMap();
+    initRoute();
   }
 
   if (document.readyState === "loading") {

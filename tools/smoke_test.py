@@ -218,7 +218,7 @@ def run_web_checks(cfg: Config) -> None:
         # Host names (DNS-rebinding guard), and TestClient's default is "testserver".
         with TestClient(create_app(cfg, bind_host="127.0.0.1"),
                         base_url="http://127.0.0.1:8000") as client:
-            for path in ("/", "/battery", "/charging", "/dtcs", "/ai"):
+            for path in ("/", "/battery", "/charging", "/dtcs", "/ai", "/route"):
                 response = client.get(path)
                 check(f"web {path}", response.status_code == 200,
                       f"HTTP {response.status_code}, {len(response.content)} bytes")

@@ -203,3 +203,16 @@
                max-width: 420px; padding: 10px 14px; border-radius: 8px; text-align: center;
                background: rgba(255, 255, 255, 0.94); color: #0b0b0b; font-size: 13px;
                box-shadow: 0 1px 4px rgba(0, 0, 0, .18); pointer-events: none; }
+
+/* ---- Route planner ------------------------------------------------------ */
+.route-form .rf-row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; margin: 4px 0 8px; }
+.route-form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #52514e; flex: 1 1 260px; }
+.route-form .rf-small label { flex: 0 1 150px; }
+.route-form input { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid #cfccc6; border-radius: 4px; }
+.route-form button { height: 34px; }
+.route-map { height: 420px; }
+.route-stop-icon { background: #eb6834; color: #fff; border: 2px solid #fff; border-radius: 50%;
+                   font: 600 12px/18px 'Segoe UI', Arial, sans-serif; text-align: center;
+                   box-shadow: 0 1px 3px rgba(0, 0, 0, .35); }
+.route-stops .note { font-size: 12px; color: #777; }
+.route-assumptions { font-size: 13px; color: #52514e; margin-top: 4px; }

@@ -143,6 +143,21 @@ web:
   # zoom]. Labelled on the card as a default view, never as the car's location.
   map_default_view: [50.0, 10.0, 5]
 
+routing:
+  # Route planner (dashboard Route page, phone app). Needs two free API keys:
+  # OpenRouteService (roads, elevation, place search) and OpenChargeMap
+  # (chargers). Put them in config.local.yaml, NOT here -- this file is shared.
+  # Or set ODB_ORS_KEY / ODB_OCM_KEY. Planning sends the start, destination
+  # and route to those two services; nothing else leaves the machine.
+  ors_api_key: ""
+  ocm_api_key: ""
+  reserve_pct: 10           # never plan to arrive below this
+  charge_to_pct: 80         # charge to this at each stop
+  min_charger_kw: 50        # ignore slower chargers
+  # Flat-road consumption, kWh/100 km. Empty: measured from this car's own
+  # driving once 50 km is recorded, else 17 (ID.3, mixed driving, mild weather).
+  consumption_kwh_per_100km:
+
 analysis:
   trend_window_days: 30     # battery trend + overview/chart window
   charging_window_days: 90  # charging sessions + DTC correlation window

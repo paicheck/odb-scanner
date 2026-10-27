@@ -29,6 +29,13 @@
 #   # allowed_hosts: ["car-pc.home.arpa"]
 #   map_tiles: off          # no OpenStreetMap tiles: position as coordinates only
 #   map_default_view: [48.2, 16.4, 11]   # map opening view until a fix exists
+#
+# routing:
+#   # Free keys: https://openrouteservice.org/dev/#/signup and
+#   # https://openchargemap.org/site/profile/applications
+#   ors_api_key: "paste-the-key-here"
+#   ocm_api_key: "paste-the-key-here"
+#   consumption_kwh_per_100km: 18.5   # override the measured/default figure
 
 # database:
 #   # If this checkout lives in OneDrive/Dropbox/iCloud, keep the LIVE database

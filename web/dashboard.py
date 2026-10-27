@@ -757,9 +757,11 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         faults,
         investigations,
         overview,
+        route,
     )
 
     ctx = SimpleNamespace(
+        cfg=cfg,
         map_tiles=map_tiles,
         map_default_view=map_default_view,
         _fresh_window=_fresh_window,
@@ -784,7 +786,8 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         trend_days=trend_days,
         vehicle_and_id=vehicle_and_id,
     )
-    for routes in (overview, battery, faults, charging, ai, explore, investigations):
+    for routes in (overview, battery, faults, charging, ai, explore, investigations,
+                   route):
         routes.register(app, ctx)
 
     return app

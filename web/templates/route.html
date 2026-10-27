@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block head %}
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+  <script src="/static/vendor/leaflet/leaflet.js" defer></script>
+{% endblock %}
+{% block content %}
+<h2>Route planner</h2>
+<p class="chart-sub">An electric trip from the car's last recorded position (or any start) to a
+  destination: the charge you arrive with, and where to stop if it is not enough. An estimate from
+  this car's own battery figures; the assumptions are listed under the result.</p>
+
+{% if keys_missing %}
+<div class="warn">Planning needs free API keys for {{ keys_missing | join(' and ') }}. Get them at
+  <a href="https://openrouteservice.org/dev/#/signup" target="_blank" rel="noopener noreferrer">openrouteservice.org</a>
+  and <a href="https://openchargemap.org/site/profile/applications" target="_blank" rel="noopener noreferrer">openchargemap.org</a>,
+  then set <code>routing.ors_api_key</code> and <code>routing.ocm_api_key</code> in
+  <code>config.local.yaml</code> (or <code>ODB_ORS_KEY</code> / <code>ODB_OCM_KEY</code>) and restart the dashboard.
+  Planning sends the start, destination and route to those two services, from this machine.</div>
+{% endif %}
+
+<form class="route-form chart-card" method="get" action="/route">
+  <div class="rf-row">
+    <label>To <input name="to" value="{{ form.to }}" required maxlength="200"
+                     placeholder="Town, postcode or address" autocomplete="off"></label>
+    <label>From <input name="from" value="{{ form.frm }}" maxlength="200"
+                       placeholder="{{ 'Car’s last position' if fix else 'Town, postcode or address' }}"
+                       autocomplete="off"></label>
+  </div>
+  <div class="rf-row rf-small">
+    <label>Start charge %
+      <input name="start_pct" type="number" min="1" max="100" step="0.1"
+             value="{{ form.start_pct }}"></label>
+    <label>Consumption kWh/100 km
+      <input name="consumption" type="number" min="8" max="40" step="0.1"
+             value="{{ form.consumption }}"></label>
+    <label>Arrive with at least %
+      <input name="reserve" type="number" min="0" max="50" step="1"
+             value="{{ form.reserve | round | int }}"></label>
+    <label>Charge to %
+      <input name="charge_to" type="number" min="20" max="100" step="1"
+             value="{{ form.charge_to | round | int }}"></label>
+    <button type="submit">Plan</button>
+  </div>
+  {% if car %}
+  <p class="chart-note">From this car: start {{ car.start_pct }} % ({{ car.start_basis }}{% if car.start_ts %},
+    <span class="age{% if car.start_ts | stale %} age-stale{% endif %}" title="{{ car.start_ts | fmtts }}">{{ car.start_ts | age }}</span>{% endif %});
+    battery {{ car.usable_kwh }} kWh ({{ car.usable_basis }}); consumption {{ car.consumption_kwh_per_100km }} kWh/100 km
+    ({{ car.consumption_basis }}). Change any of them above for this trip.</p>
+  {% endif %}
+</form>
+
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+
+{% if plan %}
+{% set pl = plan %}
+<div class="cards route-summary">
+  <div class="card"><h3>Arrival charge</h3>
+    <div class="big">{% if pl.arrival_pct is not none %}{{ pl.arrival_pct }} %{% else %}—{% endif %}</div>
+    <div class="note">{% if pl.status == 'direct' %}no charging needed
+      {% elif pl.status == 'with_stops' %}after {{ pl.stops | length }} charging stop{{ 's' if pl.stops | length != 1 }}
+      {% else %}not reachable with the chargers found{% endif %}</div></div>
+  <div class="card"><h3>Distance</h3>
+    <div class="big">{{ pl.distance_km | round | int }} km</div>
+    <div class="note">{{ origin.label }} → {{ destination.label }}</div></div>
+  <div class="card"><h3>Journey time</h3>
+    {% set total_min = ((pl.drive_s + pl.charge_s) / 60) | round | int %}
+    <div class="big">{{ total_min // 60 }} h {{ '%02d' | format(total_min % 60) }}</div>
+    <div class="note">{{ (pl.drive_s / 60) | round | int }} min driving{% if pl.charge_s %} + {{ (pl.charge_s / 60) | round | int }} min charging{% endif %}</div></div>
+  <div class="card"><h3>Start charge</h3>
+    <div class="big">{{ pl.start_pct }} %</div>
+    <div class="note">reserve kept: {{ form.reserve | round | int }} %</div></div>
+</div>
+
+{% if pl.status == 'unreachable' %}
+<div class="err">The charge would fall below the reserve at about {{ pl.unreachable_at_km | round | int }} km
+  and no charger of at least {{ min_charger_kw | round | int }} kW within 5 km of the route was
+  found in the stretch before it. Start with more charge, lower the reserve, or plan via a town with chargers.</div>
+{% endif %}
+{% if alternatives %}
+<p class="chart-note">Destination taken as <strong>{{ destination.label }}</strong>. Other matches:
+  {% for a in alternatives %}<a href="?to={{ a.label | urlencode }}&amp;from={{ form.frm | urlencode }}">{{ a.label }}</a>{{ '; ' if not loop.last }}{% endfor %}.</p>
+{% endif %}
+
+<section class="chart-card" aria-labelledby="h-route-map">
+  <h3 id="h-route-map">Route</h3>
+  {% if map_tiles == 'osm' %}
+  <div id="route-map" class="position-map route-map" role="img"
+       aria-label="Map of the route from {{ origin.label }} to {{ destination.label }}{% if pl.stops %} with {{ pl.stops | length }} charging stops{% endif %}"></div>
+  <p class="chart-note">Map tiles come from OpenStreetMap. Numbered markers are the charging stops.</p>
+  {% else %}
+  <div class="chart-empty show">Map tiles are off (<code>web.map_tiles: off</code>).</div>
+  {% endif %}
+</section>
+
+<section class="chart-card" aria-labelledby="h-route-soc">
+  <h3 id="h-route-soc">Charge along the way</h3>
+  <p class="chart-sub">Estimated state of charge (%) against distance (km). Vertical steps are
+    charging stops; the dashed line is the reserve you asked to keep.</p>
+  <div class="chart-wrap"><canvas id="route-soc" role="img"
+    aria-label="State of charge falls from {{ pl.start_pct }} % to {{ pl.arrival_pct if pl.arrival_pct is not none else 'below the reserve' }}{% if pl.arrival_pct is not none %} %{% endif %} over {{ pl.distance_km | round | int }} km"></canvas></div>
+</section>
+
+{% if pl.stops %}
+<h3 class="section-h">Charging stops</h3>
+<table class="route-stops">
+  <tr><th>#</th><th>At</th><th>Charger</th><th>Power</th><th>Arrive</th><th>Leave</th><th>Charging</th></tr>
+  {% for s in pl.stops %}
+  <tr><td>{{ loop.index }}</td><td>{{ s.km | round | int }} km</td>
+    <td><strong>{{ s.name }}</strong>{% if s.operator %} · {{ s.operator }}{% endif %}
+      {% if s.address %}<br><span class="note">{{ s.address }}</span>{% endif %}
+      <br><a href="https://www.openstreetmap.org/?mlat={{ s.lat }}&amp;mlon={{ s.lon }}#map=17/{{ s.lat }}/{{ s.lon }}"
+             target="_blank" rel="noopener noreferrer">map</a></td>
+    <td>{{ s.power_kw | round | int }} kW</td><td>{{ s.arrive_pct }} %</td>
+    <td>{{ s.depart_pct }} %</td><td>{{ s.charge_min }} min</td></tr>
+  {% endfor %}
+</table>
+<p class="chart-note">Charger data: Open Charge Map (community-maintained; check availability before relying on a stop).</p>
+{% endif %}
+
+<h3 class="section-h">Assumptions</h3>
+<ul class="route-assumptions">
+  {% for a in pl.assumptions %}<li>{{ a }}</li>{% endfor %}
+</ul>
+
+<script type="application/json" id="route-data">{{ dict(line=route_line, stops=pl.stops, profile=pl.profile,
+  reserve=form.reserve, tiles=map_tiles,
+  origin=dict(label=origin.label, lat=origin.lat, lon=origin.lon),
+  destination=dict(label=destination.label, lat=destination.lat, lon=destination.lon)) | tojson }}</script>
+{% endif %}
+{% endblock %}
