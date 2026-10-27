@@ -12,7 +12,25 @@ class RoutingException(message: String, cause: Throwable? = null) : Exception(me
 
 data class Place(val label: String, val lat: Double, val lon: Double)
 
-data class Route(val points: List<RoutePoint>, val distanceKm: Double, val durationS: Double)
+data class Route(
+    val points: List<RoutePoint>,
+    val distanceKm: Double,
+    val durationS: Double,
+    val steps: List<RouteStep> = emptyList(),
+)
+
+/**
+ * One turn-by-turn instruction: where on the route it starts (km), the text
+ * ("Keep left onto M6"), the road name and, at a roundabout, the exit number.
+ * What the assistant reads out about junctions ahead.
+ */
+data class RouteStep(
+    val km: Double,
+    val lengthKm: Double,
+    val instruction: String,
+    val road: String,
+    val exitNumber: Int?,
+)
 
 /**
  * OpenRouteService (place search, driving route with elevation) and
@@ -56,7 +74,8 @@ class RouteServices(
                 .put(JSONArray().put(start.second).put(start.first))
                 .put(JSONArray().put(end.second).put(end.first)))
             .put("elevation", true)
-            .put("instructions", false)
+            .put("instructions", true)
+            .put("language", "en")
         val reply = request("POST", "$ORS_BASE/v2/directions/driving-car/geojson",
             body.toString(), mapOf("Authorization" to orsKey))
         return parseRoute(JSONObject(reply))
@@ -73,6 +92,17 @@ class RouteServices(
         val q = "$OCM_BASE?output=json&polyline=${enc(encodePolyline(thinLine(points)))}" +
             "&distance=$radiusKm&distanceunit=KM&maxresults=$OCM_MAX_RESULTS" +
             "&connectiontypeid=$CCS2&minpowerkw=$minChargerKw&verbose=false&key=${enc(ocmKey)}"
+        return parseChargers(JSONArray(request("GET", q, headers = mapOf("X-API-Key" to ocmKey))))
+    }
+
+    /** Fast CCS chargers within [radiusKm] of one point (the assistant's "near me"). */
+    fun chargersNear(lat: Double, lon: Double, radiusKm: Double): List<Charger> {
+        if (ocmKey.isBlank()) throw RoutingException(
+            "No OpenChargeMap key. Get a free key at openchargemap.org and enter " +
+                "it under Route settings.")
+        val q = "$OCM_BASE?output=json&latitude=$lat&longitude=$lon&distance=$radiusKm" +
+            "&distanceunit=KM&maxresults=40&connectiontypeid=$CCS2" +
+            "&minpowerkw=$minChargerKw&verbose=false&key=${enc(ocmKey)}"
         return parseChargers(JSONArray(request("GET", q, headers = mapOf("X-API-Key" to ocmKey))))
     }
 
@@ -200,7 +230,31 @@ class RouteServices(
             }
             if (pts.size < 2) throw RoutingException("OpenRouteService returned an empty route")
             return Route(pts, summary.optDouble("distance", 0.0) / 1000.0,
-                summary.optDouble("duration", 0.0))
+                summary.optDouble("duration", 0.0),
+                parseSteps(feat.optJSONObject("properties"), Planner.cumulativeKm(pts)))
+        }
+
+        /** Turn-by-turn steps (segments[].steps[]), placed by their first point's km. */
+        fun parseSteps(props: JSONObject?, cum: DoubleArray): List<RouteStep> {
+            val segments = props?.optJSONArray("segments") ?: return emptyList()
+            val out = mutableListOf<RouteStep>()
+            for (s in 0 until segments.length()) {
+                val steps = segments.optJSONObject(s)?.optJSONArray("steps") ?: continue
+                for (i in 0 until steps.length()) {
+                    val st = steps.optJSONObject(i) ?: continue
+                    val first = st.optJSONArray("way_points")?.optInt(0, -1) ?: -1
+                    if (first < 0 || first >= cum.size) continue
+                    out.add(RouteStep(
+                        km = cum[first],
+                        lengthKm = st.optDouble("distance", 0.0) / 1000.0,
+                        instruction = str(st, "instruction"),
+                        road = str(st, "name").takeIf { it != "-" } ?: "",
+                        exitNumber = if (st.has("exit_number") && !st.isNull("exit_number"))
+                            st.optInt("exit_number") else null,
+                    ))
+                }
+            }
+            return out
         }
 
         /** Chargers this car can use: CCS, not Tesla-only, not private, not

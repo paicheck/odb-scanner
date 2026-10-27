@@ -228,6 +228,7 @@ private fun CollectorScreen(spec: Spec) {
     var cloudSettings by remember { mutableStateOf(CloudPrefs.load(context)) }
     var showCloudDialog by remember { mutableStateOf(false) }
     var showRouteDialog by remember { mutableStateOf(false) }
+    var showAssistant by remember { mutableStateOf(false) }
     var cloudEnabled by remember { mutableStateOf(false) }
     var cloudUrl by remember { mutableStateOf("") }
     var cloudToken by remember { mutableStateOf("") }
@@ -469,6 +470,10 @@ private fun CollectorScreen(spec: Spec) {
                 onClick = { showRouteDialog = true },
                 modifier = Modifier.weight(1f),
             ) { Text("Route") }
+            Button(
+                onClick = { showAssistant = true },
+                modifier = Modifier.weight(1f),
+            ) { Text("Ask AI", maxLines = 1) }
         }
 
         Row(
@@ -557,6 +562,9 @@ private fun CollectorScreen(spec: Spec) {
         )
     }
 
+    if (showAssistant) {
+        AssistantDialog(onDismiss = { showAssistant = false })
+    }
     if (showRouteDialog) {
         RouteDialog(onDismiss = { showRouteDialog = false })
     }

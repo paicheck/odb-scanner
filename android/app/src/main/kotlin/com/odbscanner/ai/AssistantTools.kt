@@ -1,0 +1,359 @@
+package com.odbscanner.ai
+
+import android.content.Context
+import com.odbscanner.db.AppDatabase
+import com.odbscanner.db.MeasurementEntity
+import com.odbscanner.route.ActiveTrip
+import com.odbscanner.route.PhoneLocation
+import com.odbscanner.route.Prices
+import com.odbscanner.route.Replan
+import com.odbscanner.route.RoutePrefs
+import com.odbscanner.route.RouteServices
+import com.odbscanner.route.RoutingException
+import com.odbscanner.route.TripMonitor
+import com.odbscanner.route.TripPlanner
+import com.odbscanner.route.TripResult
+import com.odbscanner.startTrip
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.time.Duration
+import java.time.Instant
+
+/**
+ * What the assistant can look up or do. Everything reads the phone's own data
+ * -- what the collector stored, the trip watch, the route planner -- and
+ * nothing reaches the car: there is no tool that sends anything to it. The
+ * only actions are planning or re-planning a trip and opening Google Maps.
+ *
+ * Results are small JSON objects, distances in both km and miles. No VIN and
+ * no raw position of the phone are ever in them ([redactVin] runs over every
+ * result as a backstop).
+ */
+class AssistantTools(private val context: Context) : ToolRunner {
+
+    override suspend fun run(call: ToolCall): String = redactVin(try {
+        when (call.name) {
+            "get_battery" -> battery()
+            "get_fault_codes" -> faults()
+            "get_trip" -> trip()
+            "get_directions" -> directions(call.args.optInt("count", 5).coerceIn(1, 10))
+            "find_chargers" -> chargers(call.args.optDouble("radius_km", 10.0).coerceIn(1.0, 50.0),
+                call.args.optDouble("min_kw", 50.0).coerceIn(7.0, 350.0))
+            "plan_trip" -> planTrip(call.args.optString("destination"),
+                call.args.optString("mode").takeIf { it in com.odbscanner.route.MODES })
+            "replan_trip" -> replan()
+            "start_navigation" -> startNavigation()
+            "get_readings" -> readings(call.args.optString("filter"))
+            "get_history" -> history(call.args.optString("key"),
+                call.args.optInt("count", 60).coerceIn(2, 500))
+            else -> err("unknown tool ${call.name}")
+        }
+    } catch (e: RoutingException) {
+        err(e.message ?: "routing failed")
+    } catch (e: Exception) {
+        err("${e.javaClass.simpleName}: ${e.message}")
+    }.toString())
+
+    // -- the car ------------------------------------------------------------------
+    private suspend fun vehicleId(): Long? = withContext(Dispatchers.IO) {
+        AppDatabase.get(context).vehicleDao().getFirst()?.id
+    }
+
+    private suspend fun battery(): JSONObject = withContext(Dispatchers.IO) {
+        val vid = vehicleId() ?: return@withContext err("no readings stored yet")
+        val dao = AppDatabase.get(context).measurementDao()
+        val out = JSONObject()
+        for ((key, label) in BATTERY_KEYS) {
+            val m = dao.latestValue(vid, key) ?: continue
+            out.put(label, reading(m))
+        }
+        // Cell voltages are stored per cell: summarise the newest of each.
+        val cells = dao.latestPerKey(vid).filter { it.key.startsWith("cell_v_") && it.success && it.value != null }
+        if (cells.isNotEmpty()) {
+            val v = cells.map { it.value!! }
+            val unitMv = cells.first().unit.equals("mV", ignoreCase = true)
+            val toMv = if (unitMv) 1.0 else 1000.0
+            out.put("cell_voltages", JSONObject()
+                .put("cells", cells.size)
+                .put("lowest_mv", round1(v.min() * toMv)).put("highest_mv", round1(v.max() * toMv))
+                .put("spread_mv", round1((v.max() - v.min()) * toMv))
+                .put("age", age(cells.maxOf { it.ts })))
+        }
+        if (out.length() == 0) err("no battery readings stored yet") else out
+    }
+
+    private suspend fun faults(): JSONObject = withContext(Dispatchers.IO) {
+        val vid = vehicleId() ?: return@withContext err("no data stored yet")
+        val dtcs = AppDatabase.get(context).dtcDao().getAll(vid)
+        JSONObject().put("count", dtcs.size).put("codes", JSONArray().apply {
+            dtcs.take(15).forEach { d ->
+                put(JSONObject().put("code", d.code).put("status", d.status).put("module", d.ecu)
+                    .put("times_seen", d.occurrenceCount).put("last_seen", age(d.lastSeen)))
+            }
+        }).put("note", "codes as last read by the phone; the app reads but never clears them")
+    }
+
+    private suspend fun readings(filter: String): JSONObject = withContext(Dispatchers.IO) {
+        val vid = vehicleId() ?: return@withContext err("no readings stored yet")
+        val f = filter.trim().lowercase()
+        val rows = AppDatabase.get(context).measurementDao().latestPerKey(vid)
+            .filter { it.success && (it.value != null || !it.textValue.isNullOrBlank()) }
+            .filter { f.isEmpty() || f in it.key.lowercase() }
+            .filterNot { it.key.startsWith("cell_v_") && f.isEmpty() }
+        JSONObject().put("matching", rows.size).put("readings", JSONArray().apply {
+            rows.take(40).forEach { put(JSONObject().put("key", it.key).put("reading", reading(it))) }
+        }).apply { if (rows.size > 40) put("note", "first 40 shown; give a filter for others") }
+    }
+
+    private suspend fun history(key: String, count: Int): JSONObject = withContext(Dispatchers.IO) {
+        if (key.isBlank()) return@withContext err("give a measurement key, e.g. soc_abs")
+        val vid = vehicleId() ?: return@withContext err("no readings stored yet")
+        val rows = AppDatabase.get(context).measurementDao().valueHistory(vid, key, count)
+            .filter { it.success && it.value != null }.sortedBy { it.ts }
+        if (rows.isEmpty()) return@withContext err("no stored values for $key")
+        val v = rows.map { it.value!! }
+        JSONObject().put("key", key).put("unit", rows.first().unit).put("values", rows.size)
+            .put("oldest", JSONObject().put("value", v.first()).put("age", age(rows.first().ts)))
+            .put("newest", JSONObject().put("value", v.last()).put("age", age(rows.last().ts)))
+            .put("min", v.min()).put("max", v.max()).put("average", round2(v.average()))
+    }
+
+    // -- the trip -------------------------------------------------------------------
+    private fun summary(r: TripResult, kmAlong: Double?): JSONObject {
+        val p = r.plan
+        val ahead = p.stops.filter { kmAlong == null || it.km > kmAlong - 1.0 }
+        val out = JSONObject()
+            .put("destination", r.destination.label)
+            .put("mode", p.mode)
+            .put("status", p.status)
+            .put("total", dist(p.distanceKm))
+            .put("arrival_charge_pct", p.arrivalPct?.let { round1(it) } ?: JSONObject.NULL)
+            .put("charging_cost_gbp", round2(p.cost))
+            .put("driving_min", Math.round(p.driveS / 60))
+            .put("charging_min", Math.round(p.chargeS / 60))
+        if (kmAlong != null) out.put("remaining", dist((p.distanceKm - kmAlong).coerceAtLeast(0.0)))
+        p.unreachableAtKm?.let { out.put("charge_runs_out_near", dist(it)) }
+        out.put("stops_ahead", JSONArray().apply {
+            ahead.forEach { s ->
+                put(JSONObject()
+                    .put("charger", s.charger.name)
+                    .put("operator", s.charger.operator)
+                    .put("address", s.charger.address)
+                    .put("from_here", dist(s.km - (kmAlong ?: 0.0)))
+                    .put("arrive_pct", s.arrivePct).put("leave_pct", s.departPct)
+                    .put("charging_min", s.chargeMin).put("power_kw", s.charger.powerKw)
+                    .put("cost_gbp", s.cost).put("price_per_kwh_gbp", s.pricePerKwh)
+                    .put("price_source", s.priceSource)
+                    .put("road_there", roadNear(r, s.km)))
+            }
+        })
+        return out
+    }
+
+    private suspend fun where(r: TripResult): Pair<Double?, Double?> {
+        val here = PhoneLocation.current(context) ?: return null to null
+        val at = Replan.progress(r.line, r.plan.distanceKm, here.latitude, here.longitude)
+        return at.kmAlong to at.offRouteKm
+    }
+
+    private suspend fun trip(): JSONObject {
+        val t: ActiveTrip = TripMonitor.state.value
+            ?: return err("no trip is active; plan one with plan_trip")
+        val (km, off) = where(t.result)
+        return summary(t.result, km).put("watch_status", t.note).put("replans", t.replans)
+            .apply { off?.let { if (it > Replan.OFF_ROUTE_KM) put("off_route", dist(it)) } }
+    }
+
+    private suspend fun directions(count: Int): JSONObject {
+        val t = TripMonitor.state.value ?: return err("no trip is active")
+        val steps = t.result.steps
+        if (steps.isEmpty()) return err("this plan has no turn-by-turn steps")
+        val (km, _) = where(t.result)
+        val from = km ?: 0.0
+        return JSONObject().put("from_here", JSONArray().apply {
+            steps.filter { it.km + it.lengthKm > from }.take(count).forEach { st ->
+                put(JSONObject().put("in", dist((st.km - from).coerceAtLeast(0.0)))
+                    .put("instruction", st.instruction).put("road", st.road)
+                    .apply { st.exitNumber?.let { put("roundabout_exit", it) } })
+            }
+        }).put("note", "Google Maps gives the exact turns; this is the plan's road list")
+    }
+
+    private suspend fun planTrip(destination: String, mode: String?): JSONObject {
+        if (destination.isBlank()) return err("say where to")
+        val dest = TripPlanner.search(context, destination.trim()).firstOrNull()
+            ?: return err("no place found for $destination")
+        val r = TripPlanner.plan(context, dest, null, null, mode)
+        TripMonitor.start(context, r)
+        return summary(r, 0.0).put("next", "planned and being watched; " +
+            "call start_navigation to open Google Maps with the stops")
+    }
+
+    private suspend fun replan(): JSONObject {
+        val t = TripMonitor.replan(context) ?: return err("no trip is active")
+        return summary(t.result, where(t.result).first).put("watch_status", t.note)
+    }
+
+    private suspend fun startNavigation(): JSONObject {
+        val t = TripMonitor.state.value ?: return err("no trip is planned")
+        withContext(Dispatchers.Main) { startTrip(context, t.result) }
+        return JSONObject().put("ok", "Google Maps opened with ${t.result.plan.stops.size} " +
+            "charging stops and the destination")
+    }
+
+    private suspend fun chargers(radiusKm: Double, minKw: Double): JSONObject =
+        withContext(Dispatchers.IO) {
+            val here = PhoneLocation.current(context, maxAgeMs = 10 * 60_000L)
+                ?: return@withContext err("no recent position from the phone")
+            val s = RoutePrefs.load(context)
+            val own = Prices.ownPrices(s.ownPrices)
+            val found = RouteServices(s.orsKey, s.ocmKey, minChargerKw = minKw)
+                .chargersNear(here.latitude, here.longitude, radiusKm)
+                .map { c ->
+                    val (price, fee, source) = Prices.priceFor(c.operator, c.usageCost, own,
+                        s.defaultPricePerKwh)
+                    Triple(c, com.odbscanner.route.Planner.haversineKm(here.latitude,
+                        here.longitude, c.lat, c.lon), Triple(price, fee, source))
+                }
+                .sortedBy { it.second }
+            JSONObject().put("found", found.size).put("chargers", JSONArray().apply {
+                found.take(8).forEach { (c, d, p) ->
+                    put(JSONObject().put("name", c.name).put("operator", c.operator)
+                        .put("address", c.address).put("away", dist(d))
+                        .put("power_kw", c.powerKw).put("price_per_kwh_gbp", p.first)
+                        .put("session_fee_gbp", p.second).put("price_source", p.third))
+                }
+            })
+        }
+
+    // -- helpers ----------------------------------------------------------------------
+    private fun roadNear(r: TripResult, km: Double): String =
+        r.steps.lastOrNull { it.km <= km }?.let { st ->
+            listOf(st.road, st.instruction).firstOrNull { it.isNotBlank() } ?: ""
+        } ?: ""
+
+    companion object {
+        private const val MILES_PER_KM = 0.621371
+
+        val BATTERY_KEYS = listOf(
+            "soc_abs" to "charge_bms_pct",
+            "soc_normal" to "charge_display_pct",
+            "hv_energy_content" to "energy_now",
+            "hv_energy_max" to "energy_when_full",
+            "range_displayed" to "range_shown_by_car",
+            "bat_temp_max" to "battery_temp_max",
+            "bat_temp_min" to "battery_temp_min",
+            "pack_voltage" to "pack_voltage",
+            "aux_12v_voltage" to "battery_12v",
+        )
+
+        fun dist(km: Double): JSONObject = JSONObject()
+            .put("km", round1(km)).put("miles", round1(km * MILES_PER_KM))
+
+        fun round1(v: Double) = Math.round(v * 10.0) / 10.0
+        fun round2(v: Double) = Math.round(v * 100.0) / 100.0
+
+        fun err(message: String): JSONObject = JSONObject().put("error", message)
+
+        /** "12 min ago" from a stored Instant; "unknown" when it cannot be read. */
+        fun age(ts: String?, now: Instant = Instant.now()): String {
+            val t = ts?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: return "unknown"
+            val m = Duration.between(t, now).toMinutes()
+            return when {
+                m < 1 -> "just now"
+                m < 60 -> "$m min ago"
+                m < 48 * 60 -> "${m / 60} h ago"
+                else -> "${m / (24 * 60)} days ago"
+            }
+        }
+
+        fun reading(m: MeasurementEntity): JSONObject {
+            val v = m.value
+            val (value, unit) = when {
+                v == null -> (m.textValue ?: "") to m.unit
+                m.key.startsWith("hv_energy") -> round1(v / 1000.0) to "kWh"
+                else -> round2(v) to m.unit
+            }
+            return JSONObject().put("value", value).put("unit", unit).put("age", age(m.ts))
+        }
+
+        private val VIN = Regex("\\b[A-HJ-NPR-Z0-9]{17}\\b")
+
+        /** Backstop: no VIN-shaped string ever leaves in a tool result. */
+        fun redactVin(text: String): String = VIN.replace(text, "[VIN]")
+
+        /** The tools as the AI sees them: names, what they do, JSON-schema arguments. */
+        val SPECS: List<ToolSpec> = listOf(
+            spec("get_battery", "Latest battery readings: charge (BMS and display), energy now " +
+                "and when full, the car's displayed range, temperatures, pack and 12 V voltage, " +
+                "cell voltage spread. Each with how old it is."),
+            spec("get_fault_codes", "Stored diagnostic trouble codes the phone last read, with " +
+                "module, status and when last seen."),
+            spec("get_trip", "The trip being driven: destination, distance left, arrival charge, " +
+                "cost, and each charging stop ahead with distance from here, charge on arrival " +
+                "and leaving, minutes, price and the road it is on."),
+            spec("get_directions", "The next turn-by-turn steps of the planned route from here: " +
+                "distance, instruction and road -- for junctions and exits ahead.",
+                "count" to JSONObject().put("type", "integer").put("description",
+                    "How many steps, 1-10 (default 5)")),
+            spec("find_chargers", "Fast chargers near the car's current position, nearest first, " +
+                "with power, price per kWh and where the price came from.",
+                "radius_km" to JSONObject().put("type", "number")
+                    .put("description", "Search radius in km (default 10)"),
+                "min_kw" to JSONObject().put("type", "number")
+                    .put("description", "Minimum power in kW (default 50)")),
+            spec("plan_trip", "Plan a trip from here to a destination with charging stops, " +
+                "and start watching it. Does not open navigation.",
+                "destination" to JSONObject().put("type", "string")
+                    .put("description", "Town, postcode or address"),
+                "mode" to JSONObject().put("type", "string")
+                    .put("enum", JSONArray(listOf("fastest", "balanced", "cheapest")))
+                    .put("description", "How to trade price against time (default: the saved choice)"),
+                required = listOf("destination")),
+            spec("replan_trip", "Re-plan the active trip from the current position and the " +
+                "latest charge reading, and return the new plan."),
+            spec("start_navigation", "Open Google Maps with the planned trip: the charging " +
+                "stops, then the destination. Only when the driver asks to navigate."),
+            spec("get_readings", "Latest stored value of every measurement whose key contains " +
+                "the filter (e.g. 'temp', 'soc', 'odometer'), with units and age.",
+                "filter" to JSONObject().put("type", "string")
+                    .put("description", "Part of the measurement key; empty for all")),
+            spec("get_history", "How one measurement changed: oldest and newest value with " +
+                "their age, minimum, maximum and average over the stored values.",
+                "key" to JSONObject().put("type", "string")
+                    .put("description", "Measurement key from get_readings, e.g. soc_abs"),
+                "count" to JSONObject().put("type", "integer")
+                    .put("description", "How many recent values (default 60)"),
+                required = listOf("key")),
+        )
+
+        private fun spec(
+            name: String, description: String, vararg props: Pair<String, JSONObject>,
+            required: List<String> = emptyList(),
+        ) = ToolSpec(name, description, JSONObject()
+            .put("type", "object")
+            .put("properties", JSONObject().apply { props.forEach { (k, v) -> put(k, v) } })
+            .put("required", JSONArray(required)))
+
+        val SYSTEM_PROMPT = """
+            You are the voice assistant in the driver's electric car, a Volkswagen ID.3, inside
+            the ODB Scanner app on their phone. With the tools you can read the car's stored
+            battery readings and fault codes, the trip plan with its charging stops and prices,
+            the route's upcoming roads and junctions, chargers nearby, and every stored
+            measurement and its history. You cannot control the car: everything is read-only,
+            apart from planning or re-planning a trip and opening Google Maps.
+
+            The driver is usually driving and hears your answer read aloud:
+            - Answer in one to three short spoken sentences. No lists, markdown, symbols or emoji.
+            - Lead with the answer. Round numbers sensibly. Say distances in miles and money in
+              pounds (the tools give km and miles).
+            - Say anything safety-relevant first and plainly: charge running low, a serious fault.
+            - Use the tools for every fact about the car, the trip or chargers; never guess a
+              reading. Mention a reading's age when it is over an hour old.
+            - Never ask the driver to read or type anything.
+            - If a tool says the data is not there, say so in a few words.
+        """.trimIndent()
+    }
+}

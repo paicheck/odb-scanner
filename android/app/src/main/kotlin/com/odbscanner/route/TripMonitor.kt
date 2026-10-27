@@ -86,6 +86,13 @@ object TripMonitor {
         _state.value = null
     }
 
+    /** Re-plan now and wait for it: the trip as it stands afterwards (null: none). */
+    suspend fun replan(context: Context): ActiveTrip? {
+        if (_state.value == null) return null
+        runCatching { check(context.applicationContext, force = true) }
+        return _state.value
+    }
+
     /** Re-plan now, from here, on the driver's tap. */
     fun replanNow(context: Context) {
         val app = context.applicationContext

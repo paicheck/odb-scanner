@@ -191,6 +191,7 @@ data class TripResult(
     val car: CarEnergy,
     val consumptionKwhPer100km: Double,
     val line: List<Pair<Double, Double>>,    // the road, thinned, for the map
+    val steps: List<RouteStep> = emptyList(), // turn-by-turn, for the assistant
 )
 
 /**
@@ -233,7 +234,7 @@ object TripPlanner {
             CarModel(usableKwh = car.usableKwh, consumptionKwhPerKm = consumption / 100.0),
             settings, chargers,
         )
-        TripResult(origin, to, plan, car, consumption, MapMath.thinLine(route.points))
+        TripResult(origin, to, plan, car, consumption, MapMath.thinLine(route.points), route.steps)
     }
 
     /** Place search near [near], else near the phone. */

@@ -80,6 +80,9 @@ dependencies {
     ksp("androidx.room:room-compiler:2.6.1")
     // Android Auto screens (car/): driver-safe templates only.
     implementation("androidx.car.app:app:1.4.0")
+    // Assistant: Claude through Anthropic's official SDK (the other AI services
+    // share the OpenAI-style request, sent with HttpURLConnection like the rest).
+    implementation("com.anthropic:anthropic-java:3.2.0")
 
     // JVM unit tests (run with :app:testDebugUnitTest). Elm327ProtocolTest pins
     // the MEB wire form to the same captured truth the Python suite checks, so
