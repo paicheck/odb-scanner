@@ -3,3 +3,6 @@
 # a shortcut that silently does nothing. Without this, git's default text
 # handling would rewrite them to LF on checkout on some platforms.
 *.bat text eol=crlf
+# Vendored third-party files are kept byte-for-byte as downloaded, so their
+# SHA-256 in web/static/vendor/README.md stays checkable on any checkout.
+web/static/vendor/** -text
