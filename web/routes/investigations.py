@@ -54,8 +54,9 @@ def register(app, ctx) -> None:
     def investigations_page(request: Request):
         _, vid = vehicle_and_id()
         rows = [dict(r) for r in repo.investigations(vid)] if vid else []
-        return render("investigations.html", request, investigations=rows,
-                      error=request.query_params.get("error"))
+        # No ?error= parameter: nothing ever redirected with one, so all it
+        # did was let a crafted link print arbitrary text in the error box.
+        return render("investigations.html", request, investigations=rows)
 
     @app.get("/investigations/{investigation_id}", response_class=HTMLResponse)
     def investigation_page(request: Request, investigation_id: int):
