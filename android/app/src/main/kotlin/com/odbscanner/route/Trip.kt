@@ -6,9 +6,13 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import com.odbscanner.db.AppDatabase
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 import java.util.Locale
 
 /** Route settings: the two free API keys and the driver's planning margins. */
@@ -127,9 +131,15 @@ data class CarEnergy(
 
 /** Where the trip starts: the phone's own last known position. */
 object PhoneLocation {
-    fun permitted(context: Context): Boolean =
+    fun permitted(context: Context): Boolean = precise(context) ||
         ContextCompat.checkSelfPermission(context,
             android.Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /** Precise location granted: what following a trip along the road needs. */
+    fun precise(context: Context): Boolean =
+        ContextCompat.checkSelfPermission(context,
+            android.Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
 
     /** Newest last-known fix from any provider; null without permission or fix. */
@@ -140,6 +150,37 @@ object PhoneLocation {
         return lm.getProviders(true)
             .mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }
             .maxByOrNull { it.time }
+    }
+
+    /**
+     * A position no older than [maxAgeMs]: the last-known fix when recent,
+     * else a fresh one asked of the fused (or network) provider, waiting up to
+     * [timeoutMs]. Null when neither is available -- a stale fix is worse than
+     * none for a trip in progress (it reads as "off the route").
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun current(context: Context, maxAgeMs: Long = 3 * 60_000L,
+                        timeoutMs: Long = 15_000L): Location? {
+        if (!permitted(context)) return null
+        fun recent(l: Location?) = l?.takeIf { System.currentTimeMillis() - it.time <= maxAgeMs }
+        recent(lastKnown(context))?.let { return it }
+        val lm = context.getSystemService(LocationManager::class.java) ?: return null
+        val enabled = lm.getProviders(true)
+        val provider = listOf("fused", LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
+            .firstOrNull { it in enabled } ?: return null
+        val fix = withTimeoutOrNull(timeoutMs) {
+            suspendCancellableCoroutine { cont ->
+                val cancel = androidx.core.os.CancellationSignal()
+                cont.invokeOnCancellation { cancel.cancel() }
+                try {
+                    LocationManagerCompat.getCurrentLocation(lm, provider, cancel,
+                        ContextCompat.getMainExecutor(context)) { cont.resume(it) }
+                } catch (e: SecurityException) {
+                    cont.resume(null)
+                }
+            }
+        }
+        return recent(fix)
     }
 }
 
@@ -167,10 +208,11 @@ object TripPlanner {
     ): TripResult = withContext(Dispatchers.IO) {
         val s = RoutePrefs.load(context)
         val car = CarEnergy.load(context)
-        val origin = from ?: PhoneLocation.lastKnown(context)
+        // Approximate location can be ~10 min old by design; fine for a start.
+        val origin = from ?: PhoneLocation.current(context, maxAgeMs = 15 * 60_000L)
             ?.let { Place("Your location", it.latitude, it.longitude) }
             ?: throw RoutingException(
-                "No location for the start: allow location access, or enter a start.")
+                "No recent location for the start: allow location access, or enter a start.")
         val services = RouteServices(s.orsKey, s.ocmKey, countries = s.countries)
         val route = services.route(origin.lat to origin.lon, to.lat to to.lon)
         val consumption = consumptionKwhPer100km ?: s.consumptionKwhPer100km

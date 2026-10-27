@@ -14,12 +14,12 @@
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation" />
 
-    <!-- Classic Bluetooth *discovery* (finding an unpaired ELM327 dongle)
-         requires location on Android 6-11; from Android 12 BLUETOOTH_SCAN
-         replaces it (and neverForLocation above removes the location need). -->
-    <uses-permission
-        android:name="android.permission.ACCESS_FINE_LOCATION"
-        android:maxSdkVersion="30" />
+    <!-- Precise location. Classic Bluetooth *discovery* needs it on Android
+         6-11 (from 12, BLUETOOTH_SCAN + neverForLocation replace it). On every
+         version, the route planner asks for it only when a trip is started:
+         re-planning while driving must know where on the road the car is, and
+         approximate location is ~2 km off and refreshed at most every 10 min. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <!-- Cloud ingest. Without this the uploader fails with a SecurityException
          before the request leaves the phone, because targetSdk >= 28 does not
@@ -35,6 +35,10 @@
          (foreground service), auto-start on boot, and keep the CPU awake. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Trip watch: while a trip is driven (Google Maps in front), the
+         location-type foreground service is what lets the phone still read its
+         position to re-plan. Runs only between Start navigation and arrival. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -56,6 +60,11 @@
             android:name=".service.CollectorService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <service
+            android:name=".route.TripService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <!-- Android Auto: Battery, Route planner and Fault codes on the car
              screen. Read-only like the rest of the app: the car screens show

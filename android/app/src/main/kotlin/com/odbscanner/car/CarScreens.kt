@@ -26,6 +26,7 @@ import com.odbscanner.route.PhoneLocation
 import com.odbscanner.route.Place
 import com.odbscanner.route.RoutePrefs
 import com.odbscanner.route.RoutingException
+import com.odbscanner.route.TripMonitor
 import com.odbscanner.route.TripPlanner
 import com.odbscanner.route.TripResult
 import kotlinx.coroutines.Dispatchers
@@ -207,7 +208,14 @@ class RouteSearchScreen(carContext: CarContext) : Screen(carContext) {
         val list = ItemList.Builder()
         error?.let { list.setNoItemsMessage(it) }
             ?: list.setNoItemsMessage("Search for a destination")
-        results.take(carContext.listLimit()).forEach { p ->
+        val active = TripMonitor.state.value
+        if (active != null) {
+            list.addItem(Row.Builder().setTitle("Trip to ${active.destination.label}")
+                .addText(active.note)
+                .setOnClickListener { screenManager.push(TripScreen(carContext, active.destination)) }
+                .setBrowsable(true).build())
+        }
+        results.take(carContext.listLimit() - (if (active != null) 1 else 0)).forEach { p ->
             list.addItem(Row.Builder().setTitle(p.label)
                 .setOnClickListener { screenManager.push(TripScreen(carContext, p)) }
                 .setBrowsable(true).build())
@@ -238,12 +246,43 @@ class RouteSearchScreen(carContext: CarContext) : Screen(carContext) {
     }
 }
 
-/** The plan for one destination: headline, then each stop (tap to navigate). */
+/**
+ * The plan for one destination: headline, then each stop (tap to navigate).
+ * Navigating starts the TripMonitor, which re-plans from the battery as the
+ * trip goes; this screen follows its latest plan.
+ */
 class TripScreen(carContext: CarContext, private val dest: Place) : Screen(carContext) {
     private var result: TripResult? = null
     private var error: String? = null
+    private var note: String? = null
 
-    init { plan() }
+    init {
+        val active = TripMonitor.state.value
+        if (active != null && active.destination == dest) result = active.result else plan()
+        lifecycleScope.launch {
+            TripMonitor.state.collect { t ->
+                if (t != null && t.destination == dest) {
+                    result = t.result
+                    note = t.note
+                    error = null
+                } else {
+                    note = null
+                }
+                invalidate()
+            }
+        }
+    }
+
+    private fun drive(r: TripResult, lat: Double, lon: Double) {
+        fun go() {
+            if (TripMonitor.state.value?.result !== r) TripMonitor.start(carContext, r)
+            navigate(carContext, lat, lon)
+        }
+        // Following the trip needs precise location; asked once, on the phone.
+        if (PhoneLocation.precise(carContext)) go()
+        else carContext.requestPermissions(listOf(Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION)) { _, _ -> go() }
+    }
 
     private fun plan() {
         if (!PhoneLocation.permitted(carContext)) {
@@ -287,12 +326,25 @@ class TripScreen(carContext: CarContext, private val dest: Place) : Screen(carCo
                 .addText(String.format(Locale.ROOT,
                     "%.0f km · %.0f kW · %.0f → %.0f %% · %d min · £%.2f",
                     s.km, s.charger.powerKw, s.arrivePct, s.departPct, s.chargeMin, s.cost))
-                .setOnClickListener { navigate(carContext, s.charger.lat, s.charger.lon) }
+                .setOnClickListener { drive(r, s.charger.lat, s.charger.lon) }
                 .build())
         }
         list.addItem(Row.Builder().setTitle("Navigate to ${dest.label}")
-            .setOnClickListener { navigate(carContext, dest.lat, dest.lon) }.build())
-        return ListTemplate.Builder().setSingleList(list.build()).setTitle(dest.label)
-            .setHeaderAction(Action.BACK).build()
+            .apply { note?.let { addText(it) } }
+            .setOnClickListener { drive(r, dest.lat, dest.lon) }.build())
+        val template = ListTemplate.Builder().setSingleList(list.build()).setTitle(dest.label)
+            .setHeaderAction(Action.BACK)
+        if (TripMonitor.state.value?.destination == dest) {
+            template.setActionStrip(ActionStrip.Builder()
+                .addAction(Action.Builder().setTitle("Re-plan").setOnClickListener {
+                    TripMonitor.replanNow(carContext)
+                    CarToast.makeText(carContext, "Re-planning from here", CarToast.LENGTH_SHORT).show()
+                }.build())
+                .addAction(Action.Builder().setTitle("End trip").setOnClickListener {
+                    TripMonitor.stop()
+                }.build())
+                .build())
+        }
+        return template.build()
     }
 }

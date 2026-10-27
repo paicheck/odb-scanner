@@ -4,7 +4,9 @@ import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +39,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import com.odbscanner.route.ActiveTrip
 import com.odbscanner.route.CarEnergy
 import com.odbscanner.route.MAX_LINK_STOPS
 import com.odbscanner.route.MODES
@@ -43,6 +48,7 @@ import com.odbscanner.route.PhoneLocation
 import com.odbscanner.route.Place
 import com.odbscanner.route.RoutePrefs
 import com.odbscanner.route.RoutingException
+import com.odbscanner.route.TripMonitor
 import com.odbscanner.route.TripPlanner
 import com.odbscanner.route.TripResult
 import com.odbscanner.route.googleMapsTripUrl
@@ -129,6 +135,7 @@ fun RouteDialog(onDismiss: () -> Unit) {
     var result by remember { mutableStateOf<TripResult?>(null) }
     var showSettings by remember { mutableStateOf(settings.missingKeys.isNotEmpty()) }
     var mode by remember { mutableStateOf(settings.mode) }
+    val active by TripMonitor.state.collectAsState()
 
     LaunchedEffect(Unit) {
         val car = CarEnergy.load(context)
@@ -181,6 +188,7 @@ fun RouteDialog(onDismiss: () -> Unit) {
         title = { Text("Route planner") },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                active?.let { ActiveTripBanner(it) }
                 if (settings.missingKeys.isNotEmpty()) {
                     Text("Needs free API keys for ${settings.missingKeys.joinToString(" and ")} " +
                         "(Settings below).", color = MaterialTheme.colorScheme.error,
@@ -220,16 +228,60 @@ fun RouteDialog(onDismiss: () -> Unit) {
                     Text(it, color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(top = 6.dp))
                 }
-                result?.let { TripResultView(it) }
+                // The trip being driven shows its latest (re-planned) plan; a
+                // plan made here for somewhere else shows instead.
+                val shown = active?.result?.takeIf { a ->
+                    result == null || result?.destination == a.destination
+                } ?: result
+                shown?.let { TripResultView(it) }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
 }
 
+/** The trip being driven: what the monitor last saw, Re-plan now, End trip. */
+@Composable
+private fun ActiveTripBanner(t: ActiveTrip) {
+    val context = LocalContext.current
+    Column(modifier = Modifier.padding(bottom = 8.dp)) {
+        Text("Trip to ${t.destination.label}", fontWeight = FontWeight.SemiBold)
+        Text(t.note + (if (t.replans > 0) " · re-planned ${t.replans}×" else ""),
+            style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = { TripMonitor.replanNow(context) }) { Text("Re-plan now") }
+            TextButton(onClick = { TripMonitor.stop() }) { Text("End trip") }
+        }
+        HorizontalDivider()
+    }
+}
+
+/** Watch the trip, then hand it to Google Maps. */
+private fun beginTrip(context: Context, r: TripResult) {
+    if (TripMonitor.state.value?.result !== r) TripMonitor.start(context, r)
+    startTrip(context, r)
+}
+
+/** What starting a trip asks for and does not have yet: precise location
+ *  (to follow the trip) and notifications (to say when the stops change). */
+private fun tripPermissionsMissing(context: Context): List<String> = buildList {
+    if (!PhoneLocation.precise(context)) {
+        add(Manifest.permission.ACCESS_FINE_LOCATION)
+        add(Manifest.permission.ACCESS_COARSE_LOCATION)
+    }
+    if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context,
+            Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        add(Manifest.permission.POST_NOTIFICATIONS)
+    }
+}
+
 @Composable
 private fun TripResultView(r: TripResult) {
     val context = LocalContext.current
+    // Asked once, on Start navigation; the trip starts whatever the answer.
+    val askTrip = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { beginTrip(context, r) }
     val p = r.plan
     Column(modifier = Modifier.padding(top = 8.dp)) {
         HorizontalDivider()
@@ -244,7 +296,11 @@ private fun TripResultView(r: TripResult) {
         if (p.stops.isNotEmpty()) Text(r.costLine(), style = MaterialTheme.typography.bodySmall)
         Column(modifier = Modifier.padding(vertical = 6.dp)) { TripMap(r) }
         if (p.status != "unreachable") {
-            Button(onClick = { startTrip(context, r) }, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = {
+                // Watch this trip against the battery while it is driven.
+                val missing = tripPermissionsMissing(context)
+                if (missing.isEmpty()) beginTrip(context, r) else askTrip.launch(missing.toTypedArray())
+            }, modifier = Modifier.fillMaxWidth()) {
                 Text(when (p.stops.size) {
                     0 -> "Start navigation"
                     1 -> "Start navigation · 1 charging stop"

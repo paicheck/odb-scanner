@@ -75,6 +75,33 @@ the trip area are fetched from OpenStreetMap); **Start navigation** hands the
 whole trip to Google Maps, charging stops as stops and then the destination.
 Nothing opens Google Maps until that tap.
 
+**Which stops.** Every fast charger within 5 km of the route is a candidate;
+the planner picks the stops, and how far to charge at each, for the lowest
+price plus time. **Fastest** counts time as everything; **Balanced** counts it
+at your own £/hour (Route → Settings, default 15); **Cheapest** counts it at
+only £3/hour, so it will not add a stop to save pennies. Each stop also costs
+10 minutes and its detour, and adds at least 10 %. Prices: what you pay per
+network ("Ionity = 0.39" lines in Route → Settings) beats the price Open
+Charge Map lists, which beats the default for unknown prices. Tesla-only,
+private and out-of-service chargers are left out.
+
+**Re-planning while driving.** Start navigation also starts watching the trip.
+Every minute the phone compares the car's latest charge reading (stored by the
+collector) with what the plan expected where the phone is now. Three % below
+plan, five above, four km off the planned road, or charging just finished:
+it re-plans from here -- first correcting the consumption figure by what this
+drive is really using -- and notifies you if the stops change. It never
+re-plans while charging, near a planned charger, on a reading over 15 minutes
+old or a position over 3 minutes old, or more often than every 5 minutes.
+**Re-plan now** and **End trip** are on the planner (and the car screen).
+
+Following a trip needs **precise location**, asked for once when you start one:
+approximate location is ~2 km off and refreshed only every ~10 minutes. While
+the trip runs, a "Watching your trip" notification stays up -- that
+location-type foreground service is what lets the phone read its position
+with Google Maps in front, and it ends at arrival or End trip. Without precise
+location only Re-plan now works.
+
 It needs two free API keys, entered under **Route → Settings**:
 [OpenRouteService](https://openrouteservice.org/dev/#/signup) (roads, place
 search) and [OpenChargeMap](https://openchargemap.org/site/profile/applications)
@@ -82,8 +109,9 @@ search) and [OpenChargeMap](https://openchargemap.org/site/profile/applications)
 Location permission (coarse) is asked only when you plan without a typed start.
 
 **Android Auto** shows three screens on the car display — **Battery** (newest
-stored readings with their age), **Route planner** (recent destinations, search,
-then the plan; tap a stop to navigate) and **Fault codes** — built from the Car
+stored readings with their age), **Route planner** (the active trip, recent
+destinations, search, then the plan with its costs; tap a stop to navigate,
+Re-plan / End trip while driving) and **Fault codes** — built from the Car
 App Library's driver-safe templates (`car/`). They read the phone's database and
 never reach the adapter. Because the app is not from the Play Store, Android
 Auto lists it only with developer settings on:
