@@ -87,11 +87,11 @@
   <h3>{{ key }} <span class="muted">{{ chart.raw_points }} raw points</span></h3>
   <div class="muted" style="margin:4px 0 8px;">
     export raw rows (all columns, failures kept):
-    <a href="/api/export/series?key={{ key }}&days={{ days }}&format=csv">CSV</a>
+    <a href="/api/export/series?key={{ key|urlencode }}&days={{ days }}&format=csv">CSV</a>
     &middot;
-    <a href="/api/export/series?key={{ key }}&days={{ days }}&format=json">JSON</a>
+    <a href="/api/export/series?key={{ key|urlencode }}&days={{ days }}&format=json">JSON</a>
     &middot;
-    <a href="/api/export/discovery?{% if query %}q={{ query }}&{% endif %}{% if verification %}verification={{ verification }}&{% endif %}{% if kind %}kind={{ kind }}&{% endif %}{% if state %}state={{ state }}&{% endif %}{% if ecu %}ecu={{ ecu }}&{% endif %}format=csv">filtered catalogue CSV</a>
+    <a href="/api/export/discovery?{% if query %}q={{ query|urlencode }}&{% endif %}{% if verification %}verification={{ verification|urlencode }}&{% endif %}{% if kind %}kind={{ kind|urlencode }}&{% endif %}{% if state %}state={{ state|urlencode }}&{% endif %}{% if ecu %}ecu={{ ecu|urlencode }}&{% endif %}format=csv">filtered catalogue CSV</a>
   </div>
   {% for o in observations %}
   <p class="muted">
@@ -134,7 +134,7 @@
     <td><span class="state {{ e.state.value }}">{{ e.state.value }}</span></td>
     <td class="muted">{{ e.last_success_ts[:19] if e.last_success_ts else '—' }}</td>
     <td>{% if e.use_in_scoring %}<span class="muted">usable</span>{% else %}<span class="state v-invalid" title="{{ e.known_issue }}">excluded</span>{% endif %}</td>
-    <td><a href="/explore?key={{ e.key }}{% if query %}&q={{ query }}{% endif %}&days={{ days }}&max_points={{ max_points }}">chart</a></td>
+    <td><a href="/explore?key={{ e.key|urlencode }}{% if query %}&q={{ query|urlencode }}{% endif %}&days={{ days }}&max_points={{ max_points }}">chart</a></td>
   </tr>
   {% endfor %}
   </tbody>
