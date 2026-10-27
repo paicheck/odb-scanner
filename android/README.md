@@ -70,7 +70,10 @@ typed start): arrival charge, charging stops and journey time, using the
 battery figures the phone last read from the car. It is the dashboard's
 planner ported line for line (`route/Planner.kt`); `PlannerTest` holds it to
 the same `tests/data/route_vectors.json` cases as the Python side, so both give
-the same plan. Each stop and the destination open in the navigation app.
+the same plan. The trip is drawn on an OpenStreetMap map in the app (tiles of
+the trip area are fetched from OpenStreetMap); **Start navigation** hands the
+whole trip to Google Maps, charging stops as stops and then the destination.
+Nothing opens Google Maps until that tap.
 
 It needs two free API keys, entered under **Route → Settings**:
 [OpenRouteService](https://openrouteservice.org/dev/#/signup) (roads, place

@@ -136,6 +136,7 @@ data class TripResult(
     val plan: Plan,
     val car: CarEnergy,
     val consumptionKwhPer100km: Double,
+    val line: List<Pair<Double, Double>>,    // the road, thinned, for the map
 )
 
 /**
@@ -164,7 +165,7 @@ object TripPlanner {
             PlanSettings(reservePct = s.reservePct, chargeToPct = s.chargeToPct),
             ChargerLookup { lat, lon, r -> services.chargersNear(lat, lon, r) },
         )
-        TripResult(origin, to, plan, car, consumption)
+        TripResult(origin, to, plan, car, consumption, MapMath.thinLine(route.points))
     }
 
     /** Place search near [near], else near the phone. */

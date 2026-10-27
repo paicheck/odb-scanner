@@ -35,26 +35,34 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.odbscanner.route.CarEnergy
+import com.odbscanner.route.MAX_LINK_STOPS
 import com.odbscanner.route.PhoneLocation
 import com.odbscanner.route.Place
 import com.odbscanner.route.RoutePrefs
 import com.odbscanner.route.RoutingException
 import com.odbscanner.route.TripPlanner
 import com.odbscanner.route.TripResult
+import com.odbscanner.route.googleMapsTripUrl
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-/** Hand a destination to the phone's navigation app (Google Maps if present). */
-fun navigateTo(context: Context, lat: Double, lon: Double, label: String) {
-    val nav = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$lat,$lon"))
+/**
+ * The whole trip to Google Maps in one go: each charging stop, then the
+ * destination. Only on the driver's tap -- Google Maps is the one common
+ * navigation app that takes stops from a link; without it the link opens in
+ * the browser.
+ */
+fun startTrip(context: Context, r: TripResult) {
+    val url = Uri.parse(googleMapsTripUrl(
+        r.origin.lat to r.origin.lon,
+        r.plan.stops.map { it.charger.lat to it.charger.lon },
+        r.destination.lat to r.destination.lon))
+    val maps = Intent(Intent.ACTION_VIEW, url).setPackage("com.google.android.apps.maps")
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     try {
-        context.startActivity(nav)
+        context.startActivity(maps)
     } catch (_: ActivityNotFoundException) {
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW,
-                Uri.parse("geo:$lat,$lon?q=$lat,$lon(${Uri.encode(label)})"))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        context.startActivity(Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
 
@@ -77,7 +85,8 @@ fun TripResult.headline(): String = when (plan.status) {
 /**
  * The phone's route planner: the same plan as the dashboard's Route page
  * (routing/planner.py, ported in route/Planner.kt), started from the phone's
- * location. Each stop and the destination open in the navigation app.
+ * location. The trip is drawn on an OpenStreetMap map; Start navigation
+ * hands it, stops included, to Google Maps.
  */
 @Composable
 fun RouteDialog(onDismiss: () -> Unit) {
@@ -199,6 +208,20 @@ private fun TripResultView(r: TripResult) {
             fmtDuration(p.driveS) + " driving" +
             (if (p.chargeS > 0) " + " + fmtDuration(p.chargeS) + " charging" else ""),
             style = MaterialTheme.typography.bodySmall)
+        Column(modifier = Modifier.padding(vertical = 6.dp)) { TripMap(r) }
+        if (p.status != "unreachable") {
+            Button(onClick = { startTrip(context, r) }, modifier = Modifier.fillMaxWidth()) {
+                Text(when (p.stops.size) {
+                    0 -> "Start navigation"
+                    1 -> "Start navigation · 1 charging stop"
+                    else -> "Start navigation · ${p.stops.size} charging stops"
+                })
+            }
+            if (p.stops.size > MAX_LINK_STOPS) {
+                Text("Google Maps takes $MAX_LINK_STOPS stops from a link; add the rest there.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        }
         p.stops.forEachIndexed { i, s ->
             Column(modifier = Modifier.padding(top = 6.dp)) {
                 Text("${i + 1}. ${s.charger.name}" +
@@ -208,14 +231,11 @@ private fun TripResultView(r: TripResult) {
                     "at %.0f km · %.0f kW · %.0f %% → %.0f %% · %d min",
                     s.km, s.charger.powerKw, s.arrivePct, s.departPct, s.chargeMin),
                     style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = {
-                    navigateTo(context, s.charger.lat, s.charger.lon, s.charger.name)
-                }) { Text("Navigate to this charger") }
+                if (s.charger.address.isNotBlank()) {
+                    Text(s.charger.address, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
-        TextButton(onClick = {
-            navigateTo(context, r.destination.lat, r.destination.lon, r.destination.label)
-        }) { Text("Navigate to destination") }
         Text("Assumptions", fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
         p.assumptions.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
         Text("Charger data: Open Charge Map (community-maintained; check before relying on it).",
@@ -242,7 +262,8 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text("Free keys: openrouteservice.org (roads, place search) and " +
                     "openchargemap.org (chargers). Planning sends the start, destination " +
-                    "and route to those two services.", style = MaterialTheme.typography.bodySmall)
+                    "and route to those two services; the map loads OpenStreetMap tiles " +
+                    "of the trip area.", style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(ors, { ors = it }, label = { Text("OpenRouteService key") },
                     singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(ocm, { ocm = it }, label = { Text("OpenChargeMap key") },
