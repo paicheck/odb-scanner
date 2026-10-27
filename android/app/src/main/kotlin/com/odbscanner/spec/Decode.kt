@@ -76,10 +76,12 @@ object Decoder {
                 )
             }
             "coolant_temps" -> {
+                // Signed, as decoders/meb.py _coolant_temps: unsigned, a -1 C
+                // coolant reading decoded as 1023 C.
                 if (record.size < 4) return null
                 mapOf(
-                    "outlet_c" to (u16(record, 0)!! / 64.0),
-                    "inlet_c" to (u16(record, 2)!! / 64.0),
+                    "outlet_c" to (s16(record, 0) / 64.0),
+                    "inlet_c" to (s16(record, 2) / 64.0),
                 )
             }
             "pair" -> {
@@ -115,6 +117,12 @@ object Decoder {
             ((b[off + 2].toLong() and 0xFF) shl 8) or
             (b[off + 3].toLong() and 0xFF)
         else null
+
+    /** Big-endian signed 16-bit at [off]; caller bounds-checks. */
+    private fun s16(b: ByteArray, off: Int): Int {
+        val v = ((b[off].toInt() and 0xFF) shl 8) or (b[off + 1].toInt() and 0xFF)
+        return if (v and 0x8000 != 0) v - 0x10000 else v
+    }
 
     /** Big-endian unsigned integer of [len] bytes at [off]; caller bounds-checks. */
     private fun uint(b: ByteArray, off: Int, len: Int): Long {

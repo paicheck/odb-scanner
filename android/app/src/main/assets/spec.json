@@ -226,7 +226,7 @@
       "tx29": "0x767"
     }
   ],
-  "generated_at": "2026-10-26T20:10:11+00:00",
+  "generated_at": "2026-10-27T09:21:20+00:00",
   "profiles": {
     "eup": {
       "cell_voltages": null,
@@ -3034,12 +3034,12 @@
             "addend": 0.0,
             "byte_order": "big-endian",
             "divisor": 1.0,
-            "formula": "u16be[0:2] unsigned x 0.015625",
+            "formula": "u16be[0:2] signed x 0.015625",
             "kind": "scalar",
             "length": 2,
             "offset": 0,
             "scale": 0.015625,
-            "signed": false
+            "signed": true
           },
           "did": "0x1E0E",
           "doc_status": "experimentally determined",
@@ -3082,12 +3082,12 @@
             "addend": 0.0,
             "byte_order": "big-endian",
             "divisor": 1.0,
-            "formula": "u16be[0:2] unsigned x 0.015625",
+            "formula": "u16be[0:2] signed x 0.015625",
             "kind": "scalar",
             "length": 2,
             "offset": 0,
             "scale": 0.015625,
-            "signed": false
+            "signed": true
           },
           "did": "0x1E0F",
           "doc_status": "experimentally determined",
@@ -5993,7 +5993,7 @@
         {
           "confidence": "UNKNOWN",
           "decode": {
-            "formula": "outlet u16[0:2]/64, inlet u16[2:4]/64",
+            "formula": "outlet s16[0:2]/64, inlet s16[2:4]/64",
             "kind": "special",
             "name": "coolant_temps"
           },
@@ -6760,12 +6760,12 @@
             "addend": 0.0,
             "byte_order": "big-endian",
             "divisor": 1.0,
-            "formula": "u16be[0:2] unsigned x 0.1",
+            "formula": "u16be[0:2] signed x 0.1",
             "kind": "scalar",
             "length": 2,
             "offset": 0,
             "scale": 0.1,
-            "signed": false
+            "signed": true
           },
           "did": "0x0364",
           "doc_status": "experimentally determined",

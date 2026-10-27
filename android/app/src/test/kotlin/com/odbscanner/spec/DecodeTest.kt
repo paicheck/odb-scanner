@@ -127,4 +127,19 @@ class DecodeTest {
         )
         assertEquals(30.0, Decoder.decode(recipe, hex("02BC")) as Double, 1e-9)
     }
+
+    @Test
+    fun subZeroTemperaturesAreSigned() {
+        // Parity with tests/test_signed_temperatures.py: decoded unsigned,
+        // -1 C coolant read as 1023 C and -5 C pack max as 1019 C.
+        @Suppress("UNCHECKED_CAST")
+        val coolant = decode("coolant_temps", "FFC0FF80") as Map<String, Double>
+        assertEquals(-1.0, coolant["outlet_c"]!!, 1e-9)
+        assertEquals(-2.0, coolant["inlet_c"]!!, 1e-9)
+        val batTempMax = Decode.Scalar(
+            offset = 0, length = 2, signed = true,
+            scale = 1.0 / 64, divisor = 1.0, addend = 0.0, formula = null,
+        )
+        assertEquals(-5.0, Decoder.decode(batTempMax, hex("FEC00003")) as Double, 1e-9)
+    }
 }

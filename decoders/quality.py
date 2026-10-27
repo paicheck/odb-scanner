@@ -226,6 +226,10 @@ _RANGES: dict[str, tuple[float, float, str]] = {
     "aux_12v_power_w": (-1000.0, 1000.0, "12 V battery terminal power"),
     "dcdc_power_kw": (0.0, 3.0, "MEB DC-DC converter output"),
     "dcdc_gw_power_kw": (0.0, 3.0, "MEB DC-DC converter output"),
+    # Signed since the CS profile showed it is; had no range at all, so a
+    # mis-signed -0.5 kW (6553.1 kW unsigned) was never flagged. PTC heater +
+    # compressor stay well under 15 kW; a small negative is plausible.
+    "hv_aux_power": (-5.0, 15.0, "MEB HV auxiliary consumers (PTC, compressor)"),
     "res_pid_0149": (0.0, 100.0, "accelerator pedal position"),
 }
 

@@ -259,8 +259,20 @@ def _battery_temp(raw: bytes) -> float:
     return raw[0] / 2.0 - 40.0
 
 
+def _s16be(raw: bytes, off: int = 0) -> int:
+    """Big-endian SIGNED 16-bit. u16be does the indexing, so a short payload
+    fails the same way (IndexError -> logged None), never as a wrong number."""
+    v = u16be(raw, off)
+    return v - 0x10000 if v & 0x8000 else v
+
+
 def _temp_scaled(raw: bytes) -> float:
-    return u16be(raw) / 64.0
+    # Signed: the Car Scanner profile declares 0x1E0E/0x1E0F temperature
+    # fields signed=True (evDash reads them unsigned). Unsigned, the first
+    # sub-zero reading of the winter decoded as ~1000 C -- raw FEC0 is
+    # -320/64 = -5.0 C, not 65216/64 = 1019 C -- and fed straight into the
+    # battery-temperature spread and the anomaly baselines.
+    return _s16be(raw) / 64.0
 
 
 def _cell_temp(raw: bytes):
@@ -340,7 +352,9 @@ def _coolant_temps(raw: bytes) -> dict:
     spot2000 row labelled "outlet" reads data bytes 0-1 and evDash's live
     inlet line reads data bytes 2-3, so outlet = [0:2], inlet = [2:4].
     """
-    return {"outlet_c": u16be(raw, 0) / 64.0, "inlet_c": u16be(raw, 2) / 64.0}
+    # Both fields signed per the Car Scanner profile (0x189D, signed=True):
+    # unsigned, a -1 C coolant read as 1023 C.
+    return {"outlet_c": _s16be(raw, 0) / 64.0, "inlet_c": _s16be(raw, 2) / 64.0}
 
 
 def _amb_12v(raw: bytes) -> float:
@@ -1104,8 +1118,8 @@ def _register_bms(reg: DIDRegistry) -> None:
             "degC",
             decode=_temp_scaled,
             doc_status=_EXP,
-            notes="u16 / 64 [evDash; CS log: 20.875 C]; the 1-based sensor "
-            "number is bytes 2-3 (bat_temp_max_sensor)",
+            notes="s16 / 64 [evDash; CS log: 20.875 C; CS profile: signed]; "
+            "the 1-based sensor number is bytes 2-3 (bat_temp_max_sensor)",
         )
     )
     reg.register(
@@ -1117,8 +1131,8 @@ def _register_bms(reg: DIDRegistry) -> None:
             "degC",
             decode=_temp_scaled,
             doc_status=_EXP,
-            notes="u16 / 64 [evDash; CS log: 19.625 C]; the 1-based sensor "
-            "number is bytes 2-3 (bat_temp_min_sensor)",
+            notes="s16 / 64 [evDash; CS log: 19.625 C; CS profile: signed]; "
+            "the 1-based sensor number is bytes 2-3 (bat_temp_min_sensor)",
         )
     )
     reg.register(
@@ -1263,7 +1277,8 @@ def _register_bms(reg: DIDRegistry) -> None:
             "degC",
             decode=_coolant_temps,
             doc_status=_EXP,
-            notes="outlet = u16[0:2]/64, inlet = u16[2:4]/64 [spot; evDash]",
+            notes="outlet = s16[0:2]/64, inlet = s16[2:4]/64 [spot; evDash; "
+            "CS profile: signed]",
         )
     )
     reg.register(
@@ -1565,9 +1580,11 @@ def _register_modules(reg: DIDRegistry) -> None:
             0x0364,
             "HV auxiliary consumer power",
             "kW",
-            decode=lambda raw: _u16_over(raw, 10.0),
+            # Signed (profile 0x0364, signed=True): auxiliary consumers can
+            # feed power back, and unsigned a -0.5 kW read as 6553.1 kW.
+            decode=lambda raw: _s16be(raw) / 10.0,
             doc_status=_EXP,
-            notes="u16 / 10 [spot]",
+            notes="s16 / 10 [spot; CS profile: signed]",
         )
     )
     reg.register(

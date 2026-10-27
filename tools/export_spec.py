@@ -166,7 +166,7 @@ _FUNCTION_RECIPES = {
     "_pack_current": (0, 4, False, 0.01, 1.0, -1500.0),  # (u32 - 150000) / 100
     "_cell_voltage_scaled": (0, 2, False, 1.0 / 4096, 1.0, 0.0),
     "_battery_temp": (0, 1, False, 0.5, 1.0, -40.0),
-    "_temp_scaled": (0, 2, False, 1.0 / 64, 1.0, 0.0),
+    "_temp_scaled": (0, 2, True, 1.0 / 64, 1.0, 0.0),
     "_op_mode": (0, 1, False, 1.0, 1.0, 0.0),
     "_byte": (0, 1, False, 1.0, 1.0, 0.0),
     "_amb_12v": (0, 2, False, 0.001, 1.0, 4.0),
@@ -188,7 +188,7 @@ _SPECIAL_DECODERS = {
                          "charge kWh @8, discharge kWh @12; Ah x "
                          "0.001820444117116, kWh x 116508.398/1e9"),
     "_charge_mode": ("charge_mode", "byte0: {4:1, 6:2}.get(raw[0], 0)"),
-    "_coolant_temps": ("coolant_temps", "outlet u16[0:2]/64, inlet u16[2:4]/64"),
+    "_coolant_temps": ("coolant_temps", "outlet s16[0:2]/64, inlet s16[2:4]/64"),
     "_gear": ("gear", "gear code from data byte 1"),
     "_vin": ("vin", "ASCII"),
     "_ascii": ("ascii", "trimmed ASCII"),
@@ -205,7 +205,7 @@ _LAMBDA_RECIPES = {
     "ptc_current": (0, 1, False, 0.25, 1.0, 0.0),           # u8 / 4
     "dcdc_current": (0, 2, False, 1.0 / 16, 1.0, 0.0),      # u16 / 16
     "dcdc_voltage": (0, 2, False, 1.0 / 512, 1.0, 0.0),     # u16 / 512
-    "hv_aux_power": (0, 2, False, 0.1, 1.0, 0.0),           # u16 / 10
+    "hv_aux_power": (0, 2, True, 0.1, 1.0, 0.0),            # s16 / 10
 }
 
 
