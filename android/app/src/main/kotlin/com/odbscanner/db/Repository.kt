@@ -80,10 +80,9 @@ class Repository(private val db: AppDatabase) {
 
     suspend fun everSucceededKeys(vehicleId: Long): Set<Pair<String, Int>> =
         withContext(Dispatchers.IO) {
-            // Room doesn't easily query "distinct (ecu, pid) where success=1"
-            // without a custom query; keep it simple and load all then filter.
-            measurements.getAll(vehicleId)
-                .filter { it.success && it.service == "UDS-0x22" && it.pid.startsWith("0x") }
+            // DISTINCT in SQL: this runs on every connect, and loading every
+            // measurement row to find the distinct pairs grew with the table.
+            measurements.succeededEcuPids(vehicleId)
                 .mapNotNull { m ->
                     try { m.ecu to m.pid.removePrefix("0x").toInt(16) }
                     catch (_: NumberFormatException) { null }
@@ -100,9 +99,7 @@ class Repository(private val db: AppDatabase) {
     /** Latest successful value per key (for the measurements screen). */
     suspend fun latestMeasurements(vehicleId: Long): List<MeasurementEntity> =
         withContext(Dispatchers.IO) {
-            measurements.getAll(vehicleId)
-                .filter { it.success }
-                .distinctBy { it.key }
+            measurements.latestPerKey(vehicleId)
         }
 
     // -- cloud upload --------------------------------------------------------

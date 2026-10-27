@@ -17,6 +17,26 @@ interface MeasurementDao {
     suspend fun latestByKey(vehicleId: Long, key: String): MeasurementEntity?
 
     /**
+     * The newest successful row per key, newest first. The screen used to load
+     * the WHOLE table every 3 seconds and de-duplicate in Kotlin; an always-on
+     * car phone adds hundreds of rows a pass, so that grew without bound.
+     */
+    @Query(
+        "SELECT m.* FROM measurements m JOIN (" +
+            "SELECT key, MAX(id) AS newest FROM measurements " +
+            "WHERE vehicleId = :vehicleId AND success = 1 GROUP BY key" +
+            ") latest ON m.id = latest.newest ORDER BY m.id DESC"
+    )
+    suspend fun latestPerKey(vehicleId: Long): List<MeasurementEntity>
+
+    /** (ecu, pid) of every UDS 0x22 read that ever succeeded, without loading rows. */
+    @Query(
+        "SELECT DISTINCT ecu, pid FROM measurements WHERE vehicleId = :vehicleId " +
+            "AND success = 1 AND service = 'UDS-0x22' AND pid LIKE '0x%'"
+    )
+    suspend fun succeededEcuPids(vehicleId: Long): List<EcuPid>
+
+    /**
      * The newest [limit] successful numeric values for one key, oldest first.
      * Feeds the trend charts; `value IS NOT NULL` keeps out the text-only rows
      * (VIN, gear) that have no y-axis to plot.

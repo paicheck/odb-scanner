@@ -33,3 +33,13 @@ def test_cloud_sync_attributes_each_row_to_its_own_vehicle():
     db = (SRC.parent / "db" / "Repository.kt").read_text(encoding="utf-8")
     assert "vehicles.getById(vehicleId)?.vin" in db
     assert "?: vehicles.getFirst())?.vin" not in db
+
+
+def test_screens_do_not_load_the_whole_measurements_table():
+    """latestMeasurements and everSucceededKeys loaded every row (getAll) and
+    filtered in Kotlin -- every 3 s for the screen, on every connect for the
+    collector -- on a table an always-on phone grows without bound."""
+    db = (SRC.parent / "db" / "Repository.kt").read_text(encoding="utf-8")
+    assert "measurements.latestPerKey(vehicleId)" in db
+    assert "measurements.succeededEcuPids(vehicleId)" in db
+    assert "measurements.getAll(" not in db

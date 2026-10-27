@@ -37,6 +37,9 @@ data class MeasurementEntity(
     val uploadedAt: Long? = null,
 )
 
+/** Result row of MeasurementDao.succeededEcuPids. */
+data class EcuPid(val ecu: String, val pid: String)
+
 /** One retired DID, mirroring `database/models.py`'s `unsupported_dids`. */
 @Entity(
     tableName = "unsupported_dids",
