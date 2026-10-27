@@ -208,20 +208,20 @@ def test_keys_from_config_or_environment(monkeypatch):
 def test_geocode_and_route_parse(http):
     calls, replies = http
     replies.append(_Reply(200, {"features": [
-        {"geometry": {"coordinates": [-0.17, 51.24]}, "properties": {"label": "Redhill"}},
+        {"geometry": {"coordinates": [-1.26, 51.75]}, "properties": {"label": "Oxford"}},
         {"geometry": {}, "properties": {}}]}))
     replies.append(_Reply(200, {"features": [{
-        "geometry": {"coordinates": [[-0.17, 51.24, 80.0], [-0.1, 51.5, 20.0]]},
+        "geometry": {"coordinates": [[-1.26, 51.75, 80.0], [-0.1, 51.5, 20.0]]},
         "properties": {"summary": {"distance": 32000, "duration": 2400}}}]}))
     ors = providers.OpenRouteService("k")
-    places = ors.geocode("Redhill", near=(51.0, 0.0))
-    assert places == [providers.Place("Redhill", 51.24, -0.17)]
+    places = ors.geocode("Oxford", near=(51.0, 0.0))
+    assert places == [providers.Place("Oxford", 51.75, -1.26)]
     assert calls[0][2]["params"]["focus.point.lat"] == 51.0
-    route = ors.route((51.24, -0.17), (51.5, -0.1))
-    assert route.points[0] == (51.24, -0.17, 80.0)
+    route = ors.route((51.75, -1.26), (51.5, -0.1))
+    assert route.points[0] == (51.75, -1.26, 80.0)
     assert (route.distance_km, route.duration_s) == (32.0, 2400.0)
     body = calls[1][2]["json"]
-    assert body["coordinates"] == [[-0.17, 51.24], [-0.1, 51.5]]
+    assert body["coordinates"] == [[-1.26, 51.75], [-0.1, 51.5]]
     assert body["elevation"] is True
     assert calls[1][2]["headers"] == {"Authorization": "k"}
     assert "boundary.country" not in calls[0][2]["params"]     # no limit configured

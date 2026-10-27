@@ -44,7 +44,7 @@ class RouteServices(
                 append("&focus.point.lon=").append(near.second)
             }
             // A focus point barely moves the ranking ("Brighton" is Brighton, NY
-            // even from Surrey); only a country limit fixes that.
+            // even from England); only a country limit fixes that.
             if (countries.isNotEmpty()) append("&boundary.country=").append(enc(countries))
         }
         return parseGeocode(JSONObject(request("GET", q)), text, size)

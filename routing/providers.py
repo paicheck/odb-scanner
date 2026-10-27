@@ -93,7 +93,7 @@ class OpenRouteService:
         if near:
             params["focus.point.lat"], params["focus.point.lon"] = near
         # A focus point barely moves the ranking: "Brighton" is Brighton, NY
-        # even when searched from Surrey. Only a country limit fixes that.
+        # even when searched from England. Only a country limit fixes that.
         if self.countries:
             params["boundary.country"] = self.countries
         data = _get_json("GET", f"{ORS_BASE}/geocode/search", params=params)

@@ -118,14 +118,14 @@ class PlannerTest {
     @Test
     fun servicesParseLikeProvidersPy() {
         val places = RouteServices.parseGeocode(JSONObject(
-            """{"features":[{"geometry":{"coordinates":[-0.17,51.24]},
-                "properties":{"label":"Redhill"}},{"geometry":{},"properties":{}}]}"""), "x")
-        assertEquals(listOf(Place("Redhill", 51.24, -0.17)), places)
+            """{"features":[{"geometry":{"coordinates":[-1.26,51.75]},
+                "properties":{"label":"Oxford"}},{"geometry":{},"properties":{}}]}"""), "x")
+        assertEquals(listOf(Place("Oxford", 51.75, -1.26)), places)
 
         val route = RouteServices.parseRoute(JSONObject(
-            """{"features":[{"geometry":{"coordinates":[[-0.17,51.24,80.0],[-0.1,51.5]]},
+            """{"features":[{"geometry":{"coordinates":[[-1.26,51.75,80.0],[-0.1,51.5]]},
                 "properties":{"summary":{"distance":32000,"duration":2400}}}]}"""))
-        assertEquals(RoutePoint(51.24, -0.17, 80.0), route.points[0])
+        assertEquals(RoutePoint(51.75, -1.26, 80.0), route.points[0])
         assertNull(route.points[1].ele)
         assertEquals(32.0, route.distanceKm, 1e-9)
 
