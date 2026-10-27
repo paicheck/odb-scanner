@@ -16,6 +16,11 @@ import pytest
 # distribution, so the repo root has to be importable.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Starlette's TestClient sends `Host: testserver`. The dashboard refuses
+# unknown Host names (DNS-rebinding guard, web/auth.py), so the suite
+# declares it the same way an operator would declare a proxy's name.
+os.environ.setdefault("ODB_ALLOWED_HOSTS", "testserver")
+
 
 @pytest.fixture()
 def repo():

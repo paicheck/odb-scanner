@@ -87,6 +87,13 @@ the assumption for a home network. Further boundaries:
   browser submit `/ai/ask` or create investigations. A request carrying
   neither header (curl, a script) is not browser-driven and is let through;
   on a network bind it still needs the token.
+* **DNS rebinding:** a page on `attacker.example` can point that name at
+  `127.0.0.1` and so read a loopback dashboard (which needs no token) as if
+  same-origin. `HostAllowListMiddleware` refuses any `Host` header that is not
+  an IP address, a loopback name, this machine's hostname (or `<name>.local`),
+  or a name listed in `web.allowed_hosts` / `ODB_ALLOWED_HOSTS`. Reaching the
+  dashboard by IP (the tablet's usual way) always works; if you use a DNS name
+  or a reverse proxy, add that name to `web.allowed_hosts`.
 
 * Do not port-forward or expose the port to the internet.
 * On shared or untrusted Wi-Fi, bind to `127.0.0.1` and reach it over an SSH

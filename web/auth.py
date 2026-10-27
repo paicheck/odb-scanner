@@ -299,6 +299,82 @@ class CookiePromotionMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+def _host_name(host_header: str) -> str:
+    """Host header without its port, lower case: '[::1]:8000' -> '::1'."""
+    h = (host_header or "").strip().lower()
+    if h.startswith("["):
+        return h[1:h.find("]")] if "]" in h else h
+    if h.count(":") == 1:
+        return h.split(":", 1)[0]
+    return h
+
+
+def _is_ip_literal(name: str) -> bool:
+    import ipaddress
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        return False
+
+
+def allowed_host_names(cfg, bind_host: str) -> set[str]:
+    """Names a browser may legitimately put in Host for this dashboard.
+
+    Loopback names, this machine's hostname (and its .local mDNS form), a bind
+    address that is a name rather than 0.0.0.0, and anything in
+    web.allowed_hosts (config) or ODB_ALLOWED_HOSTS (comma-separated) -- e.g.
+    a reverse proxy's name. IP literals are always accepted separately.
+    """
+    import socket
+    names = {"localhost", "localhost.localdomain"}
+    try:
+        me = socket.gethostname().strip().lower()
+    except OSError:  # pragma: no cover - defensive
+        me = ""
+    if me:
+        names |= {me, f"{me}.local"}
+    bind = (bind_host or "").strip().lower()
+    if bind and not _is_ip_literal(bind):
+        names.add(bind)
+    extra = cfg.get("web.allowed_hosts") or []
+    if isinstance(extra, str):
+        extra = [extra]
+    names |= {str(h).strip().lower() for h in extra if str(h).strip()}
+    names |= {h.strip().lower() for h in
+              os.environ.get("ODB_ALLOWED_HOSTS", "").split(",") if h.strip()}
+    return names
+
+
+class HostAllowListMiddleware(BaseHTTPMiddleware):
+    """Refuse requests whose Host header names somewhere else (DNS rebinding).
+
+    A page on attacker.example can re-point attacker.example at 127.0.0.1.
+    The browser then treats this dashboard as same-origin with the attacker's
+    page: it sends `Host: attacker.example`, SameOriginMiddleware sees Origin
+    == the request's own origin, and on a loopback bind -- which needs no token
+    -- every page (VIN, faults, history) is readable and POST /ai/ask callable.
+    Checking Host closes that. IP literals are always allowed: rebinding needs
+    a DNS name whose answer changes, and a browser sending an IP literal as
+    Host really did connect to that IP (that is how the tablet reaches a
+    network bind). A request with no Host header is not browser-driven.
+    """
+
+    def __init__(self, app, allowed: set[str]):
+        super().__init__(app)
+        self.allowed = {h.lower() for h in allowed}
+
+    async def dispatch(self, request: Request, call_next):
+        raw = request.headers.get("host")
+        if raw:
+            name = _host_name(raw)
+            if name not in self.allowed and not _is_ip_literal(name):
+                return PlainTextResponse(
+                    f"Host {name!r} is not allowed. Add it to web.allowed_hosts "
+                    "if this is how you reach the dashboard.", status_code=400)
+        return await call_next(request)
+
+
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
 

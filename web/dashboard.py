@@ -26,9 +26,11 @@ from database.repository import Repository
 from web.auth import (
     QUERY,
     CookiePromotionMiddleware,
+    HostAllowListMiddleware,
     SameOriginMiddleware,
     SecurityHeadersMiddleware,
     TokenAuthMiddleware,
+    allowed_host_names,
     resolve_token,
 )
 
@@ -264,8 +266,12 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     # added last is the first to see a request and the last to touch a
     # response. The intended nesting, outside in, is
     #
-    #     SecurityHeaders -> SameOrigin -> CookiePromotion -> TokenAuth
+    #     SecurityHeaders -> HostAllowList -> SameOrigin -> CookiePromotion
+    #         -> TokenAuth
     #
+    # HostAllowList sits outside SameOrigin because SameOrigin trusts the
+    # request's own origin, which is built from the Host header -- exactly what
+    # a DNS-rebinding page controls.
     # so the registrations below are in the reverse of that reading order.
     # This used to be written the other way round, which put SecurityHeaders
     # innermost: it then only decorated responses that came back from a route
@@ -276,6 +282,8 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     app.add_middleware(TokenAuthMiddleware, token=token)
     app.add_middleware(CookiePromotionMiddleware, token=token)
     app.add_middleware(SameOriginMiddleware)
+    app.add_middleware(HostAllowListMiddleware,
+                       allowed=allowed_host_names(cfg, host))
     app.add_middleware(SecurityHeadersMiddleware)
 
     # Analysis windows come from config so the dashboard, the charts and the
