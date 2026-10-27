@@ -226,7 +226,7 @@
       "tx29": "0x767"
     }
   ],
-  "generated_at": "2026-10-27T09:36:31+00:00",
+  "generated_at": "2026-10-27T10:15:53+00:00",
   "profiles": {
     "eup": {
       "cell_voltages": null,
@@ -8370,6 +8370,7 @@
       "0x35": "invalidKey",
       "0x36": "exceedNumberOfAttempts",
       "0x72": "generalProgrammingFailure",
+      "0x78": "requestCorrectlyReceived-ResponsePending",
       "0x7E": "subFunctionNotSupportedInActiveSession",
       "0x7F": "serviceNotSupportedInActiveSession"
     },
