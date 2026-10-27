@@ -96,9 +96,23 @@ MAPPINGS: dict[str, tuple[str, str]] = {
     "[19.Gate] Maximum energy content of the traction battery":
         ("hv_energy_max", "Wh"),
     "[19.Gate] 12V Battery voltage":        ("aux_12v_voltage", "V"),
-    "[19.Gate] DC-DC converter current":    ("dcdc_current",   "A"),
-    "[19.Gate] DC-DC converter low voltage": ("dcdc_voltage",   "V"),
+    # The GATEWAY's view of the DC-DC (0x2A53), not the DC/DC module's own
+    # 0x465B/0x465D (dcdc_current/dcdc_voltage, 1/16 A): two different sources
+    # that used to be filed under one key.
+    "[19.Gate] DC-DC converter current":    ("dcdc_gw_current", "A"),
+    "[19.Gate] DC-DC converter low voltage": ("dcdc_gw_voltage", "V"),
 }
+
+# Car Scanner exports its DISPLAY values, and it negates pack current for
+# display (positive = discharging); this project stores the vehicle's own sign
+# (negative = discharging, settled on raw bytes -- see the CURRENT SIGN note in
+# decoders/meb.py). Imported without negation, the Oct-5 rows read +0.56..+1.98
+# A beside live -0.4..-64 A in the same parked state, and anomaly baselines
+# mixed both signs. Pack power is the same display product (V x displayed I).
+NEGATE_ON_IMPORT = frozenset({
+    "[8C.BMS] DC Battery Current",
+    "[8C.BMS] DC Battery power",
+})
 
 # Readings worth keeping that no DID in this project decodes yet -- chiefly the
 # [19.Gate] block named as future work (12 V statistics, DC-DC, range, average
@@ -407,6 +421,8 @@ def main(argv: list[str] | None = None) -> int:
                 skipped_unknown[row["name"]] = \
                     skipped_unknown.get(row["name"], 0) + 1
                 continue
+            if row["name"] in NEGATE_ON_IMPORT:
+                value = -value
 
             ts = stamp(row["seconds"])
             # Re-running must not duplicate. The raw CSV line is a stable

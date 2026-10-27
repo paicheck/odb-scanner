@@ -486,7 +486,8 @@ class Repository:
         args.append(limit)
         return self.conn.execute(sql, args).fetchall()
 
-    def measurement_series(self, vehicle_id: int, key: str, days: int = 30):
+    def measurement_series(self, vehicle_id: int, key: str, days: int = 30,
+                           *, live_only: bool = False):
         """(ts, value) rows for one measurement key, successful reads only,
         oldest first.
 
@@ -506,12 +507,23 @@ class Repository:
         Ordered by (ts, id) so rows sharing a timestamp come back in the same
         order every time; `provenance` travels with each row so a chart can
         tell an imported reading from a live one.
+
+        `live_only` drops imported and simulated rows -- what this vehicle told
+        this collector. Charts keep everything (each row carries its
+        provenance); statistics should not, because an imported value can
+        follow another tool's conventions (Car Scanner negates current) and a
+        simulated one describes no car at all.
         """
+        prov = ("AND provenance NOT LIKE ? AND provenance <> 'simulated' "
+                if live_only else "")
+        args = (vehicle_id, key, _iso_days_ago(days)) + (
+            (IMPORTED_PREFIX + "%",) if live_only else ())
         return self.conn.execute(
             "SELECT ts, value, provenance FROM measurements "
             "WHERE vehicle_id=? AND key=? "
-            "AND success=1 AND value IS NOT NULL AND ts>=? ORDER BY ts, id",
-            (vehicle_id, key, _iso_days_ago(days)),
+            "AND success=1 AND value IS NOT NULL AND ts>=? "
+            + prov + "ORDER BY ts, id",
+            args,
         ).fetchall()
 
     def measurement_series_many(self, vehicle_id: int, keys: list[str],

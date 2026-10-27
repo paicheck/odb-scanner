@@ -70,7 +70,7 @@ def scan_metric(repo, vehicle_id: int, metric: str, description: str,
         ts_list = [r["ts"] for r in hist if r[metric] is not None]
         values = [r[metric] for r in hist if r[metric] is not None]
     else:
-        rows = repo.measurement_series(vehicle_id, metric, days)
+        rows = repo.measurement_series(vehicle_id, metric, days, live_only=True)
         ts_list = [r["ts"] for r in rows]
         values = [r["value"] for r in rows]
     found = detect_series_anomalies(ts_list, values, z_threshold)
@@ -149,7 +149,7 @@ def scan_robust(repo, vehicle_id: int, metric: str, description: str,
         pairs = [(r["ts"], v) for r in rows
                  if (v := _as_float(r[metric])) is not None]
     else:
-        rows = repo.measurement_series(vehicle_id, metric, days)
+        rows = repo.measurement_series(vehicle_id, metric, days, live_only=True)
         pairs = [(r["ts"], v) for r in rows
                  if (v := _as_float(r["value"])) is not None]
     ts_list = [p[0] for p in pairs]

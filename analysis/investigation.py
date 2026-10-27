@@ -182,7 +182,8 @@ def explain_with_baseline(repo, vehicle_id: int, key: str, value: float, *,
     Uses the robust, gap-aware baseline and records the sample size, so a claim
     resting on a handful of samples says so.
     """
-    rows = repo.measurement_series(vehicle_id, key, int(window_days))
+    rows = repo.measurement_series(vehicle_id, key, int(window_days),
+                                   live_only=True)
     ts_list = [r["ts"] for r in rows]
     values = [r["value"] for r in rows]
     base, findings = baseline_mod.detect_outliers(ts_list, values)

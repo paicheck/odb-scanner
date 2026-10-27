@@ -147,7 +147,9 @@ def test_mapped_row_is_stored_under_the_registry_key(tmp_path, capsys):
     rc, out = run(capsys, tmp_path, csv_path, "--dry-run")
 
     assert rc == 0
-    for real in ("hv_energy_max", "aux_12v_voltage", "dcdc_voltage"):
+    # The gateway's DC-DC reading is dcdc_gw_voltage (0x2A53), not the DC/DC
+    # module's own dcdc_voltage (0x465D) -- both are registered keys.
+    for real in ("hv_energy_max", "aux_12v_voltage", "dcdc_gw_voltage"):
         assert real in out, f"{real} is in the registry but was not checked"
     for invented in ("hv_energy_nominal", "lv_voltage", "dcdc_lv_voltage"):
         assert invented not in out, f"{invented} is not a registered key"
@@ -188,3 +190,33 @@ def test_imported_rows_are_labelled_and_carry_their_source(tmp_path, capsys):
     # The original line survives so the SECONDS offset can be recomputed.
     assert "[8C.BMS] DC Battery voltage;431.75;V" in \
         by_key["pack_voltage"]["raw_response"]
+
+
+def test_current_and_power_take_the_vehicles_sign_not_car_scanners(tmp_path, capsys):
+    """Car Scanner negates pack current for display; the vehicle does not.
+
+    Imported as displayed, the Oct-5 rows read +0.56..+1.98 A beside live
+    -0.4..-64 A in the same parked, discharging state, and the anomaly
+    baselines mixed the two signs. The gateway's DC-DC values were also filed
+    under the DC/DC module's own keys.
+    """
+    csv_path = write_export(tmp_path, """
+        "100.0";"[8C.BMS] DC Battery Current";"1.98";"A";
+        "100.0";"[8C.BMS] DC Battery power";"0.85";"kW";
+        "100.0";"[19.Gate] DC-DC converter current";"12.5";"A";
+        "100.0";"[19.Gate] DC-DC converter low voltage";"14.6";"V";
+    """)
+    rc, out = run(capsys, tmp_path, csv_path)
+    assert rc == 0, out
+
+    from database.repository import Repository
+    repo = Repository(str(tmp_path / "import.db"))
+    try:
+        got = {r["key"]: r["value"] for r in repo.conn.execute(
+            "SELECT key, value FROM measurements")}
+    finally:
+        repo.close()
+    assert got["pack_current"] == -1.98
+    assert got["pack_power"] == -0.85
+    assert got["dcdc_gw_current"] == 12.5 and got["dcdc_gw_voltage"] == 14.6
+    assert "dcdc_current" not in got and "dcdc_voltage" not in got
