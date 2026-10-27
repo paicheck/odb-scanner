@@ -227,6 +227,7 @@ private fun CollectorScreen(spec: Spec) {
     // can be changed on the device without rebuilding the app.
     var cloudSettings by remember { mutableStateOf(CloudPrefs.load(context)) }
     var showCloudDialog by remember { mutableStateOf(false) }
+    var showRouteDialog by remember { mutableStateOf(false) }
     var cloudEnabled by remember { mutableStateOf(false) }
     var cloudUrl by remember { mutableStateOf("") }
     var cloudToken by remember { mutableStateOf("") }
@@ -464,6 +465,10 @@ private fun CollectorScreen(spec: Spec) {
                 },
                 modifier = Modifier.weight(1f),
             ) { Text("Cloud") }
+            Button(
+                onClick = { showRouteDialog = true },
+                modifier = Modifier.weight(1f),
+            ) { Text("Route") }
         }
 
         Row(
@@ -550,6 +555,10 @@ private fun CollectorScreen(spec: Spec) {
                 TextButton(onClick = { showDeviceDialog = false }) { Text("Cancel") }
             },
         )
+    }
+
+    if (showRouteDialog) {
+        RouteDialog(onDismiss = { showRouteDialog = false })
     }
 
     if (showCloudDialog) {

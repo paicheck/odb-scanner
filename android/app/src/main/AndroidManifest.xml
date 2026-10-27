@@ -26,6 +26,11 @@
          grant it implicitly. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Route planner: trips start from the phone's position. Coarse is
+         enough to plan energy (navigation itself is the maps app's job), and
+         it is asked only when the driver plans a trip without a typed start. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <!-- Car-phone mode: keep the Bluetooth socket alive with the screen off
          (foreground service), auto-start on boot, and keep the CPU awake. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

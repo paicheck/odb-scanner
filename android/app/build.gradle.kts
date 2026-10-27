@@ -83,6 +83,9 @@ dependencies {
     // the MEB wire form to the same captured truth the Python suite checks, so
     // the phone cannot drift from the desktop transport.
     testImplementation("junit:junit:4.13.2")
+    // android.jar's org.json is a stub on the JVM; PlannerTest parses the
+    // shared route vectors with the real one.
+    testImplementation("org.json:json:20240303")
 }
 
 // This project lives inside a OneDrive-synced folder, and OneDrive's sync agent

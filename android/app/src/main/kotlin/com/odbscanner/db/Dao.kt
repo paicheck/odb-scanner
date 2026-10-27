@@ -16,6 +16,13 @@ interface MeasurementDao {
     @Query("SELECT * FROM measurements WHERE vehicleId = :vehicleId AND key = :key ORDER BY id DESC LIMIT 1")
     suspend fun latestByKey(vehicleId: Long, key: String): MeasurementEntity?
 
+    /** The newest reading of [key] that decoded to a number (route planner, car screen). */
+    @Query(
+        "SELECT * FROM measurements WHERE vehicleId = :vehicleId AND key = :key " +
+            "AND success = 1 AND value IS NOT NULL ORDER BY id DESC LIMIT 1"
+    )
+    suspend fun latestValue(vehicleId: Long, key: String): MeasurementEntity?
+
     /**
      * The newest successful row per key, newest first. The screen used to load
      * the WHOLE table every 3 seconds and de-duplicate in Kotlin; an always-on
