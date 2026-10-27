@@ -61,7 +61,11 @@ class CollectorService : Service() {
         when (intent?.action) {
             ACTION_START -> startCollecting()
             ACTION_STOP -> stopCollecting()
-            ACTION_BOOT -> if (CollectorPrefs.autoStart(this)) startCollecting()
+            // START_STICKY: after the system kills the process it recreates
+            // the service with a NULL intent. That matched nothing here, so no
+            // startForeground and no collect loop ran -- the car phone quietly
+            // stopped logging. Resume if collection was meant to be running.
+            null -> if (CollectorPrefs.collecting(this)) startCollecting() else stopSelf()
         }
         return START_STICKY
     }
@@ -74,6 +78,7 @@ class CollectorService : Service() {
             return
         }
         if (collectJob?.isActive == true) return
+        CollectorPrefs.setCollecting(this, true)
         startForegroundCompat()
         CollectorStatusBus.setRunning(true)
         CollectorStatusBus.setMessage("Starting collection…")
@@ -123,6 +128,7 @@ class CollectorService : Service() {
     }
 
     private fun stopCollecting() {
+        CollectorPrefs.setCollecting(this, false)
         collectJob?.cancel()
         collectJob = null
         CollectorStatusBus.setRunning(false)
@@ -184,7 +190,6 @@ class CollectorService : Service() {
     companion object {
         const val ACTION_START = "com.odbscanner.service.START"
         const val ACTION_STOP = "com.odbscanner.service.STOP"
-        const val ACTION_BOOT = "com.odbscanner.service.BOOT"
         const val CHANNEL_ID = "collector"
         const val NOTIFICATION_ID = 1
         const val POLL_INTERVAL_MS = 5_000L
