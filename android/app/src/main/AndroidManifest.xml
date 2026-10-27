@@ -57,6 +57,24 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
+        <!-- Android Auto: Battery, Route planner and Fault codes on the car
+             screen. Read-only like the rest of the app: the car screens show
+             what the phone database holds and never reach the adapter. -->
+        <service
+            android:name=".car.OdbCarAppService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.CHARGING" />
+            </intent-filter>
+        </service>
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+        <meta-data
+            android:name="androidx.car.app.minCarApiLevel"
+            android:value="2" />
+
         <receiver
             android:name=".service.BootReceiver"
             android:exported="true">

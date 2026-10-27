@@ -78,6 +78,8 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
+    // Android Auto screens (car/): driver-safe templates only.
+    implementation("androidx.car.app:app:1.4.0")
 
     // JVM unit tests (run with :app:testDebugUnitTest). Elm327ProtocolTest pins
     // the MEB wire form to the same captured truth the Python suite checks, so

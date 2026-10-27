@@ -1,0 +1,296 @@
+package com.odbscanner.car
+
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import androidx.car.app.CarContext
+import androidx.car.app.CarToast
+import androidx.car.app.Screen
+import androidx.car.app.constraints.ConstraintManager
+import androidx.car.app.model.Action
+import androidx.car.app.model.ActionStrip
+import androidx.car.app.model.ItemList
+import androidx.car.app.model.ListTemplate
+import androidx.car.app.model.MessageTemplate
+import androidx.car.app.model.Row
+import androidx.car.app.model.SearchTemplate
+import androidx.car.app.model.Template
+import androidx.lifecycle.lifecycleScope
+import com.odbscanner.db.AppDatabase
+import com.odbscanner.db.DtcEntity
+import com.odbscanner.db.MeasurementEntity
+import com.odbscanner.fmtDuration
+import com.odbscanner.headline
+import com.odbscanner.route.PhoneLocation
+import com.odbscanner.route.Place
+import com.odbscanner.route.RoutePrefs
+import com.odbscanner.route.RoutingException
+import com.odbscanner.route.TripPlanner
+import com.odbscanner.route.TripResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.time.Duration
+import java.time.Instant
+import java.util.Locale
+
+/** Most rows a list may show on this car's screen (hosts cap it, often at 6). */
+private fun CarContext.listLimit(): Int = try {
+    getCarService(ConstraintManager::class.java)
+        .getContentLimit(ConstraintManager.CONTENT_LIMIT_TYPE_LIST)
+} catch (_: Exception) {
+    6
+}
+
+/** "3 h ago" for a stored timestamp (Instant.toString()); the car is read in sessions. */
+private fun age(ts: String?): String {
+    val t = ts?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: return "time unknown"
+    val m = Duration.between(t, Instant.now()).toMinutes()
+    return when {
+        m < 1 -> "just now"
+        m < 60 -> "$m min ago"
+        m < 48 * 60 -> "${m / 60} h ago"
+        else -> "${m / (24 * 60)} days ago"
+    }
+}
+
+private fun message(title: String, text: String): Template =
+    MessageTemplate.Builder(text).setTitle(title).setHeaderAction(Action.BACK).build()
+
+private fun loading(title: String): Template =
+    ListTemplate.Builder().setTitle(title).setHeaderAction(Action.BACK)
+        .setLoading(true).build()
+
+private fun navigate(car: CarContext, lat: Double, lon: Double) {
+    try {
+        car.startCarApp(Intent(CarContext.ACTION_NAVIGATE, Uri.parse("geo:$lat,$lon")))
+    } catch (_: Exception) {
+        CarToast.makeText(car, "No navigation app available", CarToast.LENGTH_LONG).show()
+    }
+}
+
+// -- Home ------------------------------------------------------------------------
+class HomeScreen(carContext: CarContext) : Screen(carContext) {
+    override fun onGetTemplate(): Template {
+        val items = ItemList.Builder()
+            .addItem(Row.Builder().setTitle("Battery")
+                .addText("Charge, energy, temperatures")
+                .setOnClickListener { screenManager.push(BatteryScreen(carContext)) }
+                .setBrowsable(true).build())
+            .addItem(Row.Builder().setTitle("Route planner")
+                .addText("Arrival charge and charging stops")
+                .setOnClickListener { screenManager.push(RouteSearchScreen(carContext)) }
+                .setBrowsable(true).build())
+            .addItem(Row.Builder().setTitle("Fault codes")
+                .addText("Stored DTCs from the last scan")
+                .setOnClickListener { screenManager.push(FaultsScreen(carContext)) }
+                .setBrowsable(true).build())
+            .build()
+        return ListTemplate.Builder().setSingleList(items).setTitle("ODB Scanner")
+            .setHeaderAction(Action.APP_ICON).build()
+    }
+}
+
+// -- Battery -----------------------------------------------------------------------
+/**
+ * The newest stored battery readings, each with its age: the phone reads the
+ * car in sessions, so "now" is the last session. Refresh re-reads the database.
+ */
+class BatteryScreen(carContext: CarContext) : Screen(carContext) {
+    private var rows: List<Pair<String, String>>? = null
+
+    private fun load() {
+        lifecycleScope.launch {
+            rows = withContext(Dispatchers.IO) { batteryRows(carContext) }
+            invalidate()
+        }
+    }
+
+    init { load() }
+
+    override fun onGetTemplate(): Template {
+        val r = rows ?: return loading("Battery")
+        if (r.isEmpty()) {
+            return message("Battery",
+                "No battery readings stored yet. Connect the adapter in the phone app.")
+        }
+        val list = ItemList.Builder()
+        r.take(carContext.listLimit()).forEach { (title, text) ->
+            list.addItem(Row.Builder().setTitle(title).addText(text).build())
+        }
+        return ListTemplate.Builder().setSingleList(list.build()).setTitle("Battery")
+            .setHeaderAction(Action.BACK)
+            .setActionStrip(ActionStrip.Builder().addAction(
+                Action.Builder().setTitle("Refresh").setOnClickListener {
+                    rows = null
+                    invalidate()
+                    load()
+                }.build()).build())
+            .build()
+    }
+}
+
+private val BATTERY_KEYS = listOf(
+    Triple("soc_abs", "State of charge (BMS)", "%.1f %%"),
+    Triple("hv_energy_content", "Energy in the battery", "%.1f kWh"),
+    Triple("hv_energy_max", "Usable when full", "%.1f kWh"),
+    Triple("bat_temp_max", "Battery temperature max", "%.0f °C"),
+    Triple("bat_temp_min", "Battery temperature min", "%.0f °C"),
+    Triple("pack_voltage", "Pack voltage", "%.0f V"),
+    Triple("aux_12v_voltage", "12 V battery", "%.2f V"),
+)
+
+private suspend fun batteryRows(context: android.content.Context): List<Pair<String, String>> {
+    val db = AppDatabase.get(context)
+    val vid = db.vehicleDao().getFirst()?.id ?: return emptyList()
+    val dao = db.measurementDao()
+    return BATTERY_KEYS.mapNotNull { (key, title, fmt) ->
+        val m: MeasurementEntity = dao.latestValue(vid, key) ?: return@mapNotNull null
+        val v = m.value!! / (if (key.startsWith("hv_energy")) 1000.0 else 1.0)
+        title to "${String.format(Locale.ROOT, fmt, v)} · ${age(m.ts)}"
+    }
+}
+
+// -- Fault codes ----------------------------------------------------------------------
+class FaultsScreen(carContext: CarContext) : Screen(carContext) {
+    private var dtcs: List<DtcEntity>? = null
+
+    init {
+        lifecycleScope.launch {
+            dtcs = withContext(Dispatchers.IO) {
+                val db = AppDatabase.get(carContext)
+                db.vehicleDao().getFirst()?.id?.let { db.dtcDao().getAll(it) } ?: emptyList()
+            }
+            invalidate()
+        }
+    }
+
+    override fun onGetTemplate(): Template {
+        val all = dtcs ?: return loading("Fault codes")
+        if (all.isEmpty()) {
+            return message("Fault codes",
+                "No fault codes stored. The phone reads them during each collection session.")
+        }
+        val limit = carContext.listLimit()
+        val list = ItemList.Builder()
+        all.take(limit).forEach { d ->
+            list.addItem(Row.Builder().setTitle("${d.code} · ${d.status}")
+                .addText("${d.ecu} · seen ${d.occurrenceCount}× · last ${age(d.lastSeen)}")
+                .build())
+        }
+        val more = all.size - limit
+        return ListTemplate.Builder().setSingleList(list.build())
+            .setTitle(if (more > 0) "Fault codes (${all.size}, $more more on the phone)"
+                      else "Fault codes (${all.size})")
+            .setHeaderAction(Action.BACK).build()
+    }
+}
+
+// -- Route planner -----------------------------------------------------------------------
+/**
+ * Destination search. Before typing, recent destinations are offered: typing
+ * is limited while driving, so a repeat trip is one tap.
+ */
+class RouteSearchScreen(carContext: CarContext) : Screen(carContext) {
+    private var results: List<Place> = RoutePrefs.recent(carContext)
+    private var searching = false
+    private var error: String? = null
+
+    override fun onGetTemplate(): Template {
+        val missing = RoutePrefs.load(carContext).missingKeys
+        if (missing.isNotEmpty()) {
+            return message("Route planner",
+                "Add the free ${missing.joinToString(" and ")} keys in the phone app " +
+                    "(Route → Settings) first.")
+        }
+        val list = ItemList.Builder()
+        error?.let { list.setNoItemsMessage(it) }
+            ?: list.setNoItemsMessage("Search for a destination")
+        results.take(carContext.listLimit()).forEach { p ->
+            list.addItem(Row.Builder().setTitle(p.label)
+                .setOnClickListener { screenManager.push(TripScreen(carContext, p)) }
+                .setBrowsable(true).build())
+        }
+        return SearchTemplate.Builder(object : SearchTemplate.SearchCallback {
+            override fun onSearchSubmitted(searchText: String) {
+                if (searchText.isBlank()) return
+                searching = true
+                invalidate()
+                lifecycleScope.launch {
+                    try {
+                        results = TripPlanner.search(carContext, searchText.trim())
+                        error = if (results.isEmpty()) "No place found" else null
+                    } catch (e: RoutingException) {
+                        results = emptyList()
+                        error = e.message
+                    } finally {
+                        searching = false
+                        invalidate()
+                    }
+                }
+            }
+        }).setHeaderAction(Action.BACK).setSearchHint("Destination")
+            .setShowKeyboardByDefault(false)
+            .setLoading(searching)
+            .apply { if (!searching) setItemList(list.build()) }
+            .build()
+    }
+}
+
+/** The plan for one destination: headline, then each stop (tap to navigate). */
+class TripScreen(carContext: CarContext, private val dest: Place) : Screen(carContext) {
+    private var result: TripResult? = null
+    private var error: String? = null
+
+    init { plan() }
+
+    private fun plan() {
+        if (!PhoneLocation.permitted(carContext)) {
+            carContext.requestPermissions(listOf(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+                granted, _ ->
+                if (granted.isEmpty()) {
+                    error = "Location access is needed to plan from here. Allow it on the phone."
+                    invalidate()
+                } else {
+                    plan()
+                }
+            }
+            return
+        }
+        lifecycleScope.launch {
+            try {
+                result = TripPlanner.plan(carContext, dest, null)
+                RoutePrefs.remember(carContext, dest)
+            } catch (e: RoutingException) {
+                error = e.message
+            } catch (e: Exception) {
+                error = "Planning failed (${e.javaClass.simpleName})"
+            }
+            invalidate()
+        }
+    }
+
+    override fun onGetTemplate(): Template {
+        error?.let { return message("Route planner", it) }
+        val r = result ?: return loading(dest.label)
+        val p = r.plan
+        val list = ItemList.Builder()
+        list.addItem(Row.Builder().setTitle(r.headline())
+            .addText(String.format(Locale.ROOT, "%.0f km · ", p.distanceKm) +
+                fmtDuration(p.driveS + p.chargeS) +
+                if (p.chargeS > 0) " incl. ${fmtDuration(p.chargeS)} charging" else "")
+            .build())
+        p.stops.take(carContext.listLimit() - 2).forEachIndexed { i, s ->
+            list.addItem(Row.Builder().setTitle("${i + 1}. ${s.charger.name}")
+                .addText(String.format(Locale.ROOT,
+                    "%.0f km · %.0f kW · %.0f → %.0f %% · %d min",
+                    s.km, s.charger.powerKw, s.arrivePct, s.departPct, s.chargeMin))
+                .setOnClickListener { navigate(carContext, s.charger.lat, s.charger.lon) }
+                .build())
+        }
+        list.addItem(Row.Builder().setTitle("Navigate to ${dest.label}")
+            .setOnClickListener { navigate(carContext, dest.lat, dest.lon) }.build())
+        return ListTemplate.Builder().setSingleList(list.build()).setTitle(dest.label)
+            .setHeaderAction(Action.BACK).build()
+    }
+}

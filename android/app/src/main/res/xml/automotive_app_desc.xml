@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android Auto: this app draws its car screens with the Car App Library's
+     templates (car/OdbCarAppService.kt). -->
+<automotiveApp>
+    <uses name="template" />
+</automotiveApp>

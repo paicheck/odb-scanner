@@ -93,6 +93,10 @@ the assumption for a home network. Further boundaries:
   a path or the token). `web.map_tiles: off` stops every outside request and
   shows the position as coordinates; it is the only outside origin the CSP
   ever allows.
+* **Route planner:** the Route page sends the start, destination and route
+  to OpenRouteService and OpenChargeMap, from this machine (the keys,
+  `routing.ors_api_key` / `routing.ocm_api_key` in `config.local.yaml`, never
+  reach a web page). Without keys the page only explains how to get them.
 * **DNS rebinding:** a page on `attacker.example` can point that name at
   `127.0.0.1` and so read a loopback dashboard (which needs no token) as if
   same-origin. `HostAllowListMiddleware` refuses any `Host` header that is not

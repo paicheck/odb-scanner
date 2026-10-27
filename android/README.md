@@ -63,6 +63,39 @@ python tools/export_spec.py --sync-android
 CI enforces this: `tests/test_spec_export_in_sync.py` fails if the committed
 spec is stale or the asset differs from it.
 
+## Route planner and Android Auto
+
+**Route** (main screen) plans an electric trip from the phone's position (or a
+typed start): arrival charge, charging stops and journey time, using the
+battery figures the phone last read from the car. It is the dashboard's
+planner ported line for line (`route/Planner.kt`); `PlannerTest` holds it to
+the same `tests/data/route_vectors.json` cases as the Python side, so both give
+the same plan. Each stop and the destination open in the navigation app.
+
+It needs two free API keys, entered under **Route → Settings**:
+[OpenRouteService](https://openrouteservice.org/dev/#/signup) (roads, place
+search) and [OpenChargeMap](https://openchargemap.org/site/profile/applications)
+(chargers). The start, destination and route are sent to those two services.
+Location permission (coarse) is asked only when you plan without a typed start.
+
+**Android Auto** shows three screens on the car display — **Battery** (newest
+stored readings with their age), **Route planner** (recent destinations, search,
+then the plan; tap a stop to navigate) and **Fault codes** — built from the Car
+App Library's driver-safe templates (`car/`). They read the phone's database and
+never reach the adapter. Because the app is not from the Play Store, Android
+Auto lists it only with developer settings on:
+
+1. Android Auto settings on the phone → tap **Version** ten times → developer
+   settings → enable **Unknown sources**.
+2. Install the APK, open the app once, set the route keys.
+3. Connect to the car; *ODB Scanner* appears in the launcher.
+
+The app is declared in the **charging** category, the closest Android Auto has
+to a trip planner; a Play Store release would need Google's review of that
+choice. The car screens could not be tried on a real head unit while building
+them; the Desktop Head Unit (`desktop-head-unit` in the SDK's
+`extras/google/auto`) is the way to try them on a computer.
+
 ## Versioning
 
 The app version is one number, stored once: `version.json` at the repo root.
