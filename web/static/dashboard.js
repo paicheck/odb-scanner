@@ -1196,13 +1196,14 @@
   function initMap() {
     var data = readJSON("position-data");
     var el = document.getElementById("position-map");
-    if (!data || !data.latest || !el) return;
+    if (!data || !el) return;
     if (!window.L) {
-      el.textContent = "Map library failed to load; the coordinates above are the position.";
+      el.textContent = data.latest
+        ? "Map library failed to load; the coordinates above are the position."
+        : "Map library failed to load.";
       el.classList.add("chart-empty", "show");
       return;
     }
-    var latest = [data.latest.lat, data.latest.lon];
     var map = L.map(el, { scrollWheelZoom: false, attributionControl: true });
     if (data.tiles === "osm") {
       L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -1215,6 +1216,14 @@
           'target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
       }).addTo(map);
     }
+    if (!data.latest) {
+      // No fix yet: the configured default view and no marker -- the card's
+      // overlay says why. A guessed dot would be worse than an empty map.
+      var v = data.default_view || [50, 10, 5];
+      map.setView([v[0], v[1]], v[2]);
+      return;
+    }
+    var latest = [data.latest.lat, data.latest.lon];
     var trail = (data.trail || []).map(function (f) { return [f.lat, f.lon]; });
     if (trail.length > 1) {
       L.polyline(trail, { color: INK_3, weight: 2, opacity: 0.55,

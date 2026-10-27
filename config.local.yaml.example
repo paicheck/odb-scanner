@@ -28,6 +28,7 @@
 #   # type in the browser if it is none of those, e.g. a reverse proxy.
 #   # allowed_hosts: ["car-pc.home.arpa"]
 #   map_tiles: off          # no OpenStreetMap tiles: position as coordinates only
+#   map_default_view: [48.2, 16.4, 11]   # map opening view until a fix exists
 
 # database:
 #   # If this checkout lives in OneDrive/Dropbox/iCloud, keep the LIVE database

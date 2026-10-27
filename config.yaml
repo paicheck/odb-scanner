@@ -139,6 +139,9 @@ web:
   # tells their servers roughly where the car is (the tiles around it); "off"
   # requests nothing from outside this machine and shows coordinates only.
   map_tiles: osm
+  # Where the map opens until the first position is recorded: [lat, lon,
+  # zoom]. Labelled on the card as a default view, never as the car's location.
+  map_default_view: [50.0, 10.0, 5]
 
 analysis:
   trend_window_days: 30     # battery trend + overview/chart window

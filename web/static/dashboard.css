@@ -198,3 +198,8 @@
 .position-card .pos-facts strong { color: #0b0b0b; font-size: 14px; }
 .position-map { height: 320px; border-radius: 6px; overflow: hidden; background: #eceae6; }
 .position-map.chart-empty { height: auto; }
+.position-map-wrap { position: relative; }
+.map-overlay { position: absolute; z-index: 500; left: 50%; top: 50%; transform: translate(-50%, -50%);
+               max-width: 420px; padding: 10px 14px; border-radius: 8px; text-align: center;
+               background: rgba(255, 255, 255, 0.94); color: #0b0b0b; font-size: 13px;
+               box-shadow: 0 1px 4px rgba(0, 0, 0, .18); pointer-events: none; }

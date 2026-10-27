@@ -25,6 +25,7 @@ def register(app, ctx) -> None:
     _fresh_window = ctx._fresh_window
     _profile = ctx._profile
     map_tiles = ctx.map_tiles
+    map_default_view = ctx.map_default_view
     bms_refusal = ctx.bms_refusal
     charging_days = ctx.charging_days
     chart_gap_s = ctx.chart_gap_s
@@ -122,6 +123,7 @@ def register(app, ctx) -> None:
             quality=quality,
             where=where,
             map_tiles=map_tiles,
+            map_default_view=map_default_view,
             **panels,
         )
 

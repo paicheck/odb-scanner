@@ -70,14 +70,27 @@
   {% endif %}
   <p class="chart-note">Decoder unverified on this car: the layout of DID 0x2430 comes from evDash's
     parser and one sample from another MEB car. If the marker is clearly wrong, the decode is.</p>
-  <script type="application/json" id="position-data">{{ dict(where, tiles=map_tiles) | tojson }}</script>
   {% else %}
-  <div class="chart-empty show">No GPS position recorded yet.
+  {% set no_fix_text %}No GPS position recorded yet.
     {% if where.reads %}The GPS module was asked {{ where.reads }} time{{ 's' if where.reads != 1 }}
     ({{ where.reads_ok }} answered) without a usable fix.{% else %}The collector reads it
-    (DID 0x2430 on the GPS module) from the next collection session; a position appears once
-    the car has a satellite fix.{% endif %}</div>
+    (DID 0x2430 on the GPS module) from the next collection session; the dot appears once
+    the car has a satellite fix.{% endif %}{% endset %}
+  {% if map_tiles == 'osm' %}
+  {#- Always a map, so the card does not look broken -- but an empty one, at a
+      configured default view, with the reason on top. Never a guessed dot. #}
+  <div class="position-map-wrap">
+    <div id="position-map" class="position-map" role="img"
+         aria-label="Map at the default view; no car position recorded yet"></div>
+    <div class="map-overlay">{{ no_fix_text }}</div>
+  </div>
+  <p class="chart-note">Default view (<code>web.map_default_view</code>), not the car's location.
+    Map tiles come from OpenStreetMap; <code>web.map_tiles: off</code> stops outside requests.</p>
+  {% else %}
+  <div class="chart-empty show">{{ no_fix_text }}</div>
   {% endif %}
+  {% endif %}
+  <script type="application/json" id="position-data">{{ dict(where, tiles=map_tiles, default_view=map_default_view) | tojson }}</script>
 </section>
 {% endif %}
 

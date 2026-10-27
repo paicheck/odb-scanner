@@ -120,11 +120,24 @@ def test_tiles_off_requests_nothing_from_outside(db):
     assert "tile.openstreetmap.org" not in r.headers["content-security-policy"]
 
 
-def test_no_fix_says_so(tmp_path):
+def test_no_fix_still_shows_a_map_at_the_default_view(tmp_path):
     path = str(tmp_path / "e.db")
     r = Repository(path)
     r.ensure_vehicle("SYNTHETIC00000000", make="VW", model="ID.3")
     r.close()
     body = _client(path, "osm").get("/").text
-    assert "No GPS position recorded yet" in body
-    assert 'id="position-map"' not in body
+    assert 'id="position-map"' in body                 # the map is always there
+    assert "No GPS position recorded yet" in body      # ...with the reason on it
+    assert '"latest": null' in body and '"default_view": [50.0, 10.0, 5]' in body
+    assert "not the car's location" in body
+    # With tiles off there is nothing to draw: the reason as text only.
+    off = _client(path, "off").get("/").text
+    assert 'id="position-map"' not in off and "No GPS position recorded yet" in off
+
+
+@pytest.mark.parametrize("value,want", [
+    ([48.2, 16.4, 11], [48.2, 16.4, 11]), (None, [50.0, 10.0, 5]),
+    ([95, 10, 5], [50.0, 10.0, 5]), ("nonsense", [50.0, 10.0, 5])])
+def test_map_default_view_config(value, want):
+    from web.dashboard import _map_view
+    assert _map_view(value) == want

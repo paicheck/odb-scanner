@@ -139,6 +139,22 @@ _templates.env.filters["stale"] = _is_stale
 # have their own caps in web/routes/investigations.py.)
 MAX_QUESTION_CHARS = 1000
 
+# Central Europe at a country-scale zoom: the map's opening view while no fix
+# has been recorded. Overridden by web.map_default_view.
+DEFAULT_MAP_VIEW = [50.0, 10.0, 5]
+
+
+def _map_view(value) -> list:
+    """[lat, lon, zoom] from config, or the default when it is unusable."""
+    try:
+        lat, lon, zoom = (float(v) for v in value)
+    except (TypeError, ValueError):
+        return list(DEFAULT_MAP_VIEW)
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180 and 1 <= zoom <= 19):
+        return list(DEFAULT_MAP_VIEW)
+    return [lat, lon, int(zoom)]
+
+
 # The only third-party origin the dashboard may ever load from: OpenStreetMap's
 # standard tile server, for the car-position map (web.map_tiles = "osm").
 OSM_TILE_ORIGIN = "https://tile.openstreetmap.org"
@@ -308,6 +324,9 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
     map_tiles = str(cfg.get("web.map_tiles", "osm")).strip().lower()
     if map_tiles not in ("osm", "off"):
         map_tiles = "off"
+    # Where the map opens while no position has been recorded: [lat, lon,
+    # zoom]. It is a display default and is labelled as such on the card.
+    map_default_view = _map_view(cfg.get("web.map_default_view"))
     token = resolve_token(cfg, host)
     # The value actually enforced. `main.py serve` prints from this rather
     # than resolving again: if persisting a generated token failed, a second
@@ -742,6 +761,7 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
 
     ctx = SimpleNamespace(
         map_tiles=map_tiles,
+        map_default_view=map_default_view,
         _fresh_window=_fresh_window,
         _profile=_profile,
         _registry_for_meta=_registry_for_meta,
