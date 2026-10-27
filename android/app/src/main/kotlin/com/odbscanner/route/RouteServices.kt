@@ -94,7 +94,9 @@ class RouteServices(
             conn.requestMethod = method
             conn.connectTimeout = timeoutMs
             conn.readTimeout = timeoutMs
-            conn.setRequestProperty("Accept", "application/json")
+            // The route comes back as application/geo+json; accepting only
+            // application/json gets HTTP 406 (ORS error 2007) from OpenRouteService.
+            conn.setRequestProperty("Accept", "application/json, application/geo+json")
             headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
             if (body != null) {
                 conn.doOutput = true
