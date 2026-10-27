@@ -68,11 +68,15 @@ def register(app, ctx) -> None:
                       criteria_ok=ok, criteria_reason=reason)
 
     @app.post("/investigations/new")
-    def create_investigation(request: Request, title: str = Form(...),
-                             symptom: str = Form(...),
-                             anchor_key: str = Form(""),
-                             criteria: str = Form(""),
-                             anchor_ts: str = Form("")):
+    # Every field is stored permanently and rendered on /investigations, so
+    # each is capped (422 above the limit). Starlette's own ceiling is ~1 MB
+    # per field, which is not a limit anyone means.
+    def create_investigation(request: Request,
+                             title: str = Form(..., max_length=200),
+                             symptom: str = Form(..., max_length=2000),
+                             anchor_key: str = Form("", max_length=80),
+                             criteria: str = Form("", max_length=2000),
+                             anchor_ts: str = Form("", max_length=40)):
         from analysis import investigation as inv_mod
         _, vid = vehicle_and_id()
         if not vid:
@@ -96,7 +100,7 @@ def register(app, ctx) -> None:
 
     @app.post("/investigations/{investigation_id}/observe")
     def investigation_observe(request: Request, investigation_id: int,
-                              key: str = Form(...)):
+                              key: str = Form(..., max_length=80)):
         from analysis import investigation as inv_mod
         row = _owned_investigation(investigation_id, writable=True)
         inv_mod.observe_key(repo, row["vehicle_id"], key.strip(), _profile(),
@@ -105,7 +109,7 @@ def register(app, ctx) -> None:
 
     @app.post("/investigations/{investigation_id}/finalize")
     def investigation_finalize(request: Request, investigation_id: int,
-                               summary: str = Form(""),
+                               summary: str = Form("", max_length=4000),
                                criteria_confirmed: bool = Form(False)):
         from analysis import investigation as inv_mod
         _owned_investigation(investigation_id, writable=True)

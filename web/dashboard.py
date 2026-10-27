@@ -95,9 +95,9 @@ def _format_ts(ts):
 _templates.env.filters["fmtnum"] = _format_number
 _templates.env.filters["fmtts"] = _format_ts
 
-# The question is the only unbounded user input in the app: it goes into an
-# LLM prompt and, on the default model, occupies a GPU for minutes. Without a
-# cap a single request can stall the box for anyone else using it.
+# The AI question goes into an LLM prompt and, on the default model, occupies
+# a GPU for minutes, so it gets a tight cap. (The investigation form fields
+# have their own caps in web/routes/investigations.py.)
 MAX_QUESTION_CHARS = 1000
 
 # ---------------------------------------------------------------------------
