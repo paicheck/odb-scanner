@@ -214,7 +214,10 @@ def run_web_checks(cfg: Config) -> None:
     # directly rather than minting a credential it would only discard.
     try:
         from web.dashboard import create_app
-        with TestClient(create_app(cfg, bind_host="127.0.0.1")) as client:
+        # Addressed as a local browser would be: the dashboard refuses unknown
+        # Host names (DNS-rebinding guard), and TestClient's default is "testserver".
+        with TestClient(create_app(cfg, bind_host="127.0.0.1"),
+                        base_url="http://127.0.0.1:8000") as client:
             for path in ("/", "/battery", "/charging", "/dtcs", "/ai"):
                 response = client.get(path)
                 check(f"web {path}", response.status_code == 200,
