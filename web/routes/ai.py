@@ -1,4 +1,5 @@
-"""Local-LLM report pages. Read-only: the model never reaches the car.
+"""AI report pages (local Ollama or a cloud AI). Read-only: the model never
+reaches the car.
 
 Registered by web/dashboard.py:create_app."""
 
@@ -10,7 +11,7 @@ import threading
 from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from ai.ollama import OllamaError
+from ai.ollama import AIError
 from ai.service import DEFAULT_QUESTIONS
 from web.dashboard import MAX_QUESTION_CHARS
 
@@ -38,7 +39,9 @@ def register(app, ctx) -> None:
             request,
             questions=DEFAULT_QUESTIONS,
             reports=[dict(r) for r in reports],
-            ollama_model=svc.llm.model,
+            ai_model=svc.llm.model,
+            ai_where=svc.llm.where,
+            ai_offsite=getattr(svc.llm, "sends_offsite", False),
         )
 
     @app.post("/ai/ask", response_class=HTMLResponse)
@@ -61,7 +64,7 @@ def register(app, ctx) -> None:
         try:
             result = svc.ask(question)
             report, warnings, error = result["report"], result["warnings"], None
-        except OllamaError as exc:
+        except AIError as exc:
             report, warnings, error = "", [], str(exc)
         except Exception as exc:
             # Building the evidence or storing the report failed. The page
@@ -81,5 +84,7 @@ def register(app, ctx) -> None:
             report=report,
             warnings=warnings,
             error=error,
-            ollama_model=svc.llm.model,
+            ai_model=svc.llm.model,
+            ai_where=svc.llm.where,
+            ai_offsite=getattr(svc.llm, "sends_offsite", False),
         )

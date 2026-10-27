@@ -160,16 +160,17 @@ def cmd_sync_cloud(cfg) -> int:
 
 
 def cmd_report(cfg, question: str | None) -> int:
-    from ai.ollama import OllamaError
+    from ai.ollama import AIError
     from ai.service import DEFAULT_QUESTIONS, AnalysisService
     q = question or DEFAULT_QUESTIONS[4]
     with Repository(cfg.db_path) as repo:
         svc = AnalysisService(cfg, repo)
         try:
             result = svc.ask(q)
-        except OllamaError as exc:
-            print(f"Ollama error: {exc}\n"
-                  "Start Ollama and ensure the model is pulled.")
+        except AIError as exc:
+            hint = ("\nStart Ollama and ensure the model is pulled."
+                    if svc.llm.where == "local Ollama" else "")
+            print(f"AI error ({svc.llm.where}): {exc}{hint}")
             return 1
     print(result["report"])
     if result["warnings"]:

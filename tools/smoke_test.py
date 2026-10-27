@@ -270,7 +270,7 @@ def run_safety_checks(cfg: Config) -> None:
 
 # --- stage 5: optional local LLM report --------------------------------------
 def run_llm_checks(cfg: Config) -> None:
-    from ai.ollama import OllamaError
+    from ai.ollama import AIError
     from ai.service import AnalysisService
 
     repo = Repository(cfg.db_path)
@@ -279,7 +279,7 @@ def run_llm_checks(cfg: Config) -> None:
         check("Ollama report generated", bool(result["report"]),
               f"{len(result['report'])} chars, "
               f"{len(result['warnings'])} validator warning(s)")
-    except OllamaError as exc:
+    except AIError as exc:
         check("Ollama report generated", False, str(exc)[:180])
     finally:
         repo.close()

@@ -82,7 +82,10 @@ def test_snapshot_counts_live_imported_simulated_apart(repo):
     (timedelta(hours=5), "5 h ago"), (timedelta(days=3), "3 d ago")])
 def test_age_filter(delta, want):
     from web.dashboard import _format_age
-    assert _format_age(_iso(NOW - delta)) == want
+    # Measured from the real clock, not the module-level NOW: the suite can take
+    # minutes to reach this test, and "12 min ago" then reads "13 min ago".
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    assert _format_age(_iso(now - delta)) == want
     assert _format_age(None) == "age unknown"
 
 

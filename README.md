@@ -97,6 +97,11 @@ the assumption for a home network. Further boundaries:
   to OpenRouteService and OpenChargeMap, from this machine (the keys,
   `routing.ors_api_key` / `routing.ocm_api_key` in `config.local.yaml`, never
   reach a web page). Without keys the page only explains how to get them.
+* **Cloud AI (opt-in):** with `ai.provider` set to a cloud service (Claude,
+  OpenAI, Gemini, Mistral, Groq, OpenRouter, DeepSeek, xAI or any
+  OpenAI-compatible endpoint) the AI Analysis page sends your question and the
+  evidence summary there, with the VIN removed; the page says so. The default,
+  `ollama`, keeps everything on this machine.
 * **DNS rebinding:** a page on `attacker.example` can point that name at
   `127.0.0.1` and so read a loopback dashboard (which needs no token) as if
   same-origin. `HostAllowListMiddleware` refuses any `Host` header that is not
@@ -158,6 +163,15 @@ The same three Ollama keys can be set as the environment variables
 
 Install [Ollama](https://ollama.com) and pull a model, e.g.
 `ollama pull llama3.1:8b`.
+
+Or use a cloud AI instead, with a key in `config.local.yaml` (see the `ai:`
+section of `config.yaml` for the services and `config.local.yaml.example`):
+
+```yaml
+ai:
+  provider: anthropic        # Claude; or openai, gemini, mistral, groq, openrouter, ...
+  api_key: "sk-ant-..."
+```
 
 ## Testing without a car
 

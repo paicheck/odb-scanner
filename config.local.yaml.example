@@ -42,6 +42,13 @@
 #     Tesla: 0.55
 #   consumption_kwh_per_100km: 18.5   # override the measured/default figure
 
+# ai:
+#   # Cloud AI for the AI Analysis page (default: the local Ollama). Keys:
+#   # console.anthropic.com, platform.openai.com, aistudio.google.com, ...
+#   provider: anthropic               # or openai, gemini, mistral, groq, openrouter, ...
+#   api_key: "paste-the-key-here"
+#   model: ""                         # blank for Claude's default; others: name one
+
 # database:
 #   # If this checkout lives in OneDrive/Dropbox/iCloud, keep the LIVE database
 #   # outside it: a sync client copying the .db and its -wal/-shm while the

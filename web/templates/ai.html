@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>AI diagnostic analysis <span class="note" style="font-size:13px">(model: {{ ollama_model }} via local Ollama)</span></h2>
+<h2>AI diagnostic analysis <span class="note" style="font-size:13px">(model: {{ ai_model }} via {{ ai_where }})</span></h2>
 <p class="note">The LLM receives structured evidence computed from your database. It cannot send anything to the vehicle. It interprets; the numbers come from the analysis engine.</p>
+{% if ai_offsite %}<div class="warn">Cloud AI: your question and the evidence summary are sent to <strong>{{ ai_where }}</strong>
+  (the VIN is removed first). Set <code>ai.provider: ollama</code> to keep everything on this machine.</div>{% endif %}
 
 <form method="post" action="/ai/ask">
   <textarea name="question" placeholder="e.g. Have my battery cell voltage differences been getting worse?"></textarea>

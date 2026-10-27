@@ -13,7 +13,11 @@ import requests
 log = logging.getLogger(__name__)
 
 
-class OllamaError(RuntimeError):
+class AIError(RuntimeError):
+    """Any AI backend failure (local or cloud), with a message fit to show."""
+
+
+class OllamaError(AIError):
     pass
 
 
@@ -29,6 +33,9 @@ TRUNCATED_MARKER = "[OUTPUT TRUNCATED: the model hit the num_predict limit]"
 
 
 class OllamaClient:
+    sends_offsite = False            # runs on this machine (or the LAN host set)
+    where = "local Ollama"
+
     def __init__(self, host: str, model: str, timeout: float = 120.0,
                  num_ctx: int = DEFAULT_NUM_CTX,
                  num_predict: int = DEFAULT_NUM_PREDICT):

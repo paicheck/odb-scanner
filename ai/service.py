@@ -1,16 +1,18 @@
-"""AI analysis service: builds evidence context, calls Ollama, validates.
+"""AI analysis service: builds evidence context, calls the AI, validates.
 
 The LLM sees ONLY the structured JSON context built here — never raw data
 dumps and never the ability to send commands. All numbers in the context
 come from the database/statistics engine, so the LLM interprets rather than
-invents.
+invents. The AI is the local Ollama unless ai.provider names a cloud service
+(ai/cloud.py); for a cloud service the context goes with the VIN removed.
 """
 from __future__ import annotations
 
 import logging
 
 from ai import prompts, reports
-from ai.ollama import client_from_config
+from ai.cloud import llm_from_config, redact
+from ai.ollama import AIError
 from analysis import battery as battery_analysis
 from analysis import charging as charging_analysis
 from analysis import dtc as dtc_analysis
@@ -27,11 +29,29 @@ DEFAULT_QUESTIONS = [
 ]
 
 
+class _Unconfigured:
+    """Stands in when ai.* is misconfigured: the dashboard still starts, and
+    asking says what is wrong."""
+    sends_offsite = False
+    where = "not configured"
+    model = "none"
+
+    def __init__(self, reason: str):
+        self.reason = reason
+
+    def generate(self, *a, **kw):
+        raise AIError(self.reason)
+
+
 class AnalysisService:
     def __init__(self, cfg, repo: Repository):
         self.cfg = cfg
         self.repo = repo
-        self.llm = client_from_config(cfg)
+        try:
+            self.llm = llm_from_config(cfg)
+        except AIError as exc:
+            log.warning("AI not configured: %s", exc)
+            self.llm = _Unconfigured(str(exc))
         self.window_days = int(cfg.get("analysis.trend_window_days", 30))
 
     def _resolve_vehicle(self) -> tuple[dict, int | None]:
@@ -110,7 +130,7 @@ class AnalysisService:
 
     def ask(self, question: str) -> dict:
         """Generate an LLM diagnostic report. Returns dict with report and
-        warnings. Raises OllamaError when Ollama is unavailable."""
+        warnings. Raises AIError when the AI is unavailable."""
         # Resolve the vehicle once. The report used to call first_vehicle()
         # again after generate(), which takes minutes on a real model -- so if a
         # second vehicle appeared in that window (the collector registering one,
@@ -118,6 +138,10 @@ class AnalysisService:
         # the evidence it was generated from.
         vehicle, vehicle_id = self._resolve_vehicle()
         context = self.build_context(question, vehicle)
+        if getattr(self.llm, "sends_offsite", False):
+            # Leaving the machine: no VIN in what is sent -- or stored as sent.
+            context = redact(context, vehicle.get("vin"))
+            question = redact(question, vehicle.get("vin"))
         prompt = prompts.interpret_prompt(context, question)
         report = self.llm.generate(prompt, system=prompts.SYSTEM_PROMPT,
                                    temperature=self.cfg.get("ollama.temperature", 0.2))
