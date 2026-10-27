@@ -3500,7 +3500,7 @@ def test_ai_question_length_is_capped(tmp_path, monkeypatch):
     assert client.post("/ai/ask", data={"question": "   "}).status_code == 400
 
 
-def test_dashboard_closes_its_database_on_shutdown(tmp_path):
+def test_dashboard_closes_its_database_on_shutdown(tmp_path, monkeypatch):
     """Repository opened a connection per thread and never closed it, so every
     reload leaked handles and held the SQLite file open -- which is what made
     `main.py prune` fail with PermissionError while the dashboard was running."""
@@ -3519,7 +3519,9 @@ def test_dashboard_closes_its_database_on_shutdown(tmp_path):
     dash.Repository = SpyRepo
     try:
         cfg = _auth_cfg(tmp_path, "127.0.0.1")
-        dash.resolve_token = lambda c, h: None
+        # monkeypatch, not assignment: a bare `dash.resolve_token = ...` was
+        # never undone, so every later test's dashboard enforced no token.
+        monkeypatch.setattr(dash, "resolve_token", lambda c, h: None)
         app = dash.create_app(cfg, bind_host="127.0.0.1")
         with TestClient(app, raise_server_exceptions=False) as client:
             assert client.get("/").status_code == 200
