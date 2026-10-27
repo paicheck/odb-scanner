@@ -18,7 +18,7 @@ from analysis import (
 from analysis import (
     dtc as dtc_analysis,
 )
-from web.dashboard import OVERVIEW_PANELS
+from web.dashboard import OVERVIEW_PANELS, _int_param
 
 
 def register(app, ctx) -> None:
@@ -237,7 +237,7 @@ def register(app, ctx) -> None:
         from decoders.quality import summary
 
         _, vid = vehicle_and_id()
-        limit = int(request.query_params.get("limit", 80))
+        limit = _int_param(request, "limit", 80, 0, 100_000)
         rows = decoder_lab.lab_rows(repo, vid, _profile()) if vid else []
         # Show problems first, then cap: the page exists to surface failures.
         shown = rows[:limit] if limit > 0 else rows

@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
-from web.dashboard import _redirect
+from web.dashboard import _int_param, _redirect
 
 
 def register(app, ctx) -> None:
@@ -168,7 +168,7 @@ def register(app, ctx) -> None:
         if not vid:
             raise HTTPException(status_code=400, detail="No vehicle.")
         fmt = (params.get("format") or "csv").lower()
-        days = int(params.get("days", trend_days))
+        days = _int_param(request, "days", trend_days, 1, 3650)
         is_cell = key.startswith("cell_v_")
         if is_cell:
             try:

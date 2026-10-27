@@ -68,8 +68,11 @@ def register(app, ctx) -> None:
             state=state, ecu=ecu, scoring=scoring_flag)
 
         key = params.get("key") or (filtered[0].key if filtered else None)
-        days = int(params.get("days", trend_days))
-        max_points = min(int(params.get("max_points", 1500)), 20000)
+        # Bounded like every window parameter (_int_param): a bare int() here
+        # turned ?days=x into a 500, and ?days=999999999 into a timedelta
+        # overflow further down.
+        days = _int_param(request, "days", trend_days, 1, 3650)
+        max_points = _int_param(request, "max_points", 1500, 1, 20000)
         method = params.get("method", "min_max")
         chart = {"key": key, "ts": [], "value": [], "raw_points": 0,
                  "returned_points": 0, "downsampled": False, "method": "none"}
@@ -105,7 +108,7 @@ def register(app, ctx) -> None:
             data_kind=params.get("kind") or None,
             state=params.get("state") or None,
             ecu=params.get("ecu") or None,
-            limit=int(params["limit"]) if params.get("limit") else None)
+            limit=_int_param(request, "limit", 0, 0, 100_000) or None)
         return {"total": len(entries), "returned": len(rows),
                 "facets": fac, "entries": [e.as_dict() for e in rows]}
 
@@ -115,8 +118,8 @@ def register(app, ctx) -> None:
         key = params.get("key")
         if not key:
             raise HTTPException(status_code=400, detail="key is required")
-        days = int(params.get("days", trend_days))
-        max_points = min(int(params.get("max_points", 1500)), 20000)
+        days = _int_param(request, "days", trend_days, 1, 3650)
+        max_points = _int_param(request, "max_points", 1500, 1, 20000)
         method = params.get("method", "min_max")
         payload = series_for(key, days, max_points, method)
         payload["observation"] = observation_states([payload["key"]])
@@ -129,7 +132,7 @@ def register(app, ctx) -> None:
         params = request.query_params
         if not vid:
             return {"events": [], "markers": []}
-        days = int(params.get("days", trend_days))
+        days = _int_param(request, "days", trend_days, 1, 3650)
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(
             timespec="seconds")
         kinds = set(params["kinds"].split(",")) if params.get("kinds") else None
@@ -205,10 +208,16 @@ def register(app, ctx) -> None:
                 anchor = None
             if anchor is not None:
                 window_s = window_h * 3600.0
-                lo = (anchor - timedelta(seconds=window_s)).isoformat(
-                    timespec="seconds")
-                hi = (anchor + timedelta(seconds=window_s)).isoformat(
-                    timespec="seconds")
+                try:
+                    lo = (anchor - timedelta(seconds=window_s)).isoformat(
+                        timespec="seconds")
+                    hi = (anchor + timedelta(seconds=window_s)).isoformat(
+                        timespec="seconds")
+                except OverflowError:
+                    # ts=0001-01-01 or 9999-12-31: parses, but the window
+                    # falls outside datetime's range. Same as unparseable.
+                    anchor = None
+            if anchor is not None:
                 events = build_timeline(repo, vid, since=lo, until=hi)
                 measurements = measurement_context(repo, vid, ts,
                                                    window_s=window_s)
