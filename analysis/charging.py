@@ -9,8 +9,19 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 
-def _parse(ts: str) -> datetime:
-    return datetime.fromisoformat(ts)
+def _parse(ts: str) -> datetime | None:
+    """Aware UTC datetime, or None when unparseable.
+
+    Importers and backfills can store naive timestamps (repository.py says so
+    and normalises them in close_session); comparing a naive one with an aware
+    one raised TypeError here, inside the AI evidence builder, and POST
+    /ai/ask returned 500. Naive is read as UTC, as everywhere else.
+    """
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def _iso_days_ago(days: float) -> str:
@@ -38,11 +49,15 @@ def correlate_dtc_with_sessions(repo, vehicle_id: int, days: int = 90,
     correlated_codes: set[str] = set()
     for occ in occurrences:
         occ_ts = _parse(occ["ts"])
+        if occ_ts is None:
+            continue
         best = None
         for s in sessions:
             if not s["ended_at"]:
                 continue
             end = _parse(s["ended_at"])
+            if end is None:
+                continue
             if end <= occ_ts <= end + window:
                 gap_h = (occ_ts - end).total_seconds() / 3600.0
                 if best is None or gap_h < best["gap_hours"]:

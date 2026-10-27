@@ -17,11 +17,26 @@ class OllamaError(RuntimeError):
     pass
 
 
+# Ollama silently truncates a prompt longer than its context window (the
+# default is 2048 or 4096 tokens depending on version), so the evidence or the
+# analyst rules could drop out with no error -- the real evidence packet is
+# already ~12k characters. And with no output cap, a runaway generation ran
+# to the HTTP timeout and the whole report was lost. Both are explicit now.
+DEFAULT_NUM_CTX = 8192
+DEFAULT_NUM_PREDICT = 1024
+
+TRUNCATED_MARKER = "[OUTPUT TRUNCATED: the model hit the num_predict limit]"
+
+
 class OllamaClient:
-    def __init__(self, host: str, model: str, timeout: float = 120.0):
+    def __init__(self, host: str, model: str, timeout: float = 120.0,
+                 num_ctx: int = DEFAULT_NUM_CTX,
+                 num_predict: int = DEFAULT_NUM_PREDICT):
         self.host = host.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.num_ctx = int(num_ctx)
+        self.num_predict = int(num_predict)
 
     def available(self) -> bool:
         try:
@@ -44,7 +59,9 @@ class OllamaClient:
             "model": self.model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": {"temperature": temperature,
+                        "num_ctx": self.num_ctx,
+                        "num_predict": self.num_predict},
         }
         if system:
             payload["system"] = system
@@ -59,14 +76,34 @@ class OllamaClient:
                 f"Run: ollama pull {self.model} (available: "
                 f"{self.list_models()})"
             )
-        r.raise_for_status()
-        data = r.json()
+        # Everything below must surface as OllamaError: callers (the /ai page,
+        # `main.py report`) handle that and nothing else, so a model-runner
+        # crash (HTTP 500) or a proxy's HTML page used to become a 500 page or
+        # a traceback instead of an explained failure.
+        try:
+            r.raise_for_status()
+        except requests.HTTPError as exc:
+            raise OllamaError(f"Ollama returned HTTP {r.status_code}: "
+                              f"{r.text[:300]}") from exc
+        try:
+            data = r.json()
+        except ValueError as exc:
+            raise OllamaError(f"Ollama returned a non-JSON response: "
+                              f"{r.text[:300]!r}") from exc
+        if not isinstance(data, dict):
+            raise OllamaError(f"Unexpected response from Ollama: {data!r}")
         text = data.get("response", "")
         if not text:
             raise OllamaError(f"Empty response from Ollama: {data!r}")
+        if data.get("done_reason") == "length":
+            log.warning("Ollama stopped at num_predict=%d; report truncated",
+                        self.num_predict)
+            text = text.rstrip() + "\n\n" + TRUNCATED_MARKER
         return text
 
 
 def client_from_config(cfg) -> OllamaClient:
-    return OllamaClient(cfg.ollama_host, cfg.ollama_model,
-                        cfg.ollama_timeout)
+    return OllamaClient(
+        cfg.ollama_host, cfg.ollama_model, cfg.ollama_timeout,
+        num_ctx=int(cfg.get("ollama.num_ctx", DEFAULT_NUM_CTX)),
+        num_predict=int(cfg.get("ollama.num_predict", DEFAULT_NUM_PREDICT)))

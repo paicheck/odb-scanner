@@ -4,12 +4,16 @@ Registered by web/dashboard.py:create_app."""
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from ai.ollama import OllamaError
 from ai.service import DEFAULT_QUESTIONS
 from web.dashboard import MAX_QUESTION_CHARS
+
+log = logging.getLogger(__name__)
 
 
 def register(app, ctx) -> None:
@@ -46,6 +50,13 @@ def register(app, ctx) -> None:
             report, warnings, error = result["report"], result["warnings"], None
         except OllamaError as exc:
             report, warnings, error = "", [], str(exc)
+        except Exception as exc:
+            # Building the evidence or storing the report failed. The page
+            # still renders, with the error, rather than a bare 500.
+            log.exception("report generation failed")
+            report, warnings, error = "", [], (
+                f"Report generation failed ({type(exc).__name__}: {exc}). "
+                "See the dashboard log for details.")
         reports_hist = [dict(r) for r in repo.llm_reports(vehicle_and_id()[1])]
         return render(
             "ai.html",

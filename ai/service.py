@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from ai import prompts, reports
-from ai.ollama import OllamaClient
+from ai.ollama import client_from_config
 from analysis import battery as battery_analysis
 from analysis import charging as charging_analysis
 from analysis import dtc as dtc_analysis
@@ -31,8 +31,7 @@ class AnalysisService:
     def __init__(self, cfg, repo: Repository):
         self.cfg = cfg
         self.repo = repo
-        self.llm = OllamaClient(cfg.ollama_host, cfg.ollama_model,
-                                cfg.ollama_timeout)
+        self.llm = client_from_config(cfg)
         self.window_days = int(cfg.get("analysis.trend_window_days", 30))
 
     def _resolve_vehicle(self) -> tuple[dict, int | None]:

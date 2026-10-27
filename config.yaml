@@ -118,6 +118,12 @@ ollama:
   model: "qwen2.5:7b"       # change freely: ollama pull <model>, set here
   temperature: 0.2
   timeout: 300
+  # Context window and output cap sent with every request. Ollama's own
+  # default context (2048-4096 tokens) is smaller than the evidence packet
+  # and truncates it silently; the cap stops a runaway generation running
+  # into the timeout and losing the whole report.
+  num_ctx: 8192
+  num_predict: 1024
 
 web:
   # 0.0.0.0 makes the dashboard reachable from the network so a tablet can
