@@ -132,9 +132,13 @@ class Repository(private val db: AppDatabase) {
         if (ids.isEmpty()) 0 else measurements.markUploaded(ids, at)
     }
 
-    /** The VIN to stamp on uploads, or null when the vehicle is unknown yet. */
-    suspend fun vinFor(vehicleId: Long): String? = withContext(Dispatchers.IO) {
-        (vehicles.getById(vehicleId) ?: vehicles.getFirst())?.vin
+    /**
+     * The VIN of exactly this vehicle row, or null. No fallback to another
+     * vehicle: a reading attributed to the wrong VIN is worse than one with
+     * none, because the cloud archive is keyed by it.
+     */
+    suspend fun vinOf(vehicleId: Long): String? = withContext(Dispatchers.IO) {
+        vehicles.getById(vehicleId)?.vin
     }
 
     /** The most recently used vehicle row, for the startup history view. */

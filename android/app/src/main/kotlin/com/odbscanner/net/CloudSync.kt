@@ -41,14 +41,18 @@ class CloudSync(
     private val connectTimeoutMs: Int = 15_000,
     private val readTimeoutMs: Int = 30_000,
 ) {
-    suspend fun uploadPending(vehicleId: Long = 1L): SyncResult =
+    suspend fun uploadPending(): SyncResult =
         withContext(Dispatchers.IO) {
             check(settings.isUsable) {
                 "Cloud sync needs an API URL and token in its settings"
             }
             // Give pre-cloud rows an id so they can be uploaded too.
             repo.backfillRemoteIds()
-            val vin = repo.vinFor(vehicleId).orEmpty()
+            // Each row's own vehicle. One VIN used to be stamped on every
+            // pending row (vinFor(1), falling back to the first vehicle), so
+            // once a phone had seen two cars, car B's readings were filed in
+            // the shared archive under car A's VIN. Unknown stays null, not "".
+            val vins = mutableMapOf<Long, String?>()
 
             var uploaded = 0
             var duplicates = 0
@@ -57,7 +61,10 @@ class CloudSync(
                 val rows = repo.pendingUploadBatch(batchSize)
                 if (rows.isEmpty()) break
 
-                val response = post(buildPayload(rows, vin))
+                for (id in rows.map { it.vehicleId }.toSet() - vins.keys) {
+                    vins[id] = repo.vinOf(id)
+                }
+                val response = post(buildPayload(rows, vins))
                 uploaded += response.optInt("accepted", 0)
                 duplicates += response.optInt("duplicates", 0)
                 // Only now: the API has durably stored these rows. Marking
@@ -70,7 +77,10 @@ class CloudSync(
             SyncResult(uploaded, batches, duplicates)
         }
 
-    private fun buildPayload(rows: List<MeasurementEntity>, vin: String): JSONObject {
+    private fun buildPayload(
+        rows: List<MeasurementEntity>,
+        vins: Map<Long, String?>,
+    ): JSONObject {
         val source = JSONObject()
             .put("source_id", settings.sourceId)
             .put("kind", "android")
@@ -81,7 +91,7 @@ class CloudSync(
             measurements.put(
                 JSONObject()
                     .put("id", m.remoteId.orEmpty())
-                    .put("vin", vin)
+                    .put("vin", vins[m.vehicleId] ?: JSONObject.NULL)
                     // Instant.toString() ends in 'Z'; the API normalises it.
                     .put("ts", m.ts)
                     .put("ecu", m.ecu)
