@@ -135,6 +135,7 @@ NRC = {
     0x35: "invalidKey",
     0x36: "exceedNumberOfAttempts",
     0x72: "generalProgrammingFailure",
+    0x78: "requestCorrectlyReceived-ResponsePending",
     0x7E: "subFunctionNotSupportedInActiveSession",
     0x7F: "serviceNotSupportedInActiveSession",
 }
@@ -450,6 +451,47 @@ def adapter_refused(lines: list[str]) -> bool:
     return False
 
 
+RESPONSE_PENDING = 0x78
+
+
+def _is_pending(payload: bytes | None) -> bool:
+    return bool(payload) and len(payload) >= 3 and payload[0] == 0x7F \
+        and payload[2] == RESPONSE_PENDING
+
+
+def _split_messages(frames: list[bytes]) -> list[list[bytes]]:
+    """One sender's frames, split into ISO-TP messages.
+
+    A message starts at a single frame (PCI 0) or a first frame (PCI 1);
+    consecutive frames (PCI 2) belong to the first frame before them. A
+    sender can legitimately send more than one message per request: an ECU
+    that needs time answers 7F <sid> 78 (responsePending) and then the real
+    response.
+    """
+    messages: list[list[bytes]] = []
+    for f in frames:
+        if f[0] >> 4 in (0, 1) or not messages:
+            messages.append([f])
+        else:
+            messages[-1].append(f)
+    return messages
+
+
+def _final_answer(frames: list[bytes]) -> bytes | None:
+    """The sender's answer: its last complete non-pending message.
+
+    Only the first message used to be reassembled, so an ECU that sent
+    responsePending before its answer was reported as NRC 0x78 and the real
+    reply was dropped. A pending notice counts only when nothing followed it.
+    """
+    answers = [reassemble(m) for m in _split_messages(frames)]
+    final = [a for a in answers if a and not _is_pending(a)]
+    if final:
+        return final[-1]
+    pending = [a for a in answers if a]
+    return pending[-1] if pending else None
+
+
 def payloads_by_source(lines: list[str]) -> dict[int | None, bytes | None]:
     """Reassemble cleaned ELM327 lines per responding ECU.
 
@@ -466,7 +508,7 @@ def payloads_by_source(lines: list[str]) -> dict[int | None, bytes | None]:
         frame, header = line_to_frame_header(ln)
         if frame is not None:
             groups.setdefault(header, []).append(frame)
-    return {hdr: reassemble(fs) for hdr, fs in groups.items()}
+    return {hdr: _final_answer(fs) for hdr, fs in groups.items()}
 
 
 def parse_elm_lines(lines: list[str]) -> bytes | None:
