@@ -129,11 +129,14 @@ fun RouteDialog(onDismiss: () -> Unit) {
         ActivityResultContracts.RequestPermission(),
     ) { plan() }   // planned either way; without it the start must be typed
 
+    // One window at a time: shown together, the planner's dialog window lands
+    // on top of Settings and hides it, so Settings seemed not to open.
     if (showSettings) {
         RouteSettingsDialog(onDone = {
             settings = RoutePrefs.load(context)
             showSettings = false
         })
+        return
     }
 
     AlertDialog(
@@ -257,7 +260,7 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(countries, { countries = it.take(40) },
-                    label = { Text("Search places in (e.g. GB or GB,FR; blank: anywhere)") },
+                    label = { Text("Countries to search (e.g. GB,FR)") },
                     singleLine = true, modifier = Modifier.fillMaxWidth())
             }
         },
