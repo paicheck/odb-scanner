@@ -17,7 +17,7 @@
 {% set rd = series.get('range_displayed') %}
 <div class="cards">
   <div class="card"><h3>Estimated range (displayed)</h3>
-    <div class="big">{% if rd and rd.stats.n %}{{ rd.stats.latest | fmtnum(0) }} km{% else %}Unavailable{% endif %}</div>
+    <div class="big">{% if rd and rd.stats.n %}{{ rd.stats.latest | fmtnum(0) }} miles{% else %}Unavailable{% endif %}</div>
     <div class="note">{% if rd and rd.stats.n %}vehicle prediction, read {{ rd.coverage.last_ts | fmtts }}; evidence {{ rd.verification | upper }}{% else %}no reading in this window{% endif %}</div></div>
   <div class="card"><h3>Distance in window (odometer)</h3>
     <div class="big">{% if distance.status == 'ok' %}{{ distance.delta | fmtnum(0) }} km{% else %}Unavailable{% endif %}</div>

@@ -124,7 +124,7 @@ def register(app, ctx) -> None:
         ctx["panel_data"]["scatter"] = {
             "pairs": pairs, "tolerance_s": RANGE_SOC_PAIR_TOLERANCE_S,
             "x": {"label": "State of charge (BMS)", "unit_label": "%"},
-            "y": {"label": "Estimated range (displayed)", "unit_label": "km"},
+            "y": {"label": "Estimated range (displayed)", "unit_label": "miles"},
         }
         return render(
             "range.html", request, days=days,

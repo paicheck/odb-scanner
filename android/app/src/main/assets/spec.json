@@ -226,7 +226,7 @@
       "tx29": "0x767"
     }
   ],
-  "generated_at": "2026-10-27T13:09:22+00:00",
+  "generated_at": "2026-10-27T19:48:14+00:00",
   "profiles": {
     "eup": {
       "cell_voltages": null,
@@ -7696,7 +7696,7 @@
           "request_bytes": "222AB5",
           "service": "0x22",
           "slow": false,
-          "unit": "km"
+          "unit": "miles"
         },
         {
           "confidence": "UNKNOWN",
@@ -7720,7 +7720,7 @@
           "request_bytes": "222AB6",
           "service": "0x22",
           "slow": false,
-          "unit": "km"
+          "unit": "miles"
         },
         {
           "confidence": "UNKNOWN",
@@ -7744,7 +7744,7 @@
           "request_bytes": "222AB4",
           "service": "0x22",
           "slow": false,
-          "unit": "km"
+          "unit": "miles"
         },
         {
           "confidence": "UNKNOWN",

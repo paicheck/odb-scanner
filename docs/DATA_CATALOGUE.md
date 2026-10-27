@@ -69,9 +69,9 @@ Measurements 2026-10-05T18:03:02+00:00 -> 2026-10-19T19:32:25+00:00 (UTC)
 - `aux_12v_aging_capacity` - 12V battery aging (capacity) (%) - 53 rows
 - `aux_12v_aging_power` - 12V battery aging (power) (%) - 53 rows
 - `aux_12v_adapted_capacity` - 12V battery adapted capacity (Ah) - 53 rows
-- `range_displayed` - Estimated range (displayed) (km) - 58 rows
-- `range_can` - Estimated range (CAN bus) (km) - 58 rows
-- `range_internal` - Estimated range (internal) (km) - 58 rows
+- `range_displayed` - Estimated range (displayed) (miles) - 58 rows
+- `range_can` - Estimated range (CAN bus) (miles) - 58 rows
+- `range_internal` - Estimated range (internal) (miles) - 58 rows
 - `dcdc_gw_voltage` - DC-DC converter low voltage (V) - 58 rows
 - `dcdc_gw_current` - DC-DC converter current (A) - 58 rows
 - `hv_em_power_limit` - HV-EM power limitation (W) - 58 rows

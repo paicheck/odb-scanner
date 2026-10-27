@@ -97,6 +97,7 @@ _UNIT_POLICY: dict[str, tuple[str, tuple[float, float] | None]] = {
     "W": (SIGNED, None),
     "mV": (ZERO_BASED, None),
     "km": (ZERO_BASED, None),
+    "miles": (ZERO_BASED, None),
     "Wh": (ZERO_BASED, None),
     "kWh/100km": (ZERO_BASED, None),
     "km/h": (ZERO_BASED, None),

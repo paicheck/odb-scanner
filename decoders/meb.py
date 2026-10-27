@@ -1709,12 +1709,17 @@ def _register_modules(reg: DIDRegistry) -> None:
     # extracted MEB profile (profile_EV_MEB_*.json). EXPERIMENTAL: not yet read
     # via this project's own collector, but the addressing and the field layout
     # come straight from Car Scanner's profile, not from a guess.
+    # The three range DIDs are in MILES on this (UK) car: Car Scanner's own
+    # export labels them miles (tools/import_carscanner.py), and the owner's
+    # reading of 194 near 87 % charge only fits miles (194 km would mean about
+    # 24 kWh/100 km). They follow the cluster's distance unit; a car set to km
+    # would report km.
     for key, did, name, unit, sbi, dl, mul, ofs, slow, note in (
         (
             "range_displayed",
             0x2AB6,
             "Estimated range (displayed)",
-            "km",
+            "miles",
             0,
             2,
             1.0,
@@ -1726,7 +1731,7 @@ def _register_modules(reg: DIDRegistry) -> None:
             "range_can",
             0x2AB5,
             "Estimated range (CAN bus)",
-            "km",
+            "miles",
             4,
             2,
             1.0,
@@ -1738,7 +1743,7 @@ def _register_modules(reg: DIDRegistry) -> None:
             "range_internal",
             0x2AB4,
             "Estimated range (internal)",
-            "km",
+            "miles",
             2,
             2,
             1.0,
