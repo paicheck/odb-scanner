@@ -338,13 +338,14 @@ def _build_response(req: bytes, tx: int) -> list[bytes] | None:
             return [bytes([0x06, 0x41, 0x42, (v >> 8) & 0xFF, v & 0xFF, 0x00, 0x00])]
         if pid == 0x0D:
             return [bytes([0x03, 0x41, 0x0D, 38])]
-        return [bytes([0x7F, 0x01, 0x12])]
+        # PCI byte first, as for 0x22 above: a bare 7F 01 12 parsed as silence.
+        return [bytes([0x03, 0x7F, 0x01, 0x12])]  # subFunctionNotSupported
     if sid == 0x09 and len(req) >= 2 and req[1] == 0x02:
         data = bytes([0x49, 0x02, 0x01]) + VIN
         return _isotp_encode(data)
     if sid == 0x03:
         return [bytes([0x02, 0x43, 0x00, 0x00, 0x00])]  # no DTCs
-    return [bytes([0x7F, sid, 0x11])]  # serviceNotSupported
+    return [bytes([0x03, 0x7F, sid, 0x11])]  # serviceNotSupported, with PCI
 
 
 class SimHandler(socketserver.BaseRequestHandler):
