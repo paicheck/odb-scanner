@@ -82,13 +82,28 @@ def register(app, ctx) -> None:
         # to read the battery snapshot table, which carries values forward and
         # merged normalised and absolute SoC into one line.
         panels = panels_context(OVERVIEW_PANELS, days)
-        latest = repo.latest_measurements(vid, max_age_s=86400) if vid else {}
-        lv = latest.get("lv_voltage_obd") or {}
-        speed = latest.get("vehicle_speed") or {}
+        from analysis import data_quality
+        quality = (data_quality.snapshot(repo, vid, days, _profile(), chart_gap_s)
+                   if vid else None)
+        # The headline tiles read the newest live reading of each NAMED signal
+        # -- the same rows the charts draw -- and carry its time. They used to
+        # mix sources: "State of charge" showed the display SoC from the last
+        # battery snapshot (92.9 % at 14:30) above a chart of the BMS SoC whose
+        # latest was 88.8 % at 14:51, with nothing saying which or when. And
+        # the 12 V tile went blank once its reading was a day old, which hid
+        # the reading instead of saying how old it was.
+        latest = repo.latest_measurements(vid, live_only=True) if vid else {}
+
+        def newest(*keys):
+            rows = [dict(latest[k], key=k) for k in keys if latest.get(k)]
+            return max(rows, key=lambda r: r["ts"]) if rows else {}
+
         live = {
-            "lv_voltage_v": lv.get("value"),
-            "lv_voltage_ts": lv.get("ts"),
-            "speed_kmh": speed.get("value"),
+            "soc": newest("soc_abs"),
+            "soc_display": newest("soc_normal"),
+            "pack_voltage": newest("pack_voltage"),
+            "lv": newest("lv_voltage_obd", "aux_12v_voltage"),
+            "speed": newest("vehicle_speed"),
         }
         return render(
             "overview.html",
@@ -101,6 +116,7 @@ def register(app, ctx) -> None:
             live=live,
             gap_s=chart_gap_s,
             bms_refusal=bms_refusal(),
+            quality=quality,
             **panels,
         )
 

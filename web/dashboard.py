@@ -92,8 +92,47 @@ def _format_ts(ts):
     return ts.replace("T", " ")
 
 
+def _age_seconds(ts):
+    """Seconds since an ISO timestamp (naive = UTC), or None."""
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
+
+
+def _format_age(ts):
+    """'just now', '12 min ago', '5 h ago', '3 d ago' -- how old a reading is.
+
+    A latest value without its age reads as current; on a car that is read in
+    sessions days apart, "latest" is usually days old, and that is the single
+    most important thing to know about it.
+    """
+    s = _age_seconds(ts)
+    if s is None:
+        return "age unknown"
+    if s < 90:
+        return "just now"
+    if s < 3600:
+        return f"{round(s / 60)} min ago"
+    if s < 48 * 3600:
+        return f"{round(s / 3600)} h ago"
+    return f"{round(s / 86400)} d ago"
+
+
+def _is_stale(ts, limit_s=24 * 3600):
+    s = _age_seconds(ts)
+    return s is None or s > limit_s
+
+
 _templates.env.filters["fmtnum"] = _format_number
 _templates.env.filters["fmtts"] = _format_ts
+_templates.env.filters["age"] = _format_age
+_templates.env.filters["stale"] = _is_stale
 
 # The AI question goes into an LLM prompt and, on the default model, occupies
 # a GPU for minutes, so it gets a tight cap. (The investigation form fields
@@ -107,12 +146,16 @@ MAX_QUESTION_CHARS = 1000
 # the others stay one checkbox away.
 # ---------------------------------------------------------------------------
 
+# Two panels on one shared time axis, not one chart with two y-scales: a dual
+# axis invites reading the crossing of two lines as meaningful when it is only
+# an artefact of how each scale was fitted.
 OVERVIEW_PANELS = [
-    {"id": "ov-soc-v", "title": "State of charge and pack voltage",
-     "question": "How full was the pack, and what voltage did it report?",
-     "keys": ["soc_abs", "pack_voltage"], "dual": True,
-     "note": "Two units, two labelled axes: SoC (BMS, %) on the left, pack "
-             "voltage (V) on the right."},
+    {"id": "ov-soc", "title": "State of charge (BMS)",
+     "question": "How full was the pack?",
+     "keys": ["soc_abs"]},
+    {"id": "ov-v", "title": "HV pack voltage",
+     "question": "What terminal voltage did the BMS report?",
+     "keys": ["pack_voltage"]},
 ]
 
 BATTERY_PANELS = [

@@ -452,9 +452,14 @@ def test_provisional_resistance_dids_are_not_used_as_health(client):
     assert "ESTIMATED" in body
 
 
-def test_overview_dual_axis_is_labelled(client):
+def test_overview_has_no_dual_axis(client):
+    # SoC and pack voltage used to share one chart with two y-scales; a dual
+    # axis invites reading the lines' crossing as meaningful. Each now has its
+    # own chart on the shared time axis.
     body = client.get("/").text
-    assert "Left axis: %" in body and "Right axis: V" in body
+    assert "Right axis" not in body
+    assert 'id="panel-ov-soc"' in body and 'id="panel-ov-v"' in body
+    assert "Axis: %" in body and "Axis: V" in body
 
 
 # -------------------------------------------- 11. charging semantics

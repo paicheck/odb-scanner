@@ -5,11 +5,14 @@
 <p>No vehicle in database yet. Run <code>python main.py discover</code> (with the simulator: start it first with <code>python main.py simulate</code>) or load test data with <code>python main.py seed</code>.</p>
 {% endif %}
 <div class="cards">
-  <div class="card"><h3>State of charge</h3>
-    <div class="big">{% set soc = battery.get('soc_latest_pct') %}{% if soc is not none %}{{ "%.0f"|format(soc) }}%{% else %}—{% endif %}</div>
-    <div class="note">{% if bms_refusal %}BMS not exposed via OBD ({{ bms_refusal }}) — see Battery page{% else %}window: {{ days }} days, {{ battery.get('samples', 0) }} snapshots{% endif %}</div></div>
+  {% set s = live.soc %}
+  <div class="card"><h3>State of charge (BMS)</h3>
+    <div class="big">{% if s.get('value') is not none %}{{ "%.1f"|format(s.value) }} %{% else %}—{% endif %}</div>
+    <div class="note">{% if bms_refusal %}BMS not exposed via OBD ({{ bms_refusal }}) — see Battery page{% elif s.get('ts') %}<span class="age{% if s.ts | stale %} age-stale{% endif %}" title="{{ s.ts | fmtts }}">{{ s.ts | age }}</span>{% if live.soc_display.get('value') is not none %} · dashboard display SoC {{ "%.1f"|format(live.soc_display.value) }} % (a different definition){% endif %}{% else %}no reading{% endif %}</div></div>
+  {% set v = live.pack_voltage %}
   <div class="card"><h3>Pack voltage</h3>
-    <div class="big">{% set pv = battery.get('pack_voltage_latest_v') %}{% if pv is not none %}{{ "%.1f"|format(pv) }} V{% else %}—{% endif %}</div></div>
+    <div class="big">{% if v.get('value') is not none %}{{ "%.1f"|format(v.value) }} V{% else %}—{% endif %}</div>
+    <div class="note">{% if v.get('ts') %}<span class="age{% if v.ts | stale %} age-stale{% endif %}" title="{{ v.ts | fmtts }}">{{ v.ts | age }}</span>{% else %}no reading{% endif %}</div></div>
   <div class="card"><h3>Cell delta trend</h3>
     {% set cd = battery.cell_delta if battery.cell_delta is mapping else {} %}
     <div class="big">{% if cd.get('current_mv') is not none %}{{ cd.current_mv }} mV{% else %}—{% endif %}</div>
@@ -17,12 +20,14 @@
   <div class="card"><h3>SOH (estimated)</h3>
     <div class="big">{% if battery.get('soh_latest_pct') is not none %}{{ battery.soh_latest_pct }} %{% else %}—{% endif %}</div>
     <div class="note">{{ battery.get('provenance_note') or '' }}</div></div>
+  {% set lv = live.lv %}
   <div class="card"><h3>12 V system</h3>
-    <div class="big">{% if live.get('lv_voltage_v') is not none %}{{ "%.2f"|format(live.lv_voltage_v) }} V{% else %}—{% endif %}</div>
-    <div class="note">OBD-II PID 0x42{% if live.get('lv_voltage_ts') %} · {{ live.lv_voltage_ts[11:19] }} UTC{% endif %}</div></div>
+    <div class="big">{% if lv.get('value') is not none %}{{ "%.2f"|format(lv.value) }} V{% else %}—{% endif %}</div>
+    <div class="note">{% if lv.get('ts') %}{{ 'OBD-II PID 0x42' if lv.key == 'lv_voltage_obd' else 'BMS 12 V reading' }} · <span class="age{% if lv.ts | stale %} age-stale{% endif %}" title="{{ lv.ts | fmtts }}">{{ lv.ts | age }}</span>{% else %}no reading{% endif %}</div></div>
+  {% set sp = live.speed %}
   <div class="card"><h3>Speed</h3>
-    <div class="big">{% if live.get('speed_kmh') is not none %}{{ "%.0f"|format(live.speed_kmh) }} km/h{% else %}—{% endif %}</div>
-    <div class="note">OBD-II PID 0x0D (latest read)</div></div>
+    <div class="big">{% if sp.get('value') is not none %}{{ "%.0f"|format(sp.value) }} km/h{% else %}—{% endif %}</div>
+    <div class="note">{% if sp.get('ts') %}OBD-II PID 0x0D · <span class="age{% if sp.ts | stale %} age-stale{% endif %}" title="{{ sp.ts | fmtts }}">{{ sp.ts | age }}</span>{% else %}no reading{% endif %}</div></div>
   <div class="card"><h3>DTCs</h3>
     <div class="big">{{ dtcs.get('total', 0) }}</div>
     {% for cat, n in dtcs.get('by_category', {}).items() %}
@@ -31,6 +36,43 @@
   <div class="card"><h3>Charging (90 d)</h3>
     <div class="big">{{ charging.get('count', 0) }} sessions</div></div>
 </div>
+
+{% if quality %}
+{% from "_panels.html" import evidence_badge %}
+{% set q = quality %}
+<h3 class="section-h">Data quality — last {{ q.days }} days</h3>
+<p class="chart-sub">How much of what this dashboard shows to trust. Counts are of the car's own
+  readings; imported and simulated rows are counted separately. Details on <a href="/quality">Quality</a>.</p>
+<div class="cards dq-cards">
+  <div class="card"><h3>Last reading</h3>
+    <div class="big{% if q.last_ts | stale %} dq-stale{% endif %}">{{ q.last_ts | age if q.last_ts else 'never' }}</div>
+    <div class="note">{% if q.last_ts %}{{ q.last_ts | fmtts }}{% if q.latest_session %}; that session:
+      {{ q.latest_session.readings }} readings{% if q.latest_session.duration_s >= 60 %} over {{ (q.latest_session.duration_s / 60) | round | int }} min{% endif %}{% endif %}{% else %}no readings in this window{% endif %}</div></div>
+  <div class="card"><h3>Recording sessions</h3>
+    <div class="big">{{ q.sessions }}</div>
+    <div class="note">separate stretches of collection; charts collapse the idle time between them</div></div>
+  <div class="card"><h3>Reads answered</h3>
+    <div class="big">{% if q.success_pct is not none %}{{ q.success_pct | round | int }} %{% else %}—{% endif %}</div>
+    <div class="note">{{ q.reads_ok }} of {{ q.reads }} requests got an answer{% if q.success_pct is not none and q.success_pct < 80 %}; the rest were NO DATA or refused (module asleep, not reachable, or DID not implemented){% endif %}</div></div>
+  <div class="card"><h3>Readings out of range</h3>
+    <div class="big">{{ q.implausible_rows }}</div>
+    <div class="note">{% if q.implausible %}in {{ q.implausible | length }} signal{{ 's' if q.implausible | length != 1 }}, kept and marked ✕ on charts; most: <code>{{ q.implausible[0].key }}</code> ({{ q.implausible[0].count }}){% else %}every reading inside its documented plausible range{% endif %}</div></div>
+  <div class="card dq-wide"><h3>Decoder evidence for the {{ q.signals }} signals read</h3>
+    <div class="dq-evidence">
+      {% for level in ['verified', 'provisional', 'unknown', 'invalid'] %}
+      <span>{{ evidence_badge(level) }} <strong>{{ q.evidence[level] }}</strong></span>
+      {% endfor %}
+      {% if q.uncatalogued %}<span class="chip" title="Stored keys the decoder catalogue does not describe">{{ q.uncatalogued }} not in catalogue</span>{% endif %}
+    </div>
+    <div class="note">Hover a badge for what it means. Unverified values are shown, but read them as indicative.</div></div>
+  <div class="card"><h3>Not from this collector</h3>
+    <div class="big">{{ q.imported_rows + q.simulated_rows }}</div>
+    <div class="note">{{ q.imported_rows }} imported (▲), {{ q.simulated_rows }} simulated (◆); excluded from statistics</div></div>
+  <div class="card"><h3>Retired DIDs</h3>
+    <div class="big">{{ q.retired_dids }}</div>
+    <div class="note">no longer polled because the car said they do not exist; reversible with <code>main.py unsupported-dids --clear</code></div></div>
+</div>
+{% endif %}
 
 {% if vehicle %}
 {% from "_panels.html" import panel, marker_legend %}

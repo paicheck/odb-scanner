@@ -25,10 +25,17 @@
 (function () {
   "use strict";
 
-  var COLORS = ["#0b2340", "#2471a3", "#1e8449", "#e67e22", "#8e44ad",
-                "#c0392b", "#7f8c8d", "#16a085"];
-  var PALETTE = ["#0b2340", "#2471a3", "#1e8449", "#e67e22", "#8e44ad",
-                 "#c0392b", "#7f8c8d", "#16a085", "#2c3e50", "#d35400"];
+  // Categorical series colours, in this fixed order and never cycled past it.
+  // The order is the colour-blind-safety mechanism: it is the validated
+  // reference palette (worst adjacent-pair CVD dE 9.1, normal-vision dE 19.6
+  // on a light surface). The old set opened with a navy and a mid blue that
+  // could not be told apart, which is every two-series chart on the Battery
+  // page. Identity is never colour-alone: every chart with >= 2 series has a
+  // legend, and every series has a text row beneath the chart.
+  var COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4",
+                "#008300", "#6250d6", "#e34948"];
+  var PALETTE = COLORS;
+  var GRID = "#eceae6", AXIS = "#cfccc6", INK_2 = "#52514e", INK_3 = "#76746f";
 
   var PROV_TEXT = {
     reported: "reported by the vehicle",
@@ -140,6 +147,159 @@
     return out;
   }
 
+  // ---- time axis: recording sessions or calendar -------------------------
+  //
+  // The car is read in short sessions days apart, so on a 30-day calendar axis
+  // every chart was a few clusters of dots in empty space, and a session's
+  // readings stacked into an unreadable vertical streak. In "sessions" mode the
+  // idle time between sessions is collapsed into a marked break, so each
+  // session gets real width; tooltips still give the exact UTC time. The
+  // calendar axis is one click away, and the choice is remembered.
+
+  var TIME_MODE_KEY = "odb.timeMode";
+  var MIN_SESSION_MS = 10 * 60e3;
+
+  function getTimeMode() {
+    try {
+      var v = window.localStorage.getItem(TIME_MODE_KEY);
+      if (v === "calendar" || v === "sessions") return v;
+    } catch (e) { /* storage unavailable: use the default */ }
+    return "sessions";
+  }
+
+  function setTimeMode(mode) {
+    try { window.localStorage.setItem(TIME_MODE_KEY, mode); } catch (e) { /* ok */ }
+  }
+
+  function fmtSpan(ms) {
+    var m = Math.round(ms / 60e3);
+    if (m < 60) return m + " min";
+    var h = Math.round(m / 60);
+    if (h < 48) return h + " h";
+    return Math.round(h / 24) + " d";
+  }
+
+  /** Split timestamps into sessions wherever the gap exceeds `gapMs`, and lay
+   *  them out on a compressed axis. Returns null when there is nothing to
+   *  compress (one session, or no data). */
+  function buildTimeline(xs, gapMs) {
+    xs = xs.filter(Number.isFinite).sort(function (a, b) { return a - b; });
+    if (!xs.length) return null;
+    var idle = gapMs > 0 ? gapMs : 15 * 60e3;
+    var sessions = [{ start: xs[0], end: xs[0] }];
+    for (var i = 1; i < xs.length; i++) {
+      var cur = sessions[sessions.length - 1];
+      if (xs[i] - cur.end > idle) sessions.push({ start: xs[i], end: xs[i] });
+      else cur.end = xs[i];
+    }
+    if (sessions.length < 2) return null;
+    var total = 0;
+    sessions.forEach(function (s) {
+      s.dur = s.end - s.start;
+      s.width = Math.max(s.dur, MIN_SESSION_MS);
+      total += s.width;
+    });
+    // All breaks share ~15 % of the axis, however many there are: a fixed
+    // width per break let 14 breaks take most of a narrow chart.
+    var sep = Math.max(total * 0.15 / (sessions.length - 1), 60e3);
+    var pos = 0;
+    sessions.forEach(function (s, k) {
+      s.offset = pos;
+      pos += s.width + (k < sessions.length - 1 ? sep : 0);
+    });
+    function map(t) {
+      for (var k = 0; k < sessions.length; k++) {
+        var s = sessions[k];
+        if (t <= s.end || k === sessions.length - 1) {
+          if (t < s.start) {                      // inside the break before s
+            var prev = sessions[k - 1];
+            if (!prev) return s.offset;
+            var f = (t - prev.end) / (s.start - prev.end);
+            return prev.offset + prev.width + sep * Math.min(1, Math.max(0, f));
+          }
+          var within = s.dur > 0 ? (t - s.start) / s.dur * s.width : s.width / 2;
+          return s.offset + Math.min(s.width, within);
+        }
+      }
+      return pos;
+    }
+    return { sessions: sessions, sep: sep, total: pos, map: map };
+  }
+
+  /** Draws each collapsed break as a shaded band with how long the car was
+   *  idle, so the compression is never invisible. */
+  function breakPlugin(timeline) {
+    return {
+      id: "odbBreaks",
+      beforeDatasetsDraw: function (chart) {
+        if (!timeline) return;
+        var area = chart.chartArea, x = chart.scales.x, ctx = chart.ctx;
+        ctx.save();
+        for (var k = 0; k < timeline.sessions.length - 1; k++) {
+          var s = timeline.sessions[k], nxt = timeline.sessions[k + 1];
+          var a = x.getPixelForValue(s.offset + s.width);
+          var b = x.getPixelForValue(nxt.offset);
+          if (!(b > a)) continue;
+          // One soft band per break; no border lines -- with a dozen sessions
+          // dashed edges turned the plot into stripes. A break too thin to
+          // shade is still marked with a single faint line.
+          if (b - a >= 3) {
+            ctx.fillStyle = "rgba(118,116,111,0.12)";
+            ctx.fillRect(a, area.top, b - a, area.bottom - area.top);
+          } else {
+            ctx.strokeStyle = "rgba(118,116,111,0.35)";
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo((a + b) / 2, area.top);
+            ctx.lineTo((a + b) / 2, area.bottom); ctx.stroke();
+          }
+          if (b - a >= 30) {
+            ctx.fillStyle = INK_3;
+            ctx.font = "10px 'Segoe UI', Arial, sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(fmtSpan(nxt.start - s.end), (a + b) / 2, area.top + 11);
+          }
+        }
+        ctx.restore();
+      },
+    };
+  }
+
+  /** A two-button control that switches every chart on the page. */
+  function timeModeControl(anchor, onChange) {
+    if (!anchor || document.getElementById("time-mode")) return;
+    var wrap = document.createElement("div");
+    wrap.id = "time-mode";
+    wrap.className = "time-mode";
+    wrap.setAttribute("role", "group");
+    wrap.setAttribute("aria-label", "Time axis");
+    var label = document.createElement("span");
+    label.textContent = "Time axis:";
+    wrap.appendChild(label);
+    var opts = [
+      ["sessions", "Recording sessions",
+       "Idle time between recording sessions is collapsed; breaks are marked"],
+      ["calendar", "Calendar time", "Real elapsed time, including idle days"],
+    ];
+    var buttons = [];
+    opts.forEach(function (o) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = o[1];
+      btn.title = o[2];
+      btn.setAttribute("aria-pressed", String(getTimeMode() === o[0]));
+      btn.addEventListener("click", function () {
+        setTimeMode(o[0]);
+        buttons.forEach(function (b, i) {
+          b.setAttribute("aria-pressed", String(opts[i][0] === o[0]));
+        });
+        onChange(o[0]);
+      });
+      buttons.push(btn);
+      wrap.appendChild(btn);
+    });
+    anchor.parentNode.insertBefore(wrap, anchor);
+  }
+
   function finiteValues(points) {
     var out = [];
     for (var i = 0; i < points.length; i++) {
@@ -209,12 +369,12 @@
     };
   }
 
+  /** The unit alone. The panel title already names the quantity, and the old
+   *  "<series name> (<unit>)" was rotated and truncated on narrow charts
+   *  ("voltage spread from individual cells (calcu"). */
   function axisTitle(meta, datasets) {
     if (!datasets.length) return undefined;
     var unit = meta && meta.unit_label ? meta.unit_label : "";
-    if (datasets.length === 1) {
-      return datasets[0].label + (unit ? " (" + unit + ")" : "");
-    }
     return unit || "no unit";
   }
 
@@ -226,14 +386,14 @@
       position: position,
       beginAtZero: !!fallbackZero,
       grid: position === "right" ? { drawOnChartArea: false }
-                                 : { color: "#eef2f5" },
-      border: { color: "#cfd8e0" },
+                                 : { color: GRID },
+      border: { color: AXIS },
       title: title
-        ? { display: true, text: title, font: { size: 11 }, color: "#556" }
+        ? { display: true, text: title, font: { size: 11 }, color: INK_2 }
         : { display: false },
       ticks: {
         font: { size: 10 },
-        color: "#667",
+        color: INK_3,
         callback: function (value) {
           return tickDecimals == null ? fmtNum(Number(value))
                                       : Number(value).toFixed(tickDecimals);
@@ -268,6 +428,7 @@
     destroy(canvas);
 
     var gapMs = spec.gapMs || 0;
+    var timeline = spec.timeline || null;
     var datasets = [];
     var xMin = Infinity;
     var xMax = -Infinity;
@@ -276,6 +437,18 @@
     for (var i = 0; i < (spec.series || []).length; i++) {
       var s = spec.series[i];
       var points = breakGaps(s.points || [], gapMs);
+      if (timeline) {
+        // Gaps are found on real time first, then every point (and the null
+        // that breaks the line) is placed on the compressed axis; `t` keeps
+        // the real time for the tooltip.
+        points = points.map(function (pt) {
+          var q = {};
+          for (var key in pt) q[key] = pt[key];
+          q.t = pt.x;
+          q.x = timeline.map(pt.x);
+          return q;
+        });
+      }
       var vals = finiteValues(points);
       if (!vals.length) continue;
       for (var j = 0; j < points.length; j++) {
@@ -283,8 +456,8 @@
         if (points[j].x < xMin) xMin = points[j].x;
         if (points[j].x > xMax) xMax = points[j].x;
       }
-      var color = s.color || COLORS[i % COLORS.length];
-      var base = vals.length === 1 ? 3.5 : (vals.length <= 150 ? 1.8 : 0);
+      var color = s.color || COLORS[Math.min(i, COLORS.length - 1)];
+      var base = vals.length === 1 ? 4 : (vals.length <= 150 ? 2.5 : 0);
       datasets.push({
         key: s.key,
         label: s.label || "",
@@ -297,7 +470,7 @@
         hidden: !!s.hidden,
         borderColor: color,
         backgroundColor: color,
-        borderWidth: 1.7,
+        borderWidth: 2,
         borderDash: s.derived ? [5, 3] : [],
         pointStyle: function (ctx) {
           var r = ctx.raw;
@@ -332,7 +505,11 @@
     }
     showCanvas(canvasId);
 
-    if (spec.xRange && Number.isFinite(spec.xRange[0]) &&
+    if (timeline) {
+      // Every panel on the page shares the same compressed axis.
+      xMin = 0;
+      xMax = timeline.total;
+    } else if (spec.xRange && Number.isFinite(spec.xRange[0]) &&
         Number.isFinite(spec.xRange[1])) {
       xMin = Math.min(xMin, spec.xRange[0]);
       xMax = Math.max(xMax, spec.xRange[1]);
@@ -345,20 +522,58 @@
     var leftDs = datasets.filter(function (d) { return d.yAxisID === "y"; });
     var rightDs = datasets.filter(function (d) { return d.yAxisID === "y2"; });
 
+    var startByOffset = {};
+    if (timeline) {
+      timeline.sessions.forEach(function (s) { startByOffset[s.offset] = s.start; });
+    }
     var scales = {
       x: {
         type: "linear",
         min: xMin,
         max: xMax,
-        grid: { color: "#eef2f5", drawTicks: false },
-        border: { color: "#cfd8e0" },
-        title: { display: true, text: "Time (UTC)", font: { size: 10 },
-                 color: "#778" },
+        grid: { color: GRID, drawTicks: false, display: !timeline },
+        border: { color: AXIS },
+        title: {
+          display: true,
+          text: timeline
+            ? "Time (UTC) — each block is a recording session; shaded breaks hide the idle time"
+            : "Time (UTC)",
+          font: { size: 10 }, color: INK_3,
+        },
+        afterBuildTicks: timeline ? function (axis) {
+          // One tick per session start: the dates are what anchor a reader.
+          // On a narrow chart, one per calendar day -- several sessions on
+          // the same day otherwise print the same date side by side.
+          // Ticks are thinned by distance along the axis as well: Chart.js's
+          // own label skipping does not apply to ticks set here, and two
+          // sessions close together printed "10-210-24".
+          var seen = {};
+          var minGap = timeline.total * (narrow ? 0.16 : 0.08);
+          var lastKept = -Infinity;
+          axis.ticks = timeline.sessions.filter(function (s) {
+            if (narrow) {
+              var day = fmtTick(s.start, 9 * 86400e3, false);
+              if (seen[day]) return false;
+              seen[day] = true;
+            }
+            if (s.offset - lastKept < minGap) return false;
+            lastKept = s.offset;
+            return true;
+          }).map(function (s) { return { value: s.offset }; });
+        } : undefined,
         ticks: {
-          maxTicksLimit: narrow ? 4 : 8,
+          maxTicksLimit: timeline ? undefined : (narrow ? 4 : 8),
+          autoSkip: true,
+          autoSkipPadding: 12,
+          maxRotation: 0,
           font: { size: 10 },
-          color: "#667",
+          color: INK_3,
           callback: function (value) {
+            if (timeline) {
+              var start = startByOffset[value];
+              return start == null ? "" : fmtTick(start, 9 * 86400e3, false) +
+                (narrow ? "" : " " + fmtTick(start, 0, false));
+            }
             return fmtTick(Number(value), span, narrow);
           },
         },
@@ -370,7 +585,12 @@
     return new Chart(canvas.getContext("2d"), {
       type: "line",
       data: { datasets: datasets },
-      plugins: [markerPlugin(spec.markers || [])],
+      plugins: [
+        breakPlugin(timeline),
+        markerPlugin((spec.markers || []).map(function (m) {
+          return timeline ? { x: timeline.map(m.x), label: m.label } : m;
+        })),
+      ],
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -390,7 +610,9 @@
             filter: function (item) { return item.raw && item.raw.y != null; },
             callbacks: {
               title: function (items) {
-                return items.length ? fmtFull(items[0].raw.x) : "";
+                if (!items.length) return "";
+                var r = items[0].raw;
+                return fmtFull(r.t != null ? r.t : r.x);
               },
               label: function (item) {
                 var ds = item.dataset;
@@ -570,8 +792,13 @@
   }
 
   function singleSeriesChart(canvasId, payload, gapS, markers) {
+    var gapMs = gapMsFrom(gapS);
+    var timeline = getTimeMode() === "sessions"
+      ? buildTimeline((payload.ts || []).map(function (t) { return Date.parse(t); }), gapMs)
+      : null;
     return lineChart(canvasId, {
-      gapMs: gapMsFrom(gapS),
+      gapMs: gapMs,
+      timeline: timeline,
       markers: markers || [],
       axes: { left: payload.axis || null },
       series: [seriesSpec(payload)],
@@ -663,6 +890,7 @@
         });
     }
 
+    timeModeControl(wrap, function () { if (sel.value) load(sel.value); });
     sel.addEventListener("change", function () { load(sel.value); });
     if (daysSel) {
       daysSel.addEventListener("change", function () { load(sel.value); });
@@ -703,7 +931,11 @@
       if (canvas) canvas.style.display = "none";
       if (wrap) wrap.style.display = "none";
       if (empty) empty.classList.add("show");
+      return;
     }
+    timeModeControl(wrap, function () {
+      singleSeriesChart("chart", payload, data.gap_s, markers);
+    });
   }
 
   /** Server-built panels (overview, battery, range, charging session): one
@@ -715,40 +947,66 @@
     var visible = data.visible || {};
     var xr = data.x_range || null;
     var xRange = xr ? [Date.parse(xr[0]), Date.parse(xr[1])] : null;
+    var gapMs = gapMsFrom(data.gap_s);
 
-    data.panels.forEach(function (panel) {
-      var canvasId = "panel-" + panel.id;
-      if (panel.empty) { showEmpty(canvasId); return; }
-      var specs = [];
-      var idx = 0;
-      function add(keys, side) {
-        keys.forEach(function (k) {
-          var p = series[k];
-          if (!p) return;
-          specs.push(seriesSpec(p, {
-            axis: side, color: COLORS[idx++ % COLORS.length],
-            hidden: visible[k] === false,
-          }));
+    // One timeline for the whole page, from every series it draws, so panels
+    // stay aligned session for session.
+    var allXs = [];
+    Object.keys(series).forEach(function (k) {
+      (series[k].ts || []).forEach(function (t) { allXs.push(Date.parse(t)); });
+    });
+    var pageTimeline = buildTimeline(allXs, gapMs);
+    var charts = {};
+
+    function render(mode) {
+      var timeline = mode === "sessions" ? pageTimeline : null;
+      data.panels.forEach(function (panel) {
+        var canvasId = "panel-" + panel.id;
+        if (panel.empty) { showEmpty(canvasId); return; }
+        var specs = [];
+        var idx = 0;
+        function add(keys, side) {
+          keys.forEach(function (k) {
+            var p = series[k];
+            if (!p) return;
+            specs.push(seriesSpec(p, {
+              axis: side, color: COLORS[Math.min(idx++, COLORS.length - 1)],
+              hidden: charts[panel.id + ":" + k] != null
+                ? !charts[panel.id + ":" + k] : visible[k] === false,
+            }));
+          });
+        }
+        add(panel.left || [], "left");
+        add(panel.right || [], "right");
+        var leftKey = (panel.left || [])[0];
+        var rightKey = (panel.right || [])[0];
+        var chart = lineChart(canvasId, {
+          gapMs: gapMs,
+          xRange: xRange,
+          timeline: timeline,
+          axes: {
+            left: panel.left_axis || (leftKey && series[leftKey] ? series[leftKey].axis : null),
+            right: panel.right_axis || (rightKey && series[rightKey] ? series[rightKey].axis : null),
+          },
+          series: specs,
         });
-      }
-      add(panel.left || [], "left");
-      add(panel.right || [], "right");
-      var leftKey = (panel.left || [])[0];
-      var rightKey = (panel.right || [])[0];
-      var chart = lineChart(canvasId, {
-        gapMs: gapMsFrom(data.gap_s),
-        xRange: xRange,
-        axes: {
-          left: panel.left_axis || (leftKey && series[leftKey] ? series[leftKey].axis : null),
-          right: panel.right_axis || (rightKey && series[rightKey] ? series[rightKey].axis : null),
-        },
-        series: specs,
+        charts[panel.id] = chart;
       });
+    }
+
+    render(getTimeMode());
+
+    // Series checkboxes act on whichever chart is current for the panel, and
+    // their state survives a time-axis switch.
+    data.panels.forEach(function (panel) {
       var box = document.querySelector('fieldset[data-panel="' + panel.id + '"]');
-      if (!chart || !box) return;
+      if (!box) return;
       box.querySelectorAll("input[data-key]").forEach(function (input) {
         input.addEventListener("change", function () {
           var key = input.getAttribute("data-key");
+          charts[panel.id + ":" + key] = input.checked;
+          var chart = charts[panel.id];
+          if (!chart) return;
           for (var i = 0; i < chart.data.datasets.length; i++) {
             if (chart.data.datasets[i].key === key) {
               chart.setDatasetVisibility(i, input.checked);
@@ -758,6 +1016,14 @@
         });
       });
     });
+
+    if (pageTimeline) {
+      var firstCard = document.querySelector(".chart-card");
+      var anchor = firstCard && firstCard.parentElement &&
+        firstCard.parentElement.classList.contains("chart-grid")
+        ? firstCard.parentElement : firstCard;
+      timeModeControl(anchor, render);
+    }
 
     if (data.cell_bar) cellBar("cell-bar", data.cell_bar);
     if (data.scatter) rangeScatter("range-soc-scatter", data.scatter);
@@ -780,7 +1046,7 @@
         datasets: [{
           label: "Cell voltage",
           data: cells.map(function (c) { return c.voltage_v; }),
-          backgroundColor: "#2471a3",
+          backgroundColor: COLORS[0],
         }],
       },
       options: {
@@ -843,7 +1109,7 @@
     new Chart(canvas.getContext("2d"), {
       type: "scatter",
       data: { datasets: [{ label: "paired readings", data: pairs,
-                           backgroundColor: "#2471a3", pointRadius: 3 }] },
+                           backgroundColor: COLORS[0], pointRadius: 3 }] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         parsing: { xAxisKey: "x", yAxisKey: "y" },
@@ -896,12 +1162,12 @@
           {
             label: "OK",
             data: rows.map(function (r) { return r.success || 0; }),
-            backgroundColor: "#1e8449",
+            backgroundColor: "#0ca30c",   // status: good
           },
           {
             label: "Failed",
             data: rows.map(function (r) { return r.failed || 0; }),
-            backgroundColor: "#c0392b",
+            backgroundColor: "#d03b3b",   // status: critical
           },
         ],
       },

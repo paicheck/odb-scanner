@@ -28,6 +28,54 @@
 </form>
 {% endmacro %}
 
+{#- How far the decoder behind a key can be trusted, said with an icon and a
+    word (never colour alone) and explained on hover. -#}
+{% set EVIDENCE = {
+  'verified': ('✓', 'Verified', 'Decoder confirmed by independent evidence from this car, and repeatable.'),
+  'provisional': ('◐', 'Provisional', 'Plausible decoder with identifiable evidence, not yet proven on this car.'),
+  'unknown': ('?', 'Unverified', 'Meaning or scaling not confirmed for this car: treat values as indicative.'),
+  'invalid': ('✕', 'Invalid', 'Known to decode wrongly. Shown for completeness; excluded from analysis.'),
+} %}
+
+{% macro evidence_badge(level) %}
+{% set e = EVIDENCE.get(level, ('?', level or 'unknown', '')) %}
+<span class="ev ev-{{ level or 'unknown' }}" title="{{ e[2] }}"><span aria-hidden="true">{{ e[0] }}</span> {{ e[1] }}</span>
+{% endmacro %}
+
+{#- One scannable quality row per series. The full wording that used to be the
+    whole row is kept, folded, under "details". -#}
+{% macro series_row(s, idx) %}
+{% set d = s.axis.decimals if s.axis else none %}
+<li class="series-row">
+  <div class="sr-main">
+    <span class="swatch sw-{{ [idx, 7] | min }}" aria-hidden="true"></span>
+    <strong class="sr-name">{{ s.name }}</strong>
+    {{ evidence_badge(s.verification) }}
+    {% if s.derived %}<span class="chip" title="Computed by the collector from other readings, not reported by the vehicle">calculated</span>{% endif %}
+    {% if s.stats.n %}
+      <span class="sr-latest">latest <strong>{{ s.stats.latest | fmtnum(d) }} {{ s.unit_label }}</strong>
+        <span class="age{% if s.coverage.last_ts | stale %} age-stale{% endif %}"
+              title="{{ s.coverage.last_ts | fmtts }}">{{ s.coverage.last_ts | age }}</span></span>
+      <span class="sr-range">range {{ s.stats.min | fmtnum(d) }} – {{ s.stats.max | fmtnum(d) }}</span>
+      <span class="sr-n">{{ s.stats.n }} reading{{ 's' if s.stats.n != 1 }}</span>
+    {% else %}
+      <span class="sr-none">no readings in this window</span>
+    {% endif %}
+  </div>
+  <div class="sr-flags">
+    {%- if s.plausibility.outside %}<span class="chip chip-bad" title="Kept and drawn with ✕; documented range {{ s.plausibility.range[0] }} to {{ s.plausibility.range[1] }} ({{ s.plausibility.basis }})"><span aria-hidden="true">✕</span> {{ s.plausibility.outside }} outside plausible range</span>{% endif %}
+    {%- if s.plausibility.known_issue %}<span class="chip chip-bad" title="{{ s.plausibility.known_issue }}"><span aria-hidden="true">!</span> {{ 'known decoder issue' if s.verification == 'invalid' else 'catalogue note' }}</span>{% endif %}
+    {%- for p, n in s.provenance_counts.items() if p not in ('reported', 'calculated') %}<span class="chip chip-warn" title="{{ 'Imported from a Car Scanner export, not read by this tool (drawn ▲)' if p.startswith('imported') else ('Simulated: describes no car (drawn ◆)' if p == 'simulated' else p) }}">{{ '▲' if p.startswith('imported') else ('◆' if p == 'simulated' else '•') }} {{ n }} {{ 'imported' if p.startswith('imported') else p }}</span>{% endfor %}
+    {%- if s.unit_conflict %}<span class="chip chip-bad" title="Stored rows also use unit(s): {{ s.unit_conflict | join(', ') }}">mixed units</span>{% endif %}
+    {%- if s.coverage.gaps %}<span class="chip" title="Gaps longer than {{ (s.coverage.gap_threshold_s / 60) | round | int }} min break the line; nothing is interpolated">{{ s.coverage.gaps }} recording gap{{ 's' if s.coverage.gaps != 1 }}</span>{% endif %}
+    {%- if s.downsampled %}<span class="chip" title="Min/max sampling keeps every bucket's extremes">{{ s.returned_points }} of {{ s.raw_points }} points drawn</span>{% endif %}
+  </div>
+  <details class="sr-details"><summary>details</summary>
+    <ul class="series-summary">{{ series_line(s) }}</ul>
+  </details>
+</li>
+{% endmacro %}
+
 {% macro series_line(s) %}
 <li>
   <strong>{{ s.name }}</strong> <code>{{ s.key }}</code>
@@ -92,8 +140,8 @@
     {{ axis_line('Left axis' if p.right else 'Axis', p.left_axis or series[p.left[0]].axis) }}
     {{ axis_line('Right axis', p.right_axis) if p.right }}
   </p>
-  <ul class="series-summary">
-    {% for k in keys %}{{ series_line(series[k]) }}{% endfor %}
+  <ul class="series-rows">
+    {% for k in keys %}{{ series_row(series[k], loop.index0) }}{% endfor %}
   </ul>
   {% if p.note %}<p class="chart-note">{{ p.note }}</p>{% endif %}
 </section>
