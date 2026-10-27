@@ -10,13 +10,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 /**
  * The single Room database, mirroring the Python side's `odb_scanner.db`.
  *
- * Version 2 adds the two cloud-upload columns to `measurements`. It ships a
- * real migration rather than leaning on the destructive fallback, because the
- * whole point of the persisted store is history that survives an app upgrade --
- * dropping it on the way to cloud sync would throw away the readings you were
- * about to upload. The destructive fallback is kept for every OTHER unexpected
- * version, which during development is still the pragmatic choice; the version
- * bumped here so the normal path migrates cleanly is 1 -> 2.
+ * Every version step ships a real migration (1 -> 2 adds the cloud-upload
+ * columns, 2 -> 3 the DTC, charging-session and event tables), and there is NO
+ * destructive fallback. The fallback used to cover every other version change
+ * -- including a downgrade when an older APK is installed -- by dropping every
+ * table, so the un-uploaded measurements and the tx_log safety manifest were
+ * silently wiped. A missing migration now fails loudly at open instead: the
+ * data stays on disk and the next build can migrate it.
+ *
+ * The schema is exported to app/schemas/ (committed), so each version's shape
+ * is on record and a future migration can be tested against the real one.
  */
 @Database(
     entities = [
@@ -29,7 +32,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DiagnosticEventEntity::class,
     ],
     version = 3,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun measurementDao(): MeasurementDao
@@ -95,7 +98,6 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "odb_scanner.db",
                 ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
-                    .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }
             }

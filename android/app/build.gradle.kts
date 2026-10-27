@@ -61,6 +61,12 @@ android {
     }
 }
 
+// Room writes each schema version here (exportSchema = true in AppDatabase);
+// the JSON files are committed so migrations have a history to test against.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.05.00"))
     implementation("androidx.activity:activity-compose:1.9.0")
