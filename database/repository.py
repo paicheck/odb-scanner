@@ -5,6 +5,7 @@ import json
 import logging
 import sqlite3
 import threading
+import weakref
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -144,12 +145,17 @@ class Repository:
         self.path = str(path)
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
-        self._conns: list[sqlite3.Connection] = []
+        # (owning thread, connection). The thread is held weakly so a finished
+        # thread's connection can be found and closed -- see `conn`.
+        self._conns: list[tuple[weakref.ref, sqlite3.Connection]] = []
         self._conns_lock = threading.Lock()
         self._closed = False
         existing = self._stored_schema_version()
-        self.conn.executescript(SCHEMA_SQL)
-        _apply_additive_migrations(self.conn)
+        # Checked BEFORE the schema script runs. It used to run after, so a
+        # refused database had already been changed: every missing table
+        # created, the additive ALTERs applied and the journal mode switched to
+        # WAL -- the opposite of "refusing to write", and worst exactly when an
+        # older build opens a newer database.
         if check_schema and existing is not None \
                 and existing != SCHEMA_VERSION:
             # CREATE TABLE IF NOT EXISTS leaves an older database's tables
@@ -164,6 +170,8 @@ class Repository:
                 f"existing tables may not have the columns this build reads. "
                 f"Start from an empty database, or restore a backup and migrate."
             )
+        self.conn.executescript(SCHEMA_SQL)
+        _apply_additive_migrations(self.conn)
         self.conn.execute(
             "INSERT OR REPLACE INTO meta VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),
@@ -189,8 +197,32 @@ class Repository:
             conn.execute("PRAGMA foreign_keys=ON")
             self._local.conn = conn
             with self._conns_lock:
-                self._conns.append(conn)
+                self._release_finished_threads()
+                self._conns.append((weakref.ref(threading.current_thread()),
+                                    conn))
         return conn
+
+    def _release_finished_threads(self) -> None:
+        """Close connections whose thread has ended. Caller holds the lock.
+
+        One connection per thread is the design, but nothing ever closed the
+        connection of a thread that finished, and the dashboard's sync handlers
+        run on a worker pool whose idle threads are retired after seconds: each
+        replacement opened a new connection while the list kept every old one
+        open -- file handles, page cache and, on Windows, file locks -- for the
+        life of the process.
+        """
+        alive = []
+        for ref, conn in self._conns:
+            thread = ref()
+            if thread is not None and thread.is_alive():
+                alive.append((ref, conn))
+                continue
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+        self._conns = alive
 
     def _stored_schema_version(self) -> int | None:
         """Version recorded in an existing database, or None if it is new."""
@@ -211,7 +243,7 @@ class Repository:
     def close(self) -> None:
         self._closed = True
         with self._conns_lock:
-            conns, self._conns = self._conns, []
+            conns, self._conns = [c for _, c in self._conns], []
         for conn in conns:
             try:
                 conn.close()
@@ -810,8 +842,16 @@ class Repository:
             else:
                 max_id_before = self.max_measurement_id()
                 for table in tables:
-                    cur = self.conn.execute(f"DELETE FROM {table} WHERE ts < ?",
-                                            (cutoff,))
+                    # A session still open (charging right now, or left open
+                    # by a crash) keeps every sample: close_session integrates
+                    # whatever samples remain, so trimming its early ones
+                    # would understate the session's energy for good.
+                    keep_open = (" AND session_id NOT IN (SELECT id FROM "
+                                 "charging_sessions WHERE status='open')"
+                                 if table == "charging_samples" else "")
+                    cur = self.conn.execute(
+                        f"DELETE FROM {table} WHERE ts < ?{keep_open}",
+                        (cutoff,))
                     removed[table] = cur.rowcount
                 self.note_measurement_deletes(max_id_before)
             self.conn.commit()

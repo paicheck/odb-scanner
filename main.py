@@ -549,9 +549,10 @@ def cmd_prune(cfg, days: float, hard: bool) -> int:
     with Repository(cfg.db_path) as repo:
         before = _db_size_mb(cfg.db_path)
         removed = repo.prune(days=days, keep_raw=not hard)
-        if not hard:
-            # Freeing pages needs VACUUM, which cannot run inside a transaction.
-            repo.vacuum()
+        # Freeing pages needs VACUUM, which cannot run inside a transaction.
+        # Both modes: a hard prune deletes the most and used to be the one
+        # that never gave the space back.
+        repo.vacuum()
         after = _db_size_mb(cfg.db_path)
     what = ("raw payloads" if not hard else "rows")
     print(f"Pruned {what} older than {days:g} days (cutoff {removed['cutoff']}):")
