@@ -161,6 +161,26 @@ class Elm327ProtocolTest {
     }
 
     @Test
+    fun `functional addressing uses the 29-bit protocol like Python`() {
+        // 18DB33F1 (ATCP 18 + ATSH DB33F1) only exists on the 29-bit bus. The
+        // phone restored functional addressing under ATSP6, so its functional
+        // DTC reads never reached it; diagnostic/elm327.py pins protocol 7.
+        val port = RecordingPort()
+        val p = protocol(port)
+        p.init()
+        assertTrue("init did not pin ATSP7: ${port.sent}", "ATSP7" in port.sent)
+        p.setModule(spec11Bit())
+        port.sent.clear()
+
+        p.setModule(null)
+
+        val sp = port.sent.indexOf("ATSP7")
+        assertTrue("functional restore did not select ATSP7: ${port.sent}", sp >= 0)
+        assertTrue(sp < port.sent.indexOf("ATSH DB33F1"))
+        assertFalse("ATSP6 used for functional reads: ${port.sent}", "ATSP6" in port.sent)
+    }
+
+    @Test
     fun `returning to functional addressing clears the module filter`() {
         // A pinned ATCRA is invisible while reading one module physically: the
         // filter matches its answers. It only breaks the NEXT functional read,

@@ -140,7 +140,12 @@ class Elm327Protocol(
     }
 
     private fun restoreFunctional() {
-        at("ATSP6")
+        // Protocol 7 (29-bit), as diagnostic/elm327.py PINNED_PROTOCOL: the
+        // functional id 18DB33F1 (ATCP 18 + ATSH DB33F1) only exists on the
+        // 29-bit bus. Under ATSP6 the header was applied as 11 bits, so the
+        // functional 03 / 19 02 8F DTC reads never reached 18DB33F1 and an
+        // empty answer looked exactly like "no DTCs".
+        at("ATSP7")
         at("ATCP 18")
         at("ATSH DB33F1")
         // Plain ATCRA restores the receive filters to their default. It is the
@@ -213,7 +218,10 @@ class Elm327Protocol(
     private fun byteHex(v: Int) = v.toString(16).uppercase().padStart(2, '0')
 
     private companion object {
-        val BASE_INIT = listOf("ATE0", "ATL0", "ATS0", "ATH1", "ATAT1", "ATSP6", "ATCAF1")
-        val CRITICAL_INIT = setOf("ATSP6", "ATCAF1")
+        // ATSP7 as on the Python side (PINNED_PROTOCOL = "7"): the MEB
+        // diagnostic bus answers on 29-bit ids. 11-bit modules switch to
+        // ATSP6 themselves in setModule().
+        val BASE_INIT = listOf("ATE0", "ATL0", "ATS0", "ATH1", "ATAT1", "ATSP7", "ATCAF1")
+        val CRITICAL_INIT = setOf("ATSP7", "ATCAF1")
     }
 }
