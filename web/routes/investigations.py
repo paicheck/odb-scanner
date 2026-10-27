@@ -7,6 +7,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from datetime import datetime, timezone
 
 from fastapi import Form, HTTPException, Request
@@ -135,6 +136,16 @@ def register(app, ctx) -> None:
         return {"investigations": out}
 
     # ---- evidence export (CSV / JSON downloads) -----------------------------
+    def _disposition(filename: str) -> str:
+        """An attachment header that cannot be broken by the name inside it.
+
+        Filenames embed a query-supplied key: `key=a"b` closed the quoted
+        string early, and a non-Latin-1 key raised while the header was
+        encoded (a 500). Anything outside [A-Za-z0-9._-] becomes '_'.
+        """
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", filename)[:120] or "export"
+        return f'attachment; filename="{safe}"'
+
     def _csv_download(rows: list[dict], columns: list[str],
                       filename: str) -> Response:
         buf = io.StringIO()
@@ -145,13 +156,13 @@ def register(app, ctx) -> None:
             writer.writerow({c: r.get(c) for c in columns})
         return Response(
             content=buf.getvalue(), media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+            headers={"Content-Disposition": _disposition(filename)})
 
     def _json_download(payload: object, filename: str) -> Response:
         return Response(
             content=json.dumps(payload, indent=2, default=str),
             media_type="application/json",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+            headers={"Content-Disposition": _disposition(filename)})
 
     def _stamp() -> str:
         return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -164,10 +175,16 @@ def register(app, ctx) -> None:
         failed reads, text decodes and the raw response bytes included -- so an
         exported file can be re-examined without the dashboard's sampling.
         """
+        from decoders.aliases import resolve
+
         params = request.query_params
         key = params.get("key")
         if not key:
             raise HTTPException(status_code=400, detail="key is required")
+        # The stored key, as series_for() resolves it for the chart: exporting
+        # an alias (accelerator_pedal_pct) used to return zero rows while the
+        # chart for the same key showed data.
+        key = resolve(key)
         _, vid = vehicle_and_id()
         if not vid:
             raise HTTPException(status_code=400, detail="No vehicle.")
@@ -200,10 +217,9 @@ def register(app, ctx) -> None:
             ],
             "rows": rows,
         }
-        safe = key.replace("/", "_")
         if fmt == "json":
-            return _json_download(payload, f"{safe}_{_stamp()}.json")
-        return _csv_download(rows, columns, f"{safe}_{_stamp()}.csv")
+            return _json_download(payload, f"{key}_{_stamp()}.json")
+        return _csv_download(rows, columns, f"{key}_{_stamp()}.csv")
 
     @app.get("/api/export/discovery")
     def export_discovery(request: Request):
