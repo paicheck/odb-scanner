@@ -12,6 +12,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.odbscanner.MainActivity
+import com.odbscanner.ai.AiPrefs
+import com.odbscanner.ai.Speaker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +39,7 @@ data class ActiveTrip(
     val chargedSincePlan: Boolean = false,
     val lastPct: Double? = null,
     val charging: Boolean = false,
+    val announced: Set<String> = emptySet(),   // stops already announced aloud
 )
 
 /**
@@ -125,6 +128,7 @@ object TripMonitor {
             stop()
             return@withLock
         }
+        announceStopAhead(context, trip, at.kmAlong)
         val expected = Replan.expectedPct(plan.profile, at.kmAlong) ?: plan.startPct
         val car = CarEnergy.load(context)
         val readMs = car.startTs?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
@@ -178,10 +182,46 @@ object TripMonitor {
         update {
             it.copy(result = fresher, plannedAtMs = now, replans = it.replans + 1,
                 lastPct = seen, charging = false, chargedSincePlan = false,
-                note = "Re-planned: $reason")
+                note = "Re-planned: $reason", announced = emptySet())
         }
         if (before != after || fresher.plan.status == "unreachable") {
             notify(context, "Route updated", changeText(fresher, reason))
+            speak(context, "Route updated. " + changeSpeech(fresher))
+        } else if (!force && actual < expected - Replan.DRIFT_PCT) {
+            speak(context, Replan.stillOkSpeech(actual, expected, fresher.plan.arrivalPct))
+        }
+    }
+
+    /** Say the next charging stop once, a few minutes before it. */
+    private fun announceStopAhead(context: Context, trip: ActiveTrip, kmAlong: Double) {
+        val stops = trip.result.plan.stops
+        val i = stops.indexOfFirst { it.km > kmAlong - 0.5 }
+        if (i < 0) return
+        val s = stops[i]
+        val ahead = s.km - kmAlong
+        val key = "${s.charger.name}@${s.km}"
+        if (ahead > Replan.ANNOUNCE_STOP_KM || key in trip.announced) return
+        update { it.copy(announced = it.announced + key) }
+        val road = trip.result.steps.lastOrNull { it.km <= s.km }?.road ?: ""
+        speak(context, Replan.stopAheadSpeech(i, s, ahead.coerceAtLeast(0.0), road))
+    }
+
+    /** Spoken alerts, when the driver has them on (Assistant settings). */
+    private fun speak(context: Context, text: String) {
+        if (AiPrefs.load(context).speakAlerts) Speaker.say(context, text)
+    }
+
+    private fun changeSpeech(r: TripResult): String {
+        val p = r.plan
+        val next = p.stops.firstOrNull()
+        return when {
+            p.status == "unreachable" -> "This charge no longer reaches the destination. " +
+                "Check the planner when you can stop."
+            next == null -> String.format(Locale.UK,
+                "No charging needed now. You arrive with %.0f percent.", p.arrivalPct ?: 0.0)
+            else -> String.format(Locale.UK, "Next charging stop: %s, %s. Arrive with %.0f percent.",
+                next.charger.name, Replan.milesAhead(next.km).replaceFirst("In", "in"),
+                next.arrivePct)
         }
     }
 

@@ -65,6 +65,29 @@ object Replan {
     }
 
     const val AT_STOP_KM = 3.0
+    const val ANNOUNCE_STOP_KM = 8.0       // about five miles: a few minutes' warning
+    private const val MILES_PER_KM = 0.621371
+
+    /** "In about 4 miles" / "In under a mile", for speech. */
+    fun milesAhead(km: Double): String {
+        val miles = km * MILES_PER_KM
+        return if (miles < 1.0) "In under a mile" else "In about ${Math.round(miles)} " +
+            (if (Math.round(miles) == 1L) "mile" else "miles")
+    }
+
+    /** What is said as a charging stop comes up (index from 0). */
+    fun stopAheadSpeech(index: Int, stop: Stop, kmAhead: Double, road: String): String =
+        String.format(Locale.UK, "%s, charging stop %d: %s%s. Charge from %.0f to %.0f percent, " +
+            "about %d minutes, £%.2f.",
+            milesAhead(kmAhead), index + 1, stop.charger.name,
+            if (road.isNotBlank()) ", on the $road" else "",
+            stop.arrivePct, stop.departPct, stop.chargeMin, stop.cost)
+
+    /** Said when the charge is below plan but the stops still work. */
+    fun stillOkSpeech(actual: Double, expected: Double, arrivalPct: Double?): String =
+        String.format(Locale.UK, "Charge is %.0f percent, %.0f below plan. The plan still works",
+            actual, expected - actual) +
+            (arrivalPct?.let { String.format(Locale.UK, ": you arrive with %.0f percent.", it) } ?: ".")
 
     /**
      * The planned stop the car is at, if any. There the plan's charge jumps

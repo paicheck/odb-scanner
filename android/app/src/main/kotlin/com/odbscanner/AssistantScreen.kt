@@ -1,5 +1,9 @@
 package com.odbscanner
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,12 +36,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.odbscanner.ai.AiException
 import com.odbscanner.ai.AiPrefs
 import com.odbscanner.ai.AiPresets
 import com.odbscanner.ai.Assistant
 import com.odbscanner.ai.ClaudeChatSession
 import com.odbscanner.ai.OpenAiChatSession
+import com.odbscanner.ai.VoiceAssistant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,6 +59,11 @@ fun AssistantDialog(onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     val lines by Assistant.transcript.collectAsState()
     val busy by Assistant.busy.collectAsState()
+    val voice by VoiceAssistant.state.collectAsState()
+    // The microphone is asked for on the first Speak; then it listens at once.
+    val askMic = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) scope.launch { VoiceAssistant.converse(context) } }
     var question by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(!Assistant.ready(context)) }
     val settings = remember(showSettings) { AiPrefs.load(context) }
@@ -89,11 +100,27 @@ fun AssistantDialog(onDismiss: () -> Unit) {
                         else MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(top = 6.dp))
                 }
-                if (busy) Text("Thinking…", style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 6.dp))
+                val status = when (voice) {
+                    VoiceAssistant.State.LISTENING -> "Listening…"
+                    VoiceAssistant.State.SPEAKING -> "Speaking…"
+                    else -> if (busy) "Thinking…" else null
+                }
+                status?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 6.dp))
+                }
                 OutlinedTextField(question, { question = it.take(500) },
                     label = { Text("Ask") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        enabled = !busy && voice == VoiceAssistant.State.IDLE,
+                        onClick = {
+                            if (ContextCompat.checkSelfPermission(context,
+                                    Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                            ) scope.launch { VoiceAssistant.converse(context) }
+                            else askMic.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                    ) { Text("Speak") }
                     Button(onClick = { send() }, enabled = !busy && question.isNotBlank()) {
                         Text("Send")
                     }

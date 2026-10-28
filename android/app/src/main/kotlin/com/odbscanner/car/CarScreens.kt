@@ -2,6 +2,7 @@ package com.odbscanner.car
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.car.app.CarContext
 import androidx.car.app.CarToast
@@ -15,7 +16,11 @@ import androidx.car.app.model.MessageTemplate
 import androidx.car.app.model.Row
 import androidx.car.app.model.SearchTemplate
 import androidx.car.app.model.Template
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.odbscanner.ai.Assistant
+import com.odbscanner.ai.Speaker
+import com.odbscanner.ai.VoiceAssistant
 import com.odbscanner.db.AppDatabase
 import com.odbscanner.db.DtcEntity
 import com.odbscanner.db.MeasurementEntity
@@ -87,9 +92,64 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
                 .addText("Stored DTCs from the last scan")
                 .setOnClickListener { screenManager.push(FaultsScreen(carContext)) }
                 .setBrowsable(true).build())
+            .addItem(Row.Builder().setTitle("Assistant")
+                .addText("Ask about the battery, the trip, chargers")
+                .setOnClickListener { screenManager.push(AssistantScreen(carContext)) }
+                .setBrowsable(true).build())
             .build()
         return ListTemplate.Builder().setSingleList(items).setTitle("ODB Scanner")
             .setHeaderAction(Action.APP_ICON).build()
+    }
+}
+
+// -- Assistant -----------------------------------------------------------------------
+/**
+ * Speak to the assistant from the car: tap Speak, ask, hear the answer (also
+ * shown). It listens through the phone's microphone and answers through the
+ * car's speakers; the conversation is the one the phone shows.
+ */
+class AssistantScreen(carContext: CarContext) : Screen(carContext) {
+    init {
+        lifecycleScope.launch { VoiceAssistant.state.collect { invalidate() } }
+        lifecycleScope.launch { Assistant.transcript.collect { invalidate() } }
+    }
+
+    private fun speak() {
+        fun go() {
+            lifecycleScope.launch { VoiceAssistant.converse(carContext) }
+        }
+        if (ContextCompat.checkSelfPermission(carContext, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) go()
+        else carContext.requestPermissions(listOf(Manifest.permission.RECORD_AUDIO)) { granted, _ ->
+            if (granted.isNotEmpty()) go()
+        }
+    }
+
+    override fun onGetTemplate(): Template {
+        if (!Assistant.ready(carContext)) {
+            return message("Assistant",
+                "Choose an AI service and add its key on the phone (Ask AI, Settings) first.")
+        }
+        val last = Assistant.transcript.value.lastOrNull { !it.fromDriver }?.text
+        val text = when (VoiceAssistant.state.value) {
+            VoiceAssistant.State.LISTENING -> "Listening…"
+            VoiceAssistant.State.THINKING -> "Thinking…"
+            else -> last ?: "Tap Speak and ask about the battery, your trip, the next charging " +
+                "stop or chargers nearby."
+        }
+        val idle = VoiceAssistant.state.value == VoiceAssistant.State.IDLE
+        val template = MessageTemplate.Builder(text).setTitle("Assistant")
+            .setHeaderAction(Action.BACK)
+        if (idle) {
+            template.addAction(Action.Builder().setTitle("Speak")
+                .setFlags(Action.FLAG_PRIMARY).setOnClickListener { speak() }.build())
+            if (last != null) {
+                template.addAction(Action.Builder().setTitle("Repeat")
+                    .setOnClickListener { Speaker.say(carContext, last) }.build())
+            }
+        }
+        return template.build()
     }
 }
 

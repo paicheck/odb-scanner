@@ -40,6 +40,20 @@ class ReplanTest {
     }
 
     @Test
+    fun spokenAlertsReadNaturally() {
+        assertEquals("In under a mile", Replan.milesAhead(1.2))
+        assertEquals("In about 1 mile", Replan.milesAhead(1.7))
+        assertEquals("In about 5 miles", Replan.milesAhead(8.0))
+        val stop = Stop(280.0, Charger("Moto Lancaster Services", 54.0, -2.7, 150.0),
+            18.2, 75.0, 29, 30.2, 0.79, "Open Charge Map", 25.93, 0.4)
+        assertEquals("In about 4 miles, charging stop 1: Moto Lancaster Services, on the M6. " +
+            "Charge from 18 to 75 percent, about 29 minutes, £25.93.",
+            Replan.stopAheadSpeech(0, stop, 6.5, "M6"))
+        assertEquals("Charge is 41 percent, 6 below plan. The plan still works: you arrive " +
+            "with 12 percent.", Replan.stillOkSpeech(41.0, 47.0, 12.0))
+    }
+
+    @Test
     fun atAPlannedStopDriftIsIgnored() {
         assertEquals(0, Replan.atStop(listOf(100.0, 300.0), 98.5))
         assertEquals(1, Replan.atStop(listOf(100.0, 300.0), 302.0))
