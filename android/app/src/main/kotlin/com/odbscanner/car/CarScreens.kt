@@ -131,25 +131,30 @@ class AssistantScreen(carContext: CarContext) : Screen(carContext) {
             return message("Assistant",
                 "Choose an AI service and add its key on the phone (Ask AI, Settings) first.")
         }
-        val last = Assistant.transcript.value.lastOrNull { !it.fromDriver }?.text
-        val text = when (VoiceAssistant.state.value) {
+        // Fixed row titles: Android Auto then counts each update as a refresh of
+        // this screen, not a new step (it allows only a few steps per task).
+        val lines = Assistant.transcript.value
+        val asked = lines.lastOrNull { it.fromDriver }?.text ?: "Nothing yet"
+        val last = lines.lastOrNull { !it.fromDriver }?.text
+        val answer = when (VoiceAssistant.state.value) {
             VoiceAssistant.State.LISTENING -> "Listening…"
             VoiceAssistant.State.THINKING -> "Thinking…"
-            else -> last ?: "Tap Speak and ask about the battery, your trip, the next charging " +
-                "stop or chargers nearby."
+            else -> last ?: "Tap Speak and ask about the battery, your trip, the next " +
+                "charging stop or chargers nearby."
         }
-        val idle = VoiceAssistant.state.value == VoiceAssistant.State.IDLE
-        val template = MessageTemplate.Builder(text).setTitle("Assistant")
-            .setHeaderAction(Action.BACK)
-        if (idle) {
-            template.addAction(Action.Builder().setTitle("Speak")
-                .setFlags(Action.FLAG_PRIMARY).setOnClickListener { speak() }.build())
-            if (last != null) {
-                template.addAction(Action.Builder().setTitle("Repeat")
-                    .setOnClickListener { Speaker.say(carContext, last) }.build())
-            }
+        val list = ItemList.Builder()
+            .addItem(Row.Builder().setTitle("You asked").addText(asked).build())
+            .addItem(Row.Builder().setTitle("Answer").addText(answer).build())
+            .build()
+        val actions = ActionStrip.Builder().addAction(Action.Builder().setTitle("Speak")
+            .setOnClickListener { if (VoiceAssistant.state.value == VoiceAssistant.State.IDLE) speak() }
+            .build())
+        if (last != null) {
+            actions.addAction(Action.Builder().setTitle("Repeat")
+                .setOnClickListener { Speaker.say(carContext, last) }.build())
         }
-        return template.build()
+        return ListTemplate.Builder().setSingleList(list).setTitle("Assistant")
+            .setHeaderAction(Action.BACK).setActionStrip(actions.build()).build()
     }
 }
 

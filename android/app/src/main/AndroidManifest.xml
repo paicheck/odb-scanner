@@ -86,7 +86,7 @@
         <service
             android:name=".ai.WakeWordService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|location" />
 
         <!-- Android Auto: Battery, Route planner and Fault codes on the car
              screen. Read-only like the rest of the app: the car screens show

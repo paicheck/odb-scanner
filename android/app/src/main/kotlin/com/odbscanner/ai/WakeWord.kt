@@ -15,6 +15,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.odbscanner.MainActivity
+import com.odbscanner.route.PhoneLocation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -151,9 +152,15 @@ class WakeWordService : Service() {
             return START_NOT_STICKY
         }
         phrase = AiPrefs.load(this).wakePhrase
+        running = this
         ensureChannel()
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+        // Microphone, and location too when allowed: a trip planned by voice
+        // with the phone out of sight still needs the phone's position, and
+        // only a service started from the open app may read it.
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
+                (if (PhoneLocation.permitted(this)) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
+        } else 0
         try {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, notification("Starting…"), type)
         } catch (e: Exception) {
@@ -209,19 +216,29 @@ class WakeWordService : Service() {
         override fun onTimeout() = Unit
     }
 
-    /** The phrase was heard: free the mic, take the question, answer, resume. */
+    /** The phrase was heard: take the question and answer it (converse pauses spotting). */
     private fun wake() {
-        speech?.shutdown()
-        speech = null
+        pauseSpotting()
         scope.launch {
             _status.value = "Heard \"$phrase\""
             notify("Listening…")
             runCatching { VoiceAssistant.converse(this@WakeWordService) }
-            spot()
         }
     }
 
+    /** Give up the microphone (a question is being taken). */
+    private fun pauseSpotting() {
+        speech?.shutdown()
+        speech = null
+    }
+
+    /** Take the microphone back, unless already listening or not ready. */
+    private fun resumeSpotting() {
+        if (speech == null && model != null) spot()
+    }
+
     override fun onDestroy() {
+        if (running === this) running = null
         speech?.shutdown()
         speech = null
         model?.close()
@@ -267,6 +284,19 @@ class WakeWordService : Service() {
 
         private val _status = MutableStateFlow("Off")
         val status: StateFlow<String> = _status
+
+        @Volatile
+        private var running: WakeWordService? = null
+
+        /** Free the microphone for a spoken question (main thread). */
+        fun pause() {
+            running?.pauseSpotting()
+        }
+
+        /** The question is done: listen for the phrase again (main thread). */
+        fun resume() {
+            running?.resumeSpotting()
+        }
 
         /** Start listening (from the phone screen: a microphone service must start in front). */
         fun start(context: Context): Boolean = try {

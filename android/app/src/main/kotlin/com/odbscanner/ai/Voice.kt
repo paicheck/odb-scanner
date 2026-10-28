@@ -189,6 +189,8 @@ object VoiceAssistant {
     /** One exchange; the spoken answer, or null when nothing was heard. */
     suspend fun converse(context: Context): String? {
         if (_state.value != State.IDLE) return null
+        // One user of the microphone at a time: the wake word lets go of it.
+        withContext(Dispatchers.Main) { WakeWordService.pause() }
         try {
             Speaker.stop()
             beep()
@@ -212,6 +214,9 @@ object VoiceAssistant {
             return answer
         } finally {
             _state.value = State.IDLE
+            withContext(Dispatchers.Main + kotlinx.coroutines.NonCancellable) {
+                WakeWordService.resume()
+            }
         }
     }
 
