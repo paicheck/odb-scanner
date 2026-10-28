@@ -18,15 +18,19 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
- * The trip watch's foreground service (type location). While a trip is
- * driven Google Maps is in front and this app is in the background; Android
- * gives a background app no position unless it runs a location-type
- * foreground service. This is that service -- it holds no logic, shows
- * "Watching your trip" with the latest note, and stops when the TripMonitor
- * ends (arrival or End trip). The re-planning itself is TripMonitor's.
+ * The trip's foreground service (type location). While a trip is driven the
+ * screen may be off, or Google Maps in front; Android gives a background app
+ * no position unless it runs a location-type foreground service. This is
+ * that service -- it holds no logic, shows the next turn while navigating
+ * (else "Watching your trip" with the latest note), and stops when the
+ * TripMonitor ends (arrival or End trip). The re-planning is TripMonitor's,
+ * the guidance Navigator's.
  */
 class TripService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -39,19 +43,21 @@ class TripService : Service() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
         try {
             ServiceCompat.startForeground(this, NOTIFICATION_ID,
-                notification(TripMonitor.state.value), type)
+                notification(TripMonitor.state.value, null), type)
         } catch (e: Exception) {          // no location permission, or not allowed now
             stopSelf()
             return START_NOT_STICKY
         }
         scope.launch {
-            TripMonitor.state.collect { trip ->
+            // The next turn changes the text a few times a minute, not every fix.
+            val turn = Navigator.state.map { it?.let(::turnLine) }.distinctUntilChanged()
+            combine(TripMonitor.state, turn) { trip, nav -> trip to nav }.collect { (trip, nav) ->
                 if (trip == null) {
                     ServiceCompat.stopForeground(this@TripService, ServiceCompat.STOP_FOREGROUND_REMOVE)
                     stopSelf()
                 } else {
                     getSystemService(NotificationManager::class.java)
-                        ?.notify(NOTIFICATION_ID, notification(trip))
+                        ?.notify(NOTIFICATION_ID, notification(trip, nav))
                 }
             }
         }
@@ -63,14 +69,27 @@ class TripService : Service() {
         super.onDestroy()
     }
 
-    private fun notification(trip: ActiveTrip?): Notification {
+    /** "↰ 0.3 mi · Take exit 8 on the left towards the M40" -- or what the Navigator is doing. */
+    private fun turnLine(s: Navigator.State): String {
+        val g = s.guidance
+        val next = g?.next
+        return when {
+            s.phase == Navigator.Phase.DRIVING && next != null && !g.offRoute ->
+                "${NavText.arrow(next)} ${NavText.distance(g.toNextKm)} · ${next.instruction}"
+            else -> s.note.ifBlank { "Navigating to ${s.target?.label ?: s.trip.destination.label}" }
+        }
+    }
+
+    private fun notification(trip: ActiveTrip?, turn: String?): Notification {
         val open = PendingIntent.getActivity(this, 2, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_map)
-            .setContentTitle(trip?.let { "Watching your trip to ${it.destination.label}" }
-                ?: "Watching your trip")
-            .setContentText(trip?.note ?: "")
+            .setContentTitle(trip?.let {
+                if (turn != null) "Navigating to ${it.destination.label}"
+                else "Watching your trip to ${it.destination.label}"
+            } ?: "Watching your trip")
+            .setContentText(turn ?: trip?.note ?: "")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(open)

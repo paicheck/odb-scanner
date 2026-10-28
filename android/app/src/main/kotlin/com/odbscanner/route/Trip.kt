@@ -15,7 +15,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 import java.util.Locale
 
-/** Route settings: the two free API keys and the driver's planning margins. */
+/** Route settings: the API keys, the driver's planning margins, how to navigate. */
 data class RouteSettings(
     val orsKey: String,
     val ocmKey: String,
@@ -27,6 +27,10 @@ data class RouteSettings(
     val timeValuePerHour: Double = 15.0,
     val defaultPricePerKwh: Double = 0.79,
     val ownPrices: String = "",            // "Ionity = 0.39" lines
+    val mapboxToken: String = "",          // optional: live traffic, lanes, spoken turns
+    val avoid: Avoid = Avoid(),
+    val navigateInApp: Boolean = true,     // false: hand the trip to Google Maps
+    val voiceGuidance: Boolean = true,
 ) {
     val missingKeys: List<String>
         get() = listOfNotNull(
@@ -54,6 +58,11 @@ object RoutePrefs {
             timeValuePerHour = p.getFloat("time_value", 15f).toDouble(),
             defaultPricePerKwh = p.getFloat("default_price", 0.79f).toDouble(),
             ownPrices = p.getString("own_prices", "") ?: "",
+            mapboxToken = p.getString("mapbox_token", "") ?: "",
+            avoid = Avoid(p.getBoolean("avoid_motorways", false), p.getBoolean("avoid_tolls", false),
+                p.getBoolean("avoid_ferries", false)),
+            navigateInApp = p.getBoolean("navigate_in_app", true),
+            voiceGuidance = p.getBoolean("voice_guidance", true),
         )
     }
 
@@ -70,6 +79,12 @@ object RoutePrefs {
             .putFloat("default_price", s.defaultPricePerKwh
                 .coerceIn(Prices.MIN_PRICE, Prices.MAX_PRICE).toFloat())
             .putString("own_prices", s.ownPrices.take(2000))
+            .putString("mapbox_token", s.mapboxToken.trim())
+            .putBoolean("avoid_motorways", s.avoid.motorways)
+            .putBoolean("avoid_tolls", s.avoid.tolls)
+            .putBoolean("avoid_ferries", s.avoid.ferries)
+            .putBoolean("navigate_in_app", s.navigateInApp)
+            .putBoolean("voice_guidance", s.voiceGuidance)
             .apply()
     }
 
@@ -192,11 +207,22 @@ data class TripResult(
     val consumptionKwhPer100km: Double,
     val line: List<Pair<Double, Double>>,    // the road, thinned, for the map
     val steps: List<RouteStep> = emptyList(), // turn-by-turn, for the assistant
-)
+    val routes: List<NavRoute> = emptyList(), // the ways there; with Mapbox, in today's traffic
+    val chosen: Int = 0,                      // the one planned on
+    val avoid: Avoid = Avoid(),
+    val notes: List<String> = emptyList(),    // e.g. why there is no live traffic
+    val madeAtMs: Long = System.currentTimeMillis(),
+) {
+    val nav: NavRoute? get() = routes.getOrNull(chosen)
+}
 
 /**
  * Geocode, route, plan: the same steps as the dashboard's Route page
  * (web/routes/route.py). Blocking network -- runs on Dispatchers.IO.
+ *
+ * With a Mapbox token the ways there come in today's traffic (up to three,
+ * the fastest first) and the plan uses the [choice]; ORS adds the hills,
+ * which Mapbox does not give. Without one, ORS's single route, no traffic.
  */
 object TripPlanner {
     suspend fun plan(
@@ -206,6 +232,9 @@ object TripPlanner {
         startPct: Double? = null,
         mode: String? = null,
         consumptionKwhPer100km: Double? = null,
+        avoid: Avoid? = null,
+        ways: List<NavRoute>? = null,          // the ways a previous plan found: pick another
+        choice: Int = 0,
     ): TripResult = withContext(Dispatchers.IO) {
         val s = RoutePrefs.load(context)
         val car = CarEnergy.load(context)
@@ -215,7 +244,13 @@ object TripPlanner {
             ?: throw RoutingException(
                 "No recent location for the start: allow location access, or enter a start.")
         val services = RouteServices(s.orsKey, s.ocmKey, countries = s.countries)
-        val route = services.route(origin.lat to origin.lon, to.lat to to.lon)
+        val keepOff = avoid ?: s.avoid
+        val notes = mutableListOf<String>()
+        val routes = ways?.takeIf { it.isNotEmpty() } ?: waysThere(s, services, origin, to, keepOff, notes)
+        val pick = choice.coerceIn(0, routes.lastIndex)
+        val nav = routes[pick]
+        // Mapbox gives no heights: ORS adds them to a thinned copy (flat if that fails).
+        val points = if (nav.points.any { it.ele != null }) nav.points else services.elevate(nav.points)
         val consumption = consumptionKwhPer100km ?: s.consumptionKwhPer100km
             ?: CarEnergy.DEFAULT_CONSUMPTION
         val settings = PlanSettings(
@@ -224,17 +259,33 @@ object TripPlanner {
             timeValuePerHour = s.timeValuePerHour, defaultPricePerKwh = s.defaultPricePerKwh,
         )
         val own = Prices.ownPrices(s.ownPrices)
-        val chargers = services.chargersAlong(route.points, settings.searchRadiusKm).map { c ->
+        val chargers = services.chargersAlong(points, settings.searchRadiusKm).map { c ->
             val (price, fee, source) = Prices.priceFor(c.operator, c.usageCost, own,
                 settings.defaultPricePerKwh)
             c.copy(pricePerKwh = price, fee = fee, priceSource = source)
         }
         val plan = Planner.planTrip(
-            route.points, route.durationS, startPct ?: car.startPct,
+            points, nav.durationS, startPct ?: car.startPct,
             CarModel(usableKwh = car.usableKwh, consumptionKwhPerKm = consumption / 100.0),
             settings, chargers,
         )
-        TripResult(origin, to, plan, car, consumption, MapMath.thinLine(route.points), route.steps)
+        TripResult(origin, to, plan, car, consumption, MapMath.thinLine(nav.points), nav.steps(),
+            routes, pick, keepOff, notes)
+    }
+
+    /** Mapbox's ways in today's traffic when there is a token (ORS if it fails), else ORS's. */
+    private fun waysThere(s: RouteSettings, services: RouteServices, from: Place, to: Place,
+                          avoid: Avoid, notes: MutableList<String>): List<NavRoute> {
+        val ends = listOf(from.lat to from.lon, to.lat to to.lon)
+        if (s.mapboxToken.isNotBlank()) {
+            try {
+                return MapboxRouting(s.mapboxToken).routes(ends, avoid)
+            } catch (e: RoutingException) {
+                notes += "No live traffic: ${e.message} This route is from OpenRouteService."
+            }
+        }
+        val r = services.routeVia(ends, avoid)
+        return listOf(OrsNav.route(r, r.legEndsKm))
     }
 
     /** Place search near [near], else near the phone. */

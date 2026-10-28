@@ -426,6 +426,9 @@ private fun CollectorScreen(spec: Spec) {
             style = MaterialTheme.typography.titleMedium,
         )
 
+        // Navigation running behind the main screen: one tap back to it.
+        NavigationReturnBar(onOpen = { com.odbscanner.route.Navigator.showOnPhone.value = true })
+
         Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.padding(vertical = 6.dp),
@@ -571,6 +574,11 @@ private fun CollectorScreen(spec: Spec) {
     }
     if (showRouteDialog) {
         RouteDialog(onDismiss = { showRouteDialog = false })
+    }
+    val navigating by com.odbscanner.route.Navigator.state.collectAsState()
+    val showNav by com.odbscanner.route.Navigator.showOnPhone.collectAsState()
+    if (navigating != null && showNav) {
+        NavigationScreen(onClose = { com.odbscanner.route.Navigator.showOnPhone.value = false })
     }
 
     if (showCloudDialog) {

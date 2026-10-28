@@ -47,6 +47,11 @@ android {
         compose = true
     }
 
+    // The shared test data (the Mapbox route sample, ...) for the device tests.
+    sourceSets {
+        getByName("androidTest").assets.srcDir("../../tests/data")
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

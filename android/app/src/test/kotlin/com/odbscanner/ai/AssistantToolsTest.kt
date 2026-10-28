@@ -27,7 +27,7 @@ class AssistantToolsTest {
         // The assistant reads; the only actions are on trips -- nothing reaches the car.
         assertTrue(names.containsAll(listOf("get_battery", "get_fault_codes", "get_trip",
             "get_directions", "find_chargers", "plan_trip", "replan_trip", "start_navigation",
-            "get_readings", "get_history")))
+            "get_navigation", "reroute", "get_readings", "get_history")))
         assertFalse(names.any { it.contains("clear") || it.contains("write") || it.contains("send") })
     }
 

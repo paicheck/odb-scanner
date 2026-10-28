@@ -17,7 +17,19 @@ data class Route(
     val distanceKm: Double,
     val durationS: Double,
     val steps: List<RouteStep> = emptyList(),
+    val legEndsKm: List<Double> = emptyList(),   // via points (charging stops), then the end
 )
+
+/** Roads to keep off. Both route services honour these. */
+data class Avoid(val motorways: Boolean = false, val tolls: Boolean = false,
+                 val ferries: Boolean = false) {
+    /** OpenRouteService's avoid_features. */
+    val ors: List<String> get() = listOfNotNull("highways".takeIf { motorways },
+        "tollways".takeIf { tolls }, "ferries".takeIf { ferries })
+    /** Mapbox's exclude. */
+    val mapbox: List<String> get() = listOfNotNull("motorway".takeIf { motorways },
+        "toll".takeIf { tolls }, "ferry".takeIf { ferries })
+}
 
 /**
  * One turn-by-turn instruction: where on the route it starts (km), the text
@@ -30,6 +42,7 @@ data class RouteStep(
     val instruction: String,
     val road: String,
     val exitNumber: Int?,
+    val type: Int = -1,          // ORS instruction type: 10 arrive, 11 depart, ...
 )
 
 /**
@@ -67,18 +80,48 @@ class RouteServices(
         return parseGeocode(JSONObject(request("GET", q)), text, size)
     }
 
-    fun route(start: Pair<Double, Double>, end: Pair<Double, Double>): Route {
+    fun route(start: Pair<Double, Double>, end: Pair<Double, Double>,
+              avoid: Avoid = Avoid()): Route = routeVia(listOf(start, end), avoid)
+
+    /** A driving route through [waypoints] (lat, lon), with elevation and turn-by-turn steps. */
+    fun routeVia(waypoints: List<Pair<Double, Double>>, avoid: Avoid = Avoid()): Route {
         requireOrs()
         val body = JSONObject()
-            .put("coordinates", JSONArray()
-                .put(JSONArray().put(start.second).put(start.first))
-                .put(JSONArray().put(end.second).put(end.first)))
+            .put("coordinates", JSONArray().apply {
+                waypoints.forEach { (lat, lon) -> put(JSONArray().put(lon).put(lat)) }
+            })
             .put("elevation", true)
             .put("instructions", true)
             .put("language", "en")
+        if (avoid.ors.isNotEmpty()) {
+            body.put("options", JSONObject().put("avoid_features", JSONArray(avoid.ors)))
+        }
         val reply = request("POST", "$ORS_BASE/v2/directions/driving-car/geojson",
             body.toString(), mapOf("Authorization" to orsKey))
         return parseRoute(JSONObject(reply))
+    }
+
+    /**
+     * Elevation for a route from another service (Mapbox gives none), so the
+     * planner can still count the hills. The line is thinned to the service's
+     * limit; on failure the points come back as they were (flat).
+     */
+    fun elevate(points: List<RoutePoint>): List<RoutePoint> {
+        if (orsKey.isBlank()) return points
+        val thin = MapMath.thinLine(points, 1500)
+        val body = JSONObject().put("format_in", "polyline").put("format_out", "polyline")
+            .put("geometry", JSONArray().apply {
+                thin.forEach { (lat, lon) -> put(JSONArray().put(lon).put(lat)) }
+            })
+        return runCatching {
+            val reply = JSONObject(request("POST", "$ORS_BASE/elevation/line", body.toString(),
+                mapOf("Authorization" to orsKey)))
+            val g = reply.getJSONArray("geometry")
+            (0 until g.length()).map { i ->
+                val c = g.getJSONArray(i)
+                RoutePoint(c.getDouble(1), c.getDouble(0), if (c.length() > 2) c.getDouble(2) else null)
+            }.takeIf { it.size >= 2 } ?: points
+        }.getOrDefault(points)
     }
 
     /**
@@ -229,9 +272,21 @@ class RouteServices(
                     if (c.length() > 2 && !c.isNull(2)) c.getDouble(2) else null)
             }
             if (pts.size < 2) throw RoutingException("OpenRouteService returned an empty route")
+            val cum = Planner.cumulativeKm(pts)
+            val props = feat.optJSONObject("properties")
+            // Leg ends: where each segment's last step ends, on the geometry.
+            val legEnds = mutableListOf<Double>()
+            props?.optJSONArray("segments")?.let { segs ->
+                for (s in 0 until segs.length()) {
+                    val steps = segs.optJSONObject(s)?.optJSONArray("steps") ?: continue
+                    val last = steps.optJSONObject(steps.length() - 1)
+                    val end = last?.optJSONArray("way_points")?.optInt(1, -1) ?: -1
+                    if (end in cum.indices) legEnds.add(cum[end])
+                }
+            }
             return Route(pts, summary.optDouble("distance", 0.0) / 1000.0,
-                summary.optDouble("duration", 0.0),
-                parseSteps(feat.optJSONObject("properties"), Planner.cumulativeKm(pts)))
+                summary.optDouble("duration", 0.0), parseSteps(props, cum),
+                legEnds.ifEmpty { listOf(cum.last()) })
         }
 
         /** Turn-by-turn steps (segments[].steps[]), placed by their first point's km. */
@@ -251,6 +306,7 @@ class RouteServices(
                         road = str(st, "name").takeIf { it != "-" } ?: "",
                         exitNumber = if (st.has("exit_number") && !st.isNull("exit_number"))
                             st.optInt("exit_number") else null,
+                        type = st.optInt("type", -1),
                     ))
                 }
             }

@@ -4,6 +4,8 @@ import android.content.Context
 import com.odbscanner.db.AppDatabase
 import com.odbscanner.db.MeasurementEntity
 import com.odbscanner.route.ActiveTrip
+import com.odbscanner.route.NavSpeech
+import com.odbscanner.route.Navigator
 import com.odbscanner.route.PhoneLocation
 import com.odbscanner.route.Prices
 import com.odbscanner.route.Replan
@@ -23,9 +25,10 @@ import java.time.Instant
 
 /**
  * What the assistant can look up or do. Everything reads the phone's own data
- * -- what the collector stored, the trip watch, the route planner -- and
- * nothing reaches the car: there is no tool that sends anything to it. The
- * only actions are planning or re-planning a trip and opening Google Maps.
+ * -- what the collector stored, the trip watch, the route planner, the
+ * navigation -- and nothing reaches the car: there is no tool that sends
+ * anything to it. The only actions are planning or re-planning a trip and
+ * starting or re-routing navigation.
  *
  * Results are small JSON objects, distances in both km and miles. No VIN and
  * no raw position of the phone are ever in them ([redactVin] runs over every
@@ -45,6 +48,8 @@ class AssistantTools(private val context: Context) : ToolRunner {
                 call.args.optString("mode").takeIf { it in com.odbscanner.route.MODES })
             "replan_trip" -> replan()
             "start_navigation" -> startNavigation()
+            "get_navigation" -> navigation()
+            "reroute" -> reroute(call.args)
             "get_readings" -> readings(call.args.optString("filter"))
             "get_history" -> history(call.args.optString("key"),
                 call.args.optInt("count", 60).coerceIn(2, 500))
@@ -167,6 +172,23 @@ class AssistantTools(private val context: Context) : ToolRunner {
     }
 
     private suspend fun directions(count: Int): JSONObject {
+        // Navigating: the route actually being driven, from where the car is on it.
+        Navigator.state.value?.let { s ->
+            val route = s.route
+            val g = s.guidance
+            if (route != null && g != null) {
+                return JSONObject().put("from_here", JSONArray().apply {
+                    route.maneuvers.filter { it.atKm > g.kmAlong }.take(count).forEach { m ->
+                        put(JSONObject().put("in", dist(m.atKm - g.kmAlong))
+                            .put("instruction", m.instruction).put("road", m.road)
+                            .apply {
+                                if (m.exit.isNotBlank()) put("exit", m.exit)
+                                NavSpeech.laneAdvice(m.lanes)?.let { put("lanes", it) }
+                            })
+                    }
+                }).put("to", s.target?.label ?: s.trip.destination.label)
+            }
+        }
         val t = TripMonitor.state.value ?: return err("no trip is active")
         val steps = t.result.steps
         if (steps.isEmpty()) return err("this plan has no turn-by-turn steps")
@@ -176,9 +198,9 @@ class AssistantTools(private val context: Context) : ToolRunner {
             steps.filter { it.km + it.lengthKm > from }.take(count).forEach { st ->
                 put(JSONObject().put("in", dist((st.km - from).coerceAtLeast(0.0)))
                     .put("instruction", st.instruction).put("road", st.road)
-                    .apply { st.exitNumber?.let { put("roundabout_exit", it) } })
+                    .apply { st.exitNumber?.let { put("exit", it) } })
             }
-        }).put("note", "Google Maps gives the exact turns; this is the plan's road list")
+        }).put("note", "the planned route's steps; navigation is not running")
     }
 
     private suspend fun planTrip(destination: String, mode: String?): JSONObject {
@@ -187,8 +209,16 @@ class AssistantTools(private val context: Context) : ToolRunner {
             ?: return err("no place found for $destination")
         val r = TripPlanner.plan(context, dest, null, null, mode)
         TripMonitor.start(context, r)
-        return summary(r, 0.0).put("next", "planned and being watched; " +
-            "call start_navigation to open Google Maps with the stops")
+        return summary(r, 0.0).apply {
+            r.nav?.trafficDelayS?.let { put("traffic_delay_min", Math.round(it / 60)) }
+            if (r.routes.size > 1) put("other_ways", JSONArray().apply {
+                r.routes.drop(1).forEach { w ->
+                    put(JSONObject().put("via", w.summary).put("driving_min", Math.round(w.durationS / 60))
+                        .put("distance", dist(w.distanceKm)))
+                }
+            })
+        }.put("next", "planned and being watched; call start_navigation when the driver wants " +
+            "directions")
     }
 
     private suspend fun replan(): JSONObject {
@@ -198,9 +228,73 @@ class AssistantTools(private val context: Context) : ToolRunner {
 
     private suspend fun startNavigation(): JSONObject {
         val t = TripMonitor.state.value ?: return err("no trip is planned")
+        val inApp = withContext(Dispatchers.Main) { TripMonitor.drive(context, t.result) }
+        if (inApp) {
+            return JSONObject().put("ok", "navigation started in the app: it speaks each turn, " +
+                "with lanes, via ${t.result.plan.stops.size} charging stops")
+        }
+        // Route settings hand trips to Google Maps. From the background Android
+        // may not let it open; then the phone shows it when unlocked.
         withContext(Dispatchers.Main) { startTrip(context, t.result) }
-        return JSONObject().put("ok", "Google Maps opened with ${t.result.plan.stops.size} " +
+        return JSONObject().put("ok", "Google Maps asked to open with ${t.result.plan.stops.size} " +
             "charging stops and the destination")
+    }
+
+    private fun navigation(): JSONObject {
+        val s = Navigator.state.value ?: return err("navigation is not running; start_navigation " +
+            "starts it for a planned trip")
+        val out = JSONObject().put("to", s.trip.destination.label).put("phase", s.phase.name.lowercase())
+            .put("status", s.note).put("live_traffic", s.traffic)
+        s.target?.let { t ->
+            out.put("heading_for", t.label)
+            t.stop?.let { out.put("heading_for_is_charging_stop", true) }
+        }
+        val g = s.guidance ?: return out
+        g.next?.let { m ->
+            out.put("next_turn", JSONObject().put("in", dist(g.toNextKm))
+                .put("instruction", m.instruction).put("road", m.road)
+                .apply {
+                    if (m.exit.isNotBlank()) put("exit", m.exit)
+                    NavSpeech.laneAdvice(m.lanes)?.let { put("lanes", it) }
+                })
+        }
+        g.then?.let { out.put("then", it.instruction) }
+        out.put("off_route", g.offRoute)
+            .put("this_leg_remaining", dist(g.remainingKm))
+            .put("this_leg_minutes", Math.round(g.remainingS / 60))
+        s.toEndS?.let { out.put("minutes_to_destination_incl_charging", Math.round(it / 60)) }
+        s.route?.let { r ->
+            r.trafficDelayS?.let { out.put("traffic_delay_min", Math.round(it / 60)) }
+            r.trafficAhead(g.kmAlong, 30.0)?.let { run ->
+                out.put("heavy_traffic_ahead", JSONObject()
+                    .put("starts_in", dist(maxOf(0.0, run.fromKm - g.kmAlong)))
+                    .put("length", dist(run.toKm - maxOf(run.fromKm, g.kmAlong)))
+                    .put("level", run.level))
+            }
+        }
+        return out.put("avoiding", JSONArray().apply {
+            if (s.avoid.motorways) put("motorways")
+            if (s.avoid.tolls) put("tolls")
+            if (s.avoid.ferries) put("ferries")
+        })
+    }
+
+    private suspend fun reroute(args: JSONObject): JSONObject {
+        val s = Navigator.state.value ?: return err("navigation is not running")
+        if (args.optBoolean("faster", false)) {
+            return JSONObject().put("result", Navigator.checkTraffic(announce = false))
+        }
+        fun flag(key: String, now: Boolean) = if (args.has(key)) args.optBoolean(key, now) else now
+        val avoid = s.avoid.copy(
+            motorways = flag("avoid_motorways", s.avoid.motorways),
+            tolls = flag("avoid_tolls", s.avoid.tolls),
+            ferries = flag("avoid_ferries", s.avoid.ferries))
+        Navigator.reroute(avoid)
+        return JSONObject().put("ok", "re-routing from here").put("avoiding", JSONArray().apply {
+            if (avoid.motorways) put("motorways")
+            if (avoid.tolls) put("tolls")
+            if (avoid.ferries) put("ferries")
+        })
     }
 
     private suspend fun chargers(radiusKm: Double, minKw: Double): JSONObject =
@@ -314,8 +408,20 @@ class AssistantTools(private val context: Context) : ToolRunner {
                 required = listOf("destination")),
             spec("replan_trip", "Re-plan the active trip from the current position and the " +
                 "latest charge reading, and return the new plan."),
-            spec("start_navigation", "Open Google Maps with the planned trip: the charging " +
-                "stops, then the destination. Only when the driver asks to navigate."),
+            spec("start_navigation", "Start turn-by-turn navigation of the planned trip in the " +
+                "app (spoken turns and lanes), via its charging stops. Only when the driver asks " +
+                "to navigate or for directions."),
+            spec("get_navigation", "While navigating: the next turn (distance, instruction, " +
+                "road, exit, which lanes), the one after, time and distance left, arrival " +
+                "including charging, what traffic adds, and heavy traffic ahead."),
+            spec("reroute", "While navigating: re-route from here, optionally keeping off " +
+                "motorways, tolls or ferries from now on; or, with faster=true, check live " +
+                "traffic for a faster way and take it if it clearly is.",
+                "avoid_motorways" to JSONObject().put("type", "boolean"),
+                "avoid_tolls" to JSONObject().put("type", "boolean"),
+                "avoid_ferries" to JSONObject().put("type", "boolean"),
+                "faster" to JSONObject().put("type", "boolean").put("description",
+                    "Only look for a faster way in today's traffic")),
             spec("get_readings", "Latest stored value of every measurement whose key contains " +
                 "the filter (e.g. 'temp', 'soc', 'odometer'), with units and age.",
                 "filter" to JSONObject().put("type", "string")
@@ -342,8 +448,13 @@ class AssistantTools(private val context: Context) : ToolRunner {
             the ODB Scanner app on their phone. With the tools you can read the car's stored
             battery readings and fault codes, the trip plan with its charging stops and prices,
             the route's upcoming roads and junctions, chargers nearby, and every stored
-            measurement and its history. You cannot control the car: everything is read-only,
-            apart from planning or re-planning a trip and opening Google Maps.
+            measurement and its history, and the navigation while it runs. You cannot control
+            the car: everything is read-only, apart from planning or re-planning a trip and
+            starting or re-routing navigation.
+
+            While navigating, the app itself speaks every turn and traffic warning. Answer
+            questions about the turns ahead, lanes, arrival time or traffic from get_navigation;
+            use reroute when the driver asks to avoid roads or for a faster way.
 
             The driver is usually driving and hears your answer read aloud:
             - Answer in one to three short spoken sentences. No lists, markdown, symbols or emoji.

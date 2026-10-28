@@ -51,8 +51,8 @@ private val MAP_HEIGHT = 260.dp
  * connections and an identifying User-Agent) and kept in memory. Fetching a
  * tile tells OpenStreetMap roughly which area the trip covers.
  */
-private object OsmTiles {
-    private val cache = LruCache<String, ImageBitmap>(48)
+internal object OsmTiles {
+    private val cache = LruCache<String, ImageBitmap>(96)   // a navigation view needs ~30
 
     suspend fun get(context: Context, t: MapMath.Tile): ImageBitmap? {
         cache.get(t.path)?.let { return it }

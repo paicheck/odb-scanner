@@ -44,7 +44,9 @@ data class ActiveTrip(
 
 /**
  * Keeps an active trip's plan honest while driving. Started by Start
- * navigation (phone) or Navigate (car screen); every minute it compares the
+ * navigation (phone) or Navigate (car screen) -- which also start the
+ * in-app Navigator, unless Route settings hand trips to Google Maps -- or by
+ * the assistant planning a trip. Every minute it compares the
  * car's latest charge reading -- stored by the collector -- with what the
  * plan expected where the phone is now, and re-plans from here when they
  * drift apart (Replan has the rules). A changed plan is announced in a
@@ -83,10 +85,22 @@ object TripMonitor {
         }
     }
 
+    /**
+     * Drive [result]: watch it and navigate it in the app. False when Route
+     * settings say Google Maps navigates instead -- the caller opens it.
+     */
+    fun drive(context: Context, result: TripResult): Boolean {
+        if (_state.value?.result !== result) start(context, result)
+        if (!RoutePrefs.load(context).navigateInApp) return false
+        Navigator.start(context, result)
+        return true
+    }
+
     fun stop() {
         job?.cancel()
         job = null
         _state.value = null
+        Navigator.stop()
     }
 
     /** Re-plan now and wait for it: the trip as it stands afterwards (null: none). */
@@ -123,7 +137,9 @@ object TripMonitor {
         }
         val plan = trip.result.plan
         val at = Replan.progress(trip.result.line, plan.distanceKm, here.latitude, here.longitude)
-        if (plan.distanceKm - at.kmAlong < Replan.ARRIVED_KM && at.offRouteKm < Replan.OFF_ROUTE_KM) {
+        // Navigating, the Navigator says when the car has arrived (to the metre).
+        if (!Navigator.active && plan.distanceKm - at.kmAlong < Replan.ARRIVED_KM &&
+            at.offRouteKm < Replan.OFF_ROUTE_KM) {
             notify(context, "Arrived", "Trip to ${trip.destination.label} finished.")
             stop()
             return@withLock
@@ -171,7 +187,7 @@ object TripMonitor {
         val fresher = try {
             TripPlanner.plan(context, trip.destination,
                 Place("Your location", here.latitude, here.longitude),
-                actual.coerceIn(1.0, 100.0), trip.mode, consumption)
+                actual.coerceIn(1.0, 100.0), trip.mode, consumption, avoid = trip.result.avoid)
         } catch (e: Exception) {
             update { it.copy(lastPct = seen, charging = false,
                 note = "Could not re-plan (${e.message ?: e.javaClass.simpleName}); keeping the plan") }
@@ -184,6 +200,7 @@ object TripMonitor {
                 lastPct = seen, charging = false, chargedSincePlan = false,
                 note = "Re-planned: $reason", announced = emptySet())
         }
+        if (Navigator.active) Navigator.planChanged(fresher)
         if (before != after || fresher.plan.status == "unreachable") {
             notify(context, "Route updated", changeText(fresher, reason))
             speak(context, "Route updated. " + changeSpeech(fresher))

@@ -20,10 +20,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,6 +36,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -44,6 +47,9 @@ import com.odbscanner.route.ActiveTrip
 import com.odbscanner.route.CarEnergy
 import com.odbscanner.route.MAX_LINK_STOPS
 import com.odbscanner.route.MODES
+import com.odbscanner.route.NavRoute
+import com.odbscanner.route.NavText
+import com.odbscanner.route.Navigator
 import com.odbscanner.route.PhoneLocation
 import com.odbscanner.route.Place
 import com.odbscanner.route.RoutePrefs
@@ -118,8 +124,9 @@ fun ModeChooser(mode: String, onChange: (String) -> Unit) {
 /**
  * The phone's route planner: the same plan as the dashboard's Route page
  * (routing/planner.py, ported in route/Planner.kt), started from the phone's
- * location. The trip is drawn on an OpenStreetMap map; Start navigation
- * hands it, stops included, to Google Maps.
+ * location. With a Mapbox token the ways there come in today's traffic, to
+ * choose from. The trip is drawn on an OpenStreetMap map; Start navigation
+ * navigates it here, turn by turn (or hands it to Google Maps, by setting).
  */
 @Composable
 fun RouteDialog(onDismiss: () -> Unit) {
@@ -145,19 +152,22 @@ fun RouteDialog(onDismiss: () -> Unit) {
             String.format(Locale.ROOT, "%.1f kWh", car.usableKwh) + " (${car.usableBasis})."
     }
 
-    fun plan() {
+    /** Plan; with [ways] (the last plan) and [choice], the same trip another way. */
+    fun plan(ways: TripResult? = null, choice: Int = 0) {
         busy = true
         error = null
-        result = null
+        if (ways == null) result = null
         scope.launch {
             try {
-                val origin: Place? = if (from.isBlank()) null else
+                val origin: Place? = ways?.origin ?: if (from.isBlank()) null else
                     TripPlanner.search(context, from.trim()).firstOrNull()
                         ?: throw RoutingException("No place found for “${from.trim()}”.")
-                val dest = TripPlanner.search(context, to.trim(), near = origin).firstOrNull()
+                val dest = ways?.destination
+                    ?: TripPlanner.search(context, to.trim(), near = origin).firstOrNull()
                     ?: throw RoutingException("No place found for “${to.trim()}”.")
                 result = TripPlanner.plan(context, dest, origin,
-                    startPct.toDoubleOrNull()?.takeIf { it in 1.0..100.0 }, mode)
+                    startPct.toDoubleOrNull()?.takeIf { it in 1.0..100.0 }, mode,
+                    avoid = ways?.avoid, ways = ways?.routes, choice = choice)
                 RoutePrefs.remember(context, dest)        // offered on the car screen
             } catch (e: RoutingException) {
                 error = e.message
@@ -228,12 +238,21 @@ fun RouteDialog(onDismiss: () -> Unit) {
                     Text(it, color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(top = 6.dp))
                 }
-                // The trip being driven shows its latest (re-planned) plan; a
-                // plan made here for somewhere else shows instead.
-                val shown = active?.result?.takeIf { a ->
-                    result == null || result?.destination == a.destination
-                } ?: result
-                shown?.let { TripResultView(it) }
+                // For the trip being driven, the newer of its latest (re-planned)
+                // plan and one made here -- another way chosen, say; a plan for
+                // somewhere else shows instead.
+                val mine = result
+                val driven = active?.result
+                val shown = when {
+                    mine == null -> driven
+                    driven == null || driven.destination != mine.destination -> mine
+                    else -> if (driven.madeAtMs > mine.madeAtMs) driven else mine   // the newer
+                }
+                shown?.let { r ->
+                    TripResultView(r, busy = busy,
+                        onChoose = { i -> plan(ways = r, choice = i) },
+                        onNavigate = onDismiss)          // the directions take the screen
+                }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
@@ -256,10 +275,25 @@ private fun ActiveTripBanner(t: ActiveTrip) {
     }
 }
 
-/** Watch the trip, then hand it to Google Maps. */
-private fun beginTrip(context: Context, r: TripResult) {
-    if (TripMonitor.state.value?.result !== r) TripMonitor.start(context, r)
-    startTrip(context, r)
+/** Watch the trip and navigate it here -- or, by setting, in Google Maps. */
+private fun beginTrip(context: Context, r: TripResult, onNavigate: () -> Unit) {
+    if (TripMonitor.drive(context, r)) {
+        Navigator.showOnPhone.value = true
+        onNavigate()
+    } else {
+        startTrip(context, r)
+    }
+}
+
+/** "M40, A34 · 1 h 05 · 98 km · traffic +12 minutes · 1.9 mi heavy" */
+private fun NavRoute.optionLine(): String = buildString {
+    if (summary.isNotBlank()) append(summary).append(" · ")
+    append(fmtDuration(durationS)).append(" · ")
+    append(String.format(Locale.ROOT, "%.0f km", distanceKm))
+    trafficDelayS?.let { d ->
+        append(if (d >= 60) " · traffic +${Navigator.minutes(d)}" else " · light traffic")
+    }
+    if (heavyKm >= 0.5) append(" · ").append(NavText.distance(heavyKm)).append(" heavy")
 }
 
 /** What starting a trip asks for and does not have yet: precise location
@@ -276,12 +310,14 @@ private fun tripPermissionsMissing(context: Context): List<String> = buildList {
 }
 
 @Composable
-private fun TripResultView(r: TripResult) {
+private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit,
+                           onNavigate: () -> Unit) {
     val context = LocalContext.current
+    val inApp = remember { RoutePrefs.load(context).navigateInApp }
     // Asked once, on Start navigation; the trip starts whatever the answer.
     val askTrip = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { beginTrip(context, r) }
+    ) { beginTrip(context, r, onNavigate) }
     val p = r.plan
     Column(modifier = Modifier.padding(top = 8.dp)) {
         HorizontalDivider()
@@ -294,18 +330,42 @@ private fun TripResultView(r: TripResult) {
             (if (p.chargeS > 0) " + " + fmtDuration(p.chargeS) + " charging" else ""),
             style = MaterialTheme.typography.bodySmall)
         if (p.stops.isNotEmpty()) Text(r.costLine(), style = MaterialTheme.typography.bodySmall)
+        r.nav?.trafficDelayS?.let { d ->
+            Text(if (d >= 60) "In today's traffic: ${Navigator.minutes(d)} slower than usual"
+                else "In today's traffic: as usual", style = MaterialTheme.typography.bodySmall)
+        }
+        r.notes.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+        if (r.routes.size > 1) {
+            Text("Ways there", fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
+            r.routes.forEachIndexed { i, way ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${i + 1}. " + way.optionLine(), style = MaterialTheme.typography.bodySmall,
+                        fontWeight = if (i == r.chosen) FontWeight.SemiBold else FontWeight.Normal,
+                        modifier = Modifier.weight(1f))
+                    if (i == r.chosen) Text("planned", style = MaterialTheme.typography.bodySmall)
+                    else TextButton(enabled = !busy, onClick = { onChoose(i) }) { Text("Use") }
+                }
+            }
+        }
         Column(modifier = Modifier.padding(vertical = 6.dp)) { TripMap(r) }
         if (p.status != "unreachable") {
             Button(onClick = {
                 // Watch this trip against the battery while it is driven.
                 val missing = tripPermissionsMissing(context)
-                if (missing.isEmpty()) beginTrip(context, r) else askTrip.launch(missing.toTypedArray())
+                if (missing.isEmpty()) beginTrip(context, r, onNavigate)
+                else askTrip.launch(missing.toTypedArray())
             }, modifier = Modifier.fillMaxWidth()) {
                 Text(when (p.stops.size) {
                     0 -> "Start navigation"
                     1 -> "Start navigation · 1 charging stop"
                     else -> "Start navigation · ${p.stops.size} charging stops"
-                })
+                } + if (inApp) "" else " (Google Maps)")
+            }
+            if (inApp) {
+                TextButton(onClick = {
+                    if (TripMonitor.state.value?.result !== r) TripMonitor.start(context, r)
+                    startTrip(context, r)
+                }) { Text("Open in Google Maps instead") }
             }
             if (p.stops.size > MAX_LINK_STOPS) {
                 Text("Google Maps takes $MAX_LINK_STOPS stops from a link; add the rest there.",
@@ -353,6 +413,10 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
     var timeValue by remember { mutableStateOf(String.format(Locale.ROOT, "%.0f", s.timeValuePerHour)) }
     var defaultPrice by remember { mutableStateOf(String.format(Locale.ROOT, "%.2f", s.defaultPricePerKwh)) }
     var ownPrices by remember { mutableStateOf(s.ownPrices) }
+    var mapbox by remember { mutableStateOf(s.mapboxToken) }
+    var avoid by remember { mutableStateOf(s.avoid) }
+    var inApp by remember { mutableStateOf(s.navigateInApp) }
+    var voice by remember { mutableStateOf(s.voiceGuidance) }
     AlertDialog(
         onDismissRequest = onDone,
         title = { Text("Route settings") },
@@ -381,6 +445,31 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                 OutlinedTextField(countries, { countries = it.take(40) },
                     label = { Text("Countries to search (e.g. GB,FR)") },
                     singleLine = true, modifier = Modifier.fillMaxWidth())
+                Text("Traffic and navigation", fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 8.dp))
+                OutlinedTextField(mapbox, { mapbox = it }, label = { Text("Mapbox token (optional)") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth())
+                Text("With a free mapbox.com token (100,000 routes a month free) routes come " +
+                    "in today's traffic, with other ways to choose from, lanes and spoken " +
+                    "turns; the start, stops and destination then go to Mapbox too.",
+                    style = MaterialTheme.typography.bodySmall)
+                @Composable
+                fun toggle(label: String, on: Boolean, change: (Boolean) -> Unit) =
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = on, onCheckedChange = change)
+                        Text(label)
+                    }
+                toggle("Avoid motorways", avoid.motorways) { avoid = avoid.copy(motorways = it) }
+                toggle("Avoid tolls", avoid.tolls) { avoid = avoid.copy(tolls = it) }
+                toggle("Avoid ferries", avoid.ferries) { avoid = avoid.copy(ferries = it) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Navigate in this app (off: Google Maps)", modifier = Modifier.weight(1f))
+                    Switch(checked = inApp, onCheckedChange = { inApp = it })
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Spoken directions", modifier = Modifier.weight(1f))
+                    Switch(checked = voice, onCheckedChange = { voice = it })
+                }
                 Text("Prices", fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 8.dp))
                 OutlinedTextField(timeValue, { timeValue = it.take(4) },
                     label = { Text("Balanced: my time is worth £/hour") }, singleLine = true,
@@ -410,6 +499,10 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                     timeValuePerHour = timeValue.toDoubleOrNull() ?: s.timeValuePerHour,
                     defaultPricePerKwh = defaultPrice.toDoubleOrNull() ?: s.defaultPricePerKwh,
                     ownPrices = ownPrices,
+                    mapboxToken = mapbox,
+                    avoid = avoid,
+                    navigateInApp = inApp,
+                    voiceGuidance = voice,
                 ))
                 onDone()
             }) { Text("Save") }

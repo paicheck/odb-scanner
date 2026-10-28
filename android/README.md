@@ -71,9 +71,41 @@ battery figures the phone last read from the car. It is the dashboard's
 planner ported line for line (`route/Planner.kt`); `PlannerTest` holds it to
 the same `tests/data/route_vectors.json` cases as the Python side, so both give
 the same plan. The trip is drawn on an OpenStreetMap map in the app (tiles of
-the trip area are fetched from OpenStreetMap); **Start navigation** hands the
-whole trip to Google Maps, charging stops as stops and then the destination.
-Nothing opens Google Maps until that tap.
+the trip area are fetched from OpenStreetMap); **Start navigation** navigates
+it in the app, turn by turn (below). **Open in Google Maps instead** hands the
+whole trip to Google Maps, charging stops as stops and then the destination;
+Route → Settings can make Google Maps the default.
+
+**Traffic and roads to avoid.** With a Mapbox token (optional, Route →
+Settings; a free mapbox.com account gives 100,000 route requests a month) the
+planner asks Mapbox for routes in today's traffic: the recommended way and up
+to two others, each with its driving time now, how much slower than usual that
+is, and how much of it is heavy traffic. **Use** on another way plans the
+charging stops on that one. Mapbox gives no heights, so OpenRouteService adds
+them (the hills still count). **Avoid motorways / tolls / ferries** apply to
+both services. Without a token: OpenRouteService's one route, no traffic.
+
+**Navigation.** Turn by turn on the phone: the next turn with its distance,
+an arrow, the road and the exit; the lanes to be in, lit up; a heading-up map
+of the road ahead with heavy traffic in orange and very heavy in red; the
+arrival time (including charging), and what traffic adds. It speaks each turn
+in British English -- "In a quarter of a mile, take the ramp on the left
+towards the M40. Use the left two lanes." -- warns of heavy traffic about
+three km ahead, and re-routes when you leave the route. Tap the instruction to
+hear it again; **Mute**; **Route** checks for a faster way, changes the roads
+to avoid, re-plans the charging or opens Google Maps; **End** ends the trip.
+**Back** leaves it running: still spoken, with the next turn in the
+notification. One leg at a time: to the first charging stop (where it says how
+far to charge), on when you drive off, then to the destination. With Mapbox,
+every five minutes it checks today's traffic and takes a way that saves at
+least five minutes (and a tenth of the time left), saying so.
+
+Lanes and the ready-made spoken sentences come from Mapbox; without a token
+the app makes the spoken turns itself from OpenRouteService's steps, with no
+lanes or traffic. `NavTest` follows a drive along a recorded Mapbox reply
+(`tests/data/mapbox_route_sample.json`, also read by the dashboard's tests);
+`NavigatorDeviceTest` drives it on an emulator through the real GPS pipeline
+and speech. Not yet tried on the road.
 
 **Which stops.** Every fast charger within 5 km of the route is a candidate;
 the planner picks the stops, and how far to charge at each, for the lowest
@@ -99,20 +131,25 @@ Following a trip needs **precise location**, asked for once when you start one:
 approximate location is ~2 km off and refreshed only every ~10 minutes. While
 the trip runs, a "Watching your trip" notification stays up -- that
 location-type foreground service is what lets the phone read its position
-with Google Maps in front, and it ends at arrival or End trip. Without precise
-location only Re-plan now works.
+with the screen off (or Google Maps in front), and it ends at arrival or End
+trip. Without precise location there are no turn-by-turn directions and only
+Re-plan now works.
 
 It needs two free API keys, entered under **Route → Settings**:
 [OpenRouteService](https://openrouteservice.org/dev/#/signup) (roads, place
-search) and [OpenChargeMap](https://openchargemap.org/site/profile/applications)
-(chargers). The start, destination and route are sent to those two services.
-Location permission (coarse) is asked only when you plan without a typed start.
+search, heights) and [OpenChargeMap](https://openchargemap.org/site/profile/applications)
+(chargers). The start, destination and route are sent to those two services --
+and, with a Mapbox token, the start, the next stop and the destination to
+Mapbox (while navigating, the current position with each new route). Location
+permission (coarse) is asked only when you plan without a typed start.
 
-**Android Auto** shows three screens on the car display — **Battery** (newest
+**Android Auto** shows these screens on the car display — **Battery** (newest
 stored readings with their age), **Route planner** (the active trip, recent
-destinations, search, then the plan with its costs; tap a stop to navigate,
-Re-plan / End trip while driving) and **Fault codes** — built from the Car
-App Library's driver-safe templates (`car/`). They read the phone's database and
+destinations, search, then the plan with its costs; Navigate starts the
+directions, Re-plan / End trip while driving), **Navigation** (the next turn,
+the lanes, traffic ahead and the arrival time, as text -- tap Next to hear it
+again; Mute, End), **Fault codes** and **Assistant** — built from the Car App
+Library's driver-safe templates (`car/`). They read the phone's database and
 never reach the adapter. Because the app is not from the Play Store, Android
 Auto lists it only with developer settings on:
 
@@ -123,7 +160,8 @@ Auto lists it only with developer settings on:
 
 The app is declared in the **charging** category, the closest Android Auto has
 to a trip planner; a Play Store release would need Google's review of that
-choice. The car screens could not be tried on a real head unit while building
+choice. Only navigation-category apps may draw a map on the car display, so
+there the directions are spoken, with the text screen as back-up. The car screens could not be tried on a real head unit while building
 them; the Desktop Head Unit (`desktop-head-unit` in the SDK's
 `extras/google/auto`) is the way to try them on a computer.
 
@@ -140,8 +178,10 @@ key held in the Android Keystore.
 What it can do -- all read-only, nothing reaches the car: read the stored
 battery readings, fault codes and any measurement with its history; describe
 the trip being driven (stops ahead, charge, cost, the road each is on); read
-out the route's turn-by-turn steps ahead (junctions, exits); find chargers
-near you with prices; plan or re-plan a trip and open Google Maps. What is
+out the route's turn-by-turn steps ahead (junctions, exits, lanes); while
+navigating, the next turn, the arrival time and traffic ahead; find chargers
+near you with prices; plan or re-plan a trip; start navigation; re-route
+("avoid the motorway", "is there a faster way?"). What is
 sent to the service: your question and what those tools return -- never the
 VIN, never your exact position.
 

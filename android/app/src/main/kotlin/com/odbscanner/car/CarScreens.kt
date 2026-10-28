@@ -27,6 +27,9 @@ import com.odbscanner.db.MeasurementEntity
 import com.odbscanner.costLine
 import com.odbscanner.fmtDuration
 import com.odbscanner.headline
+import com.odbscanner.route.NavSpeech
+import com.odbscanner.route.NavText
+import com.odbscanner.route.Navigator
 import com.odbscanner.route.PhoneLocation
 import com.odbscanner.route.Place
 import com.odbscanner.route.RoutePrefs
@@ -35,6 +38,8 @@ import com.odbscanner.route.TripMonitor
 import com.odbscanner.route.TripPlanner
 import com.odbscanner.route.TripResult
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Duration
@@ -78,8 +83,21 @@ private fun navigate(car: CarContext, lat: Double, lon: Double) {
 
 // -- Home ------------------------------------------------------------------------
 class HomeScreen(carContext: CarContext) : Screen(carContext) {
+    init {
+        lifecycleScope.launch {
+            Navigator.state.map { it != null }.distinctUntilChanged().collect { invalidate() }
+        }
+    }
+
     override fun onGetTemplate(): Template {
-        val items = ItemList.Builder()
+        val list = ItemList.Builder()
+        Navigator.state.value?.let { nav ->
+            list.addItem(Row.Builder().setTitle("Navigating to ${nav.trip.destination.label}")
+                .addText("Directions, lanes and traffic")
+                .setOnClickListener { screenManager.push(NavScreen(carContext)) }
+                .setBrowsable(true).build())
+        }
+        val items = list
             .addItem(Row.Builder().setTitle("Battery")
                 .addText("Charge, energy, temperatures")
                 .setOnClickListener { screenManager.push(BatteryScreen(carContext)) }
@@ -253,6 +271,77 @@ class FaultsScreen(carContext: CarContext) : Screen(carContext) {
     }
 }
 
+// -- Navigation --------------------------------------------------------------------------
+/**
+ * Turn-by-turn on the car screen, as text: the app is a charging app to
+ * Android Auto, so it has no map template -- the spoken directions carry the
+ * guidance, this screen backs them up. Fixed row titles: each update is a
+ * refresh of this screen, not a new step.
+ */
+class NavScreen(carContext: CarContext) : Screen(carContext) {
+    init {
+        lifecycleScope.launch {
+            Navigator.state.map { it?.let(::rows) }.distinctUntilChanged().collect { invalidate() }
+        }
+    }
+
+    /** What the rows say: (title, text) each. Distances as shown, so updates are few. */
+    private fun rows(s: Navigator.State): List<Pair<String, String>> {
+        val g = s.guidance
+        val next = g?.next
+        val turn = when {
+            s.phase == Navigator.Phase.AT_STOP || s.phase == Navigator.Phase.ARRIVED -> s.note
+            next == null || g.offRoute -> s.note.ifBlank { "Finding the route" }
+            else -> "${NavText.arrow(next)} ${NavText.distance(g.toNextKm)} · ${next.instruction}" +
+                (g.then?.let { "  Then ${NavText.arrow(it)}" } ?: "")
+        }
+        val lanes = if (g != null && next != null && g.lanes.isNotEmpty()) {
+            g.lanes.joinToString(" ") { NavText.lane(it, next.modifier) + (if (it.active) "" else "·") } +
+                "  " + (NavSpeech.laneAdvice(g.lanes) ?: "Any lane")
+        } else "No lane advice for the next turn"
+        val ahead = g?.let { s.route?.trafficAhead(it.kmAlong, 8.0) }
+        val traffic = when {
+            !s.traffic -> "No live traffic (needs a Mapbox token)"
+            g != null && ahead != null -> NavSpeech.traffic(ahead, g.kmAlong)
+            else -> (s.route?.trafficDelayS ?: 0.0).let { d ->
+                if (d >= 60) "Traffic adds ${Navigator.minutes(d)}" else "Traffic is light"
+            }
+        }
+        val arrive = g?.let {
+            val end = s.toEndS ?: it.remainingS
+            val clock = java.time.LocalTime.now().plusSeconds(end.toLong())
+                .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+            "$clock · ${fmtDuration(end)}" + (s.target?.stop?.let { st ->
+                " · charge at ${st.charger.name} in ${NavText.distance(it.remainingKm)}"
+            } ?: " · ${NavText.distance(it.remainingKm)}")
+        } ?: s.trip.destination.label
+        return listOf("Next" to turn, "Lanes" to lanes, "Traffic" to traffic, "Arrive" to arrive)
+    }
+
+    override fun onGetTemplate(): Template {
+        val s = Navigator.state.value
+            ?: return message("Navigation", "Navigation has ended.")
+        val list = ItemList.Builder()
+        rows(s).take(carContext.listLimit()).forEach { (title, text) ->
+            val row = Row.Builder().setTitle(title).addText(text)
+            if (title == "Next") row.setOnClickListener { Navigator.repeat() }   // say it again
+            list.addItem(row.build())
+        }
+        return ListTemplate.Builder().setSingleList(list.build())
+            .setTitle("To ${s.trip.destination.label}")
+            .setHeaderAction(Action.BACK)
+            .setActionStrip(ActionStrip.Builder()
+                .addAction(Action.Builder().setTitle(if (s.muted) "Voice on" else "Mute")
+                    .setOnClickListener { Navigator.setMuted(!s.muted) }.build())
+                .addAction(Action.Builder().setTitle("End").setOnClickListener {
+                    TripMonitor.stop()
+                    screenManager.pop()
+                }.build())
+                .build())
+            .build()
+    }
+}
+
 // -- Route planner -----------------------------------------------------------------------
 /**
  * Destination search. Before typing, recent destinations are offered: typing
@@ -340,8 +429,10 @@ class TripScreen(carContext: CarContext, private val dest: Place) : Screen(carCo
 
     private fun drive(r: TripResult, lat: Double, lon: Double) {
         fun go() {
-            if (TripMonitor.state.value?.result !== r) TripMonitor.start(carContext, r)
-            navigate(carContext, lat, lon)
+            // In the app: the whole trip, stop by stop. Else the car's own
+            // navigation app, to the tapped place.
+            if (TripMonitor.drive(carContext, r)) screenManager.push(NavScreen(carContext))
+            else navigate(carContext, lat, lon)
         }
         // Following the trip needs precise location; asked once, on the phone.
         if (PhoneLocation.precise(carContext)) go()
@@ -394,9 +485,17 @@ class TripScreen(carContext: CarContext, private val dest: Place) : Screen(carCo
                 .setOnClickListener { drive(r, s.charger.lat, s.charger.lon) }
                 .build())
         }
-        list.addItem(Row.Builder().setTitle("Navigate to ${dest.label}")
+        list.addItem(Row.Builder().setTitle(
+                if (Navigator.state.value?.trip?.destination == dest) "Directions to ${dest.label}"
+                else "Navigate to ${dest.label}")
             .apply { note?.let { addText(it) } }
-            .setOnClickListener { drive(r, dest.lat, dest.lon) }.build())
+            .setOnClickListener {
+                if (Navigator.state.value?.trip?.destination == dest) {
+                    screenManager.push(NavScreen(carContext))
+                } else {
+                    drive(r, dest.lat, dest.lon)
+                }
+            }.build())
         val template = ListTemplate.Builder().setSingleList(list.build()).setTitle(dest.label)
             .setHeaderAction(Action.BACK)
         if (TripMonitor.state.value?.destination == dest) {
