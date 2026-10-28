@@ -33,7 +33,7 @@ object Speaker {
     private val main = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = null
     private var ready = false
-    private val pending = mutableListOf<Pair<String, String>>()
+    private val pending = mutableListOf<Triple<String, String, Boolean>>()   // id, text, flush
     private val waiters = mutableMapOf<String, () -> Unit>()
     private var seq = 0
 
@@ -52,9 +52,9 @@ object Speaker {
                 if (ready) {
                     created.language = Locale.UK
                     created.setAudioAttributes(attributes)
-                    pending.forEach { (id, text) -> speakNow(app, id, text) }
+                    pending.forEach { (id, text, flush) -> speakNow(app, id, text, flush) }
                 } else {
-                    pending.forEach { (id, _) -> waiters.remove(id)?.invoke() }
+                    pending.forEach { (id, _, _) -> waiters.remove(id)?.invoke() }
                 }
                 pending.clear()
             }
@@ -64,6 +64,10 @@ object Speaker {
             override fun onDone(utteranceId: String?) = finished(app, utteranceId)
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) = finished(app, utteranceId)
+            // Cut off by stop() or a flush: its waiter must not wait on, nor
+            // music stay ducked.
+            override fun onStop(utteranceId: String?, interrupted: Boolean) =
+                finished(app, utteranceId)
         })
         tts = created
         return created
@@ -76,30 +80,34 @@ object Speaker {
         }
     }
 
-    private fun speakNow(context: Context, id: String, text: String) {
+    private fun speakNow(context: Context, id: String, text: String, flush: Boolean) {
         Focus.duck(context)
-        tts?.speak(text, TextToSpeech.QUEUE_ADD, Bundle(), id)
+        tts?.speak(text, if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, Bundle(), id)
     }
 
-    /** Say [text]; returns at once. */
-    fun say(context: Context, text: String) {
-        main.post { queue(context, text) {} }
+    /**
+     * Say [text]; returns at once. [interrupt]: cut off whatever is being said
+     * -- for a turn that is close, which must not wait behind a long answer.
+     */
+    fun say(context: Context, text: String, interrupt: Boolean = false) {
+        main.post { queue(context, text, interrupt) {} }
     }
 
     /** Say [text] and wait until it has been spoken (or failed). */
     suspend fun sayAndWait(context: Context, text: String) {
         withTimeoutOrNull(60_000L + text.length * 120L) {
             suspendCancellableCoroutine { cont ->
-                main.post { queue(context, text) { if (cont.isActive) cont.resume(Unit) } }
+                main.post { queue(context, text, false) { if (cont.isActive) cont.resume(Unit) } }
             }
         }
     }
 
-    private fun queue(context: Context, text: String, done: () -> Unit) {
+    private fun queue(context: Context, text: String, flush: Boolean, done: () -> Unit) {
         val id = "u${seq++}"
         waiters[id] = done
         engine(context)
-        if (ready) speakNow(context.applicationContext, id, text) else pending.add(id to text)
+        if (ready) speakNow(context.applicationContext, id, text, flush)
+        else pending.add(Triple(id, text, flush))
     }
 
     fun stop() {
