@@ -45,6 +45,11 @@
       </select></label>
     <button type="submit">Plan</button>
   </div>
+  <div class="rf-row rf-small">
+    <input type="hidden" name="avoid_set" value="1">
+    {% for a in avoid_names %}<label class="rf-check"><input type="checkbox" name="avoid_{{ a }}" value="1"{% if a in form.avoid %} checked{% endif %}> Avoid {{ a }}</label>
+    {% endfor %}
+  </div>
   {% if car %}
   <p class="chart-note">From this car: start {{ car.start_pct }} % ({{ car.start_basis }}{% if car.start_ts %},
     <span class="age{% if car.start_ts | stale %} age-stale{% endif %}" title="{{ car.start_ts | fmtts }}">{{ car.start_ts | age }}</span>{% endif %});
@@ -54,6 +59,7 @@
 </form>
 
 {% if error %}<div class="err">{{ error }}</div>{% endif %}
+{% if traffic_note %}<p class="chart-note">{{ traffic_note }}</p>{% endif %}
 
 {% if plan %}
 {% set pl = plan %}
@@ -86,6 +92,25 @@
 {% if alternatives %}
 <p class="chart-note">Destination taken as <strong>{{ destination.label }}</strong>. Other matches:
   {% for a in alternatives %}<a href="?to={{ a.label | urlencode }}&amp;from={{ form.frm | urlencode }}">{{ a.label }}</a>{{ '; ' if not loop.last }}{% endfor %}.</p>
+{% endif %}
+
+{% if ways %}
+<h3 class="section-h">Ways there, in today's traffic</h3>
+<table class="route-ways">
+  <tr><th>Way</th><th>Driving</th><th>Distance</th><th>Traffic</th><th>Heavy traffic</th><th></th></tr>
+  {% for w in ways %}
+  <tr{% if w.chosen %} class="chosen"{% endif %}><td>{{ w.summary }}</td>
+    <td>{{ w.minutes // 60 }} h {{ '%02d' | format(w.minutes % 60) }}</td><td>{{ w.km }} km</td>
+    <td>{% if w.delay_min is none %}—{% elif w.delay_min >= 1 %}+{{ w.delay_min }} min{% else %}as usual{% endif %}</td>
+    <td>{% if w.heavy_km >= 0.5 %}{{ w.heavy_km }} km{% else %}none{% endif %}</td>
+    <td>{% if w.chosen %}planned{% else %}<a href="?{{ way_query }}&amp;way={{ w.n }}">plan this way</a>{% endif %}</td></tr>
+  {% endfor %}
+</table>
+<p class="chart-note">Driving times are Mapbox's for now, with today's traffic; "Traffic" is how much
+  slower than usual. Heavy traffic is drawn on the map in orange, very heavy in red.</p>
+{% elif plan and not live_traffic %}
+<p class="chart-note">Driving time without live traffic. Set <code>routing.mapbox_token</code> in
+  <code>config.local.yaml</code> (a free mapbox.com account) to plan in today's traffic, with other ways to choose from.</p>
 {% endif %}
 
 <section class="chart-card" aria-labelledby="h-route-map">
@@ -135,7 +160,7 @@
 </ul>
 
 <script type="application/json" id="route-data">{{ dict(line=route_line, stops=pl.stops, profile=pl.profile,
-  reserve=form.reserve, tiles=map_tiles,
+  reserve=form.reserve, tiles=map_tiles, traffic=traffic_lines,
   origin=dict(label=origin.label, lat=origin.lat, lon=origin.lon),
   destination=dict(label=destination.label, lat=destination.lat, lon=destination.lon)) | tojson }}</script>
 {% endif %}

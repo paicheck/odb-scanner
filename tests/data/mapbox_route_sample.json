@@ -1,0 +1,107 @@
+{
+ "_comment": "Hand-written Mapbox Directions v5 reply (driving-traffic, geometries=geojson, overview=full, steps, banner/voice instructions, annotations=congestion) following the documented fields. Shared by tests/test_route_traffic.py and the phone's NavTest. Synthetic roads.",
+ "code": "Ok",
+ "routes": [
+  {
+   "distance": 9500.0,
+   "duration": 600.0,
+   "duration_typical": 480.0,
+   "weight": 650.0,
+   "weight_name": "auto",
+   "geometry": {"type": "LineString", "coordinates": [
+    [-1.26, 51.75], [-1.26, 51.7607], [-1.26, 51.7714], [-1.26, 51.7821], [-1.26, 51.7928],
+    [-1.26, 51.8035], [-1.26, 51.8142], [-1.26, 51.8249], [-1.26, 51.8354]]},
+   "legs": [
+    {
+     "distance": 9500.0,
+     "duration": 600.0,
+     "duration_typical": 480.0,
+     "summary": "A40, M40",
+     "annotation": {"congestion": ["low", "low", "heavy", "heavy", "severe", "moderate", "low", "unknown"]},
+     "steps": [
+      {
+       "distance": 2000.0, "duration": 120.0, "name": "Banbury Road", "ref": "A40", "mode": "driving",
+       "maneuver": {"type": "depart", "instruction": "Drive north on Banbury Road (A40).", "location": [-1.26, 51.75], "bearing_before": 0, "bearing_after": 0},
+       "voiceInstructions": [
+        {"distanceAlongGeometry": 2000.0, "announcement": "Drive north on Banbury Road, then take the ramp on the left towards the M40.", "ssmlAnnouncement": "<speak>Drive north on Banbury Road</speak>"},
+        {"distanceAlongGeometry": 400.0, "announcement": "In a quarter of a mile, take the ramp on the left towards the M40.", "ssmlAnnouncement": "<speak>In a quarter of a mile</speak>"}
+       ],
+       "bannerInstructions": [
+        {"distanceAlongGeometry": 2000.0,
+         "primary": {"text": "M40", "type": "off ramp", "modifier": "slight left", "components": [{"text": "M40", "type": "text"}]},
+         "secondary": null,
+         "sub": {"text": "", "components": [
+          {"text": "", "type": "lane", "directions": ["slight left"], "active": true, "active_direction": "slight left"},
+          {"text": "", "type": "lane", "directions": ["straight", "slight left"], "active": true, "active_direction": "slight left"},
+          {"text": "", "type": "lane", "directions": ["straight"], "active": false}]}}
+       ],
+       "intersections": [{"location": [-1.26, 51.75], "bearings": [0], "entry": [true], "out": 0}]
+      },
+      {
+       "distance": 6000.0, "duration": 420.0, "name": "", "ref": "M40", "exits": "8", "mode": "driving",
+       "maneuver": {"type": "off ramp", "modifier": "slight left", "instruction": "Take exit 8 on the left towards the M40.", "location": [-1.26, 51.768]},
+       "voiceInstructions": [
+        {"distanceAlongGeometry": 1609.0, "announcement": "In 1 mile, keep left at the fork towards Thornhill.", "ssmlAnnouncement": "<speak>In 1 mile</speak>"},
+        {"distanceAlongGeometry": 200.0, "announcement": "Keep left at the fork towards Thornhill.", "ssmlAnnouncement": "<speak>Keep left</speak>"}
+       ],
+       "bannerInstructions": [
+        {"distanceAlongGeometry": 1609.0,
+         "primary": {"text": "Thornhill", "type": "fork", "modifier": "slight left", "components": [{"text": "Thornhill", "type": "text"}]},
+         "sub": {"text": "", "components": [
+          {"text": "", "type": "lane", "directions": ["left"], "active": true},
+          {"text": "", "type": "lane", "directions": ["left"], "active": true},
+          {"text": "", "type": "lane", "directions": ["straight"], "active": false},
+          {"text": "", "type": "lane", "directions": ["straight"], "active": false}]}}
+       ],
+       "intersections": [{"location": [-1.26, 51.768], "bearings": [0, 330], "entry": [true, true], "in": 0, "out": 1,
+                          "lanes": [{"valid": true, "active": true, "indications": ["slight left"], "valid_indication": "slight left"},
+                                    {"valid": false, "active": false, "indications": ["straight"]}]}]
+      },
+      {
+       "distance": 1500.0, "duration": 60.0, "name": "Thornhill Way", "mode": "driving",
+       "maneuver": {"type": "fork", "modifier": "slight left", "instruction": "Keep left towards Thornhill.", "location": [-1.26, 51.822]},
+       "voiceInstructions": [
+        {"distanceAlongGeometry": 300.0, "announcement": "In 300 yards, you will arrive at your destination.", "ssmlAnnouncement": "<speak>In 300 yards</speak>"},
+        {"distanceAlongGeometry": 50.0, "announcement": "You have arrived at your destination.", "ssmlAnnouncement": "<speak>Arrived</speak>"}
+       ],
+       "bannerInstructions": [
+        {"distanceAlongGeometry": 1500.0,
+         "primary": {"text": "You will arrive", "type": "arrive", "modifier": "straight", "components": [{"text": "You will arrive", "type": "text"}]}}
+       ],
+       "intersections": []
+      },
+      {
+       "distance": 0.0, "duration": 0.0, "name": "Thornhill Way", "mode": "driving",
+       "maneuver": {"type": "arrive", "instruction": "You have arrived at your destination.", "location": [-1.26, 51.8354]},
+       "voiceInstructions": [], "bannerInstructions": [], "intersections": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "distance": 11000.0,
+   "duration": 660.0,
+   "duration_typical": 640.0,
+   "weight": 700.0,
+   "weight_name": "auto",
+   "geometry": {"type": "LineString", "coordinates": [[-1.26, 51.75], [-1.28, 51.79], [-1.26, 51.8354]]},
+   "legs": [
+    {
+     "distance": 11000.0, "duration": 660.0, "duration_typical": 640.0, "summary": "A44, B4027",
+     "annotation": {"congestion": ["low", "moderate"]},
+     "steps": [
+      {"distance": 11000.0, "duration": 660.0, "name": "Woodstock Road", "ref": "A44",
+       "maneuver": {"type": "depart", "instruction": "Drive north on Woodstock Road.", "location": [-1.26, 51.75]},
+       "voiceInstructions": [{"distanceAlongGeometry": 11000.0, "announcement": "Drive north on Woodstock Road."}],
+       "bannerInstructions": [], "intersections": []},
+      {"distance": 0.0, "duration": 0.0, "name": "Thornhill Way",
+       "maneuver": {"type": "arrive", "instruction": "You have arrived at your destination.", "location": [-1.26, 51.8354]},
+       "voiceInstructions": [], "bannerInstructions": [], "intersections": []}
+     ]
+    }
+   ]
+  }
+ ],
+ "waypoints": [{"name": "Banbury Road", "location": [-1.26, 51.75]}, {"name": "Thornhill Way", "location": [-1.26, 51.8354]}]
+}

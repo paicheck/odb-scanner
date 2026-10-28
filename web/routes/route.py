@@ -2,13 +2,15 @@
 
 Registered by web/dashboard.py:create_app. The heavy lifting is in routing/:
 this module only reads the form, calls the providers (OpenRouteService,
-OpenChargeMap -- from the server, so keys never reach the page) and renders
-the plan. Planning never touches the vehicle.
+OpenChargeMap, and Mapbox for today's traffic when a token is set -- from the
+server, so keys never reach the page) and renders the plan. Planning never
+touches the vehicle.
 """
 
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlencode
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse
@@ -16,6 +18,7 @@ from fastapi.responses import HTMLResponse
 log = logging.getLogger(__name__)
 
 ROUTE_LINE_MAX = 1500          # map polyline points sent to the page
+TRAFFIC_LINE_MAX = 1500        # heavy-traffic polyline points, all stretches together
 
 
 def _num(params, name, lo, hi):
@@ -43,6 +46,21 @@ def _cfg_num(cfg, key, default, lo, hi):
     return v if lo <= v <= hi else default
 
 
+def _traffic_lines(points, runs) -> list[dict]:
+    """Each heavy-traffic stretch as a polyline for the map: {level, line}."""
+    from routing.planner import cumulative_km
+    cum = cumulative_km(points)
+    total = sum(1 for k in cum for a, b, _ in runs if a <= k <= b) or 1
+    step = max(1, -(-total // TRAFFIC_LINE_MAX))
+    out = []
+    for a, b, level in runs:
+        idx = [i for i, k in enumerate(cum) if a <= k <= b][::step]
+        line = [[points[i][0], points[i][1]] for i in idx]
+        if len(line) >= 2:
+            out.append({"level": level, "line": line})
+    return out
+
+
 def register(app, ctx) -> None:
     cfg = ctx.cfg
     map_tiles = ctx.map_tiles
@@ -62,6 +80,7 @@ def register(app, ctx) -> None:
         car = car_energy(repo, vid, cfg) if vid else None
         fix = positions(repo, vid, 30)["latest"] if vid else None
         ors_key, ocm_key = providers.keys(cfg)
+        token = providers.mapbox_token(cfg)
         # Every field resolved here -- typed value, else this car, else config,
         # else the default -- so the form shows exactly what was planned with.
         form = {
@@ -78,6 +97,11 @@ def register(app, ctx) -> None:
                                float(cfg.get("routing.charge_to_pct", 80))),
             "mode": next(m for m in (p.get("mode"), cfg.get("routing.mode"), "balanced")
                          if m in MODES),
+            # Ticked boxes once the form has been sent; until then, config's.
+            "avoid": ([a for a in providers.AVOID if p.get(f"avoid_{a}")]
+                      if p.get("avoid_set")
+                      else providers.avoid_list(cfg.get("routing.avoid", []) or [])),
+            "way": int(_num(p, "way", 0, 5) or 0),
         }
         min_kw = float(cfg.get("routing.min_charger_kw", 50))
         own = prices.own_prices(cfg.get("routing.prices", {}) or {})
@@ -85,6 +109,10 @@ def register(app, ctx) -> None:
         time_value = _cfg_num(cfg, "routing.time_value_per_hour", 15.0, 0.0, 500.0)
         context = dict(car=car, fix=fix, form=form, plan=None, error=None,
                        origin=None, destination=None, alternatives=[],
+                       avoid_names=providers.AVOID, ways=[], traffic_note=None,
+                       traffic_lines=[], live_traffic=bool(token),
+                       way_query=urlencode([(k, v) for k, v in p.multi_items()
+                                            if k != "way"]),
                        min_charger_kw=min_kw, map_tiles=map_tiles, modes=MODES,
                        time_value=time_value, own_prices=own,
                        keys_missing=[n for n, k in (("OpenRouteService", ors_key),
@@ -113,7 +141,29 @@ def register(app, ctx) -> None:
                 raise providers.RoutingError(f"No place found for “{form['to']}”.")
             dest = dests[0]
             context.update(origin=origin, destination=dest, alternatives=dests[1:])
-            route = ors.route((origin.lat, origin.lon), (dest.lat, dest.lon))
+            ways = []
+            if token:
+                try:
+                    ways = providers.Mapbox(token).routes(
+                        (origin.lat, origin.lon), (dest.lat, dest.lon), form["avoid"])
+                except providers.RoutingError as exc:
+                    context["traffic_note"] = (f"No live traffic: {exc} "
+                                               "This route is from OpenRouteService.")
+            if ways:
+                pick = min(form["way"], len(ways) - 1)
+                chosen = ways[pick]
+                # Mapbox gives no heights: ORS adds them (flat if that fails).
+                route = providers.Route(ors.elevate(chosen.points), chosen.distance_km,
+                                        chosen.duration_s)
+                context["ways"] = [dict(
+                    n=i, summary=w.summary or "—", minutes=round(w.duration_s / 60),
+                    km=round(w.distance_km), heavy_km=round(w.heavy_km, 1),
+                    delay_min=None if w.delay_s is None else round(w.delay_s / 60),
+                    chosen=i == pick) for i, w in enumerate(ways)]
+                context["traffic_lines"] = _traffic_lines(chosen.points, chosen.runs)
+            else:
+                route = ors.route((origin.lat, origin.lon), (dest.lat, dest.lon),
+                                  form["avoid"])
 
             settings = PlanSettings(reserve_pct=form["reserve"],
                                     charge_to_pct=form["charge_to"],

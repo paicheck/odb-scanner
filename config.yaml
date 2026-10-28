@@ -167,6 +167,14 @@ routing:
   # and route to those two services; nothing else leaves the machine.
   ors_api_key: ""
   ocm_api_key: ""
+  # Optional: a Mapbox access token (free account at mapbox.com; 100,000
+  # route requests a month free) plans in today's traffic and offers up to
+  # two other ways there. Put it in config.local.yaml, NOT here, or set
+  # ODB_MAPBOX_TOKEN. The start and destination then go to Mapbox too.
+  mapbox_token: ""
+  # Roads to keep off unless the Route form says otherwise: any of
+  # motorways, tolls, ferries.
+  avoid: []
   reserve_pct: 10           # never plan to arrive below this
   charge_to_pct: 80         # never charge above this at a stop
   min_charger_kw: 50        # ignore slower chargers

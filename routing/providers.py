@@ -1,9 +1,11 @@
-"""Road routing and charger lookup: OpenRouteService and OpenChargeMap.
+"""Road routing and charger lookup: OpenRouteService, OpenChargeMap, Mapbox.
 
-Both need a free API key, read from config (routing.ors_api_key,
+ORS and OCM need a free API key, read from config (routing.ors_api_key,
 routing.ocm_api_key -- put them in config.local.yaml, which is gitignored) or
-the environment (ODB_ORS_KEY, ODB_OCM_KEY). Calls are made from this server,
-not the browser: the start, destination and route are sent to these services
+the environment (ODB_ORS_KEY, ODB_OCM_KEY). Mapbox is optional
+(routing.mapbox_token or ODB_MAPBOX_TOKEN): with it, routes come in today's
+traffic with up to two alternatives. Calls are made from this server, not
+the browser: the start, destination and route are sent to these services
 and nowhere else, and a key never reaches a web page.
 
 Every failure -- missing key, network, HTTP error, unexpected reply -- is a
@@ -16,9 +18,15 @@ from dataclasses import dataclass
 
 import requests
 
-from .planner import Charger
+from .planner import Charger, cumulative_km
 
 ORS_BASE = "https://api.openrouteservice.org"
+MAPBOX_BASE = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic"
+ELEVATION_MAX_POINTS = 1500   # ORS elevation/line takes up to 2000
+# Roads to keep off, as each service names them.
+AVOID = ("motorways", "tolls", "ferries")
+AVOID_ORS = {"motorways": "highways", "tolls": "tollways", "ferries": "ferries"}
+AVOID_MAPBOX = {"motorways": "motorway", "tolls": "toll", "ferries": "ferry"}
 OCM_BASE = "https://api.openchargemap.io/v3/poi/"
 TIMEOUT_S = 20.0
 CCS2 = 33            # OpenChargeMap ConnectionTypeID: CCS (Type 2)
@@ -47,10 +55,44 @@ class Route:
     duration_s: float
 
 
+@dataclass
+class TrafficRoute:
+    """One way there from Mapbox, in today's traffic."""
+    points: list[tuple[float, float, float | None]]   # no heights: ORS adds them
+    distance_km: float
+    duration_s: float                  # with today's traffic
+    typical_s: float | None            # the same trip in typical traffic
+    summary: str                       # main roads, "A40, M40"
+    runs: list[tuple[float, float, str]]   # heavy/severe: (from km, to km, level)
+
+    @property
+    def delay_s(self) -> float | None:
+        if self.typical_s is None:
+            return None
+        return max(0.0, self.duration_s - self.typical_s)
+
+    @property
+    def heavy_km(self) -> float:
+        return sum(b - a for a, b, _ in self.runs)
+
+
 def keys(cfg) -> tuple[str, str]:
     def one(name, env):
         return str(cfg.get(f"routing.{name}", "") or os.environ.get(env, "")).strip()
     return one("ors_api_key", "ODB_ORS_KEY"), one("ocm_api_key", "ODB_OCM_KEY")
+
+
+def mapbox_token(cfg) -> str:
+    raw = cfg.get("routing.mapbox_token", "") or os.environ.get("ODB_MAPBOX_TOKEN", "")
+    return str(raw).strip()
+
+
+def avoid_list(raw) -> list[str]:
+    """Config's or the form's roads to avoid, cleaned: a subset of AVOID, in order."""
+    if isinstance(raw, str):
+        raw = raw.replace(",", " ").split()
+    wanted = {str(x).strip().lower() for x in (raw or [])}
+    return [a for a in AVOID if a in wanted]
 
 
 def country_list(raw) -> str:
@@ -112,9 +154,13 @@ class OpenRouteService:
                 continue
         return out
 
-    def route(self, start: tuple[float, float], end: tuple[float, float]) -> Route:
+    def route(self, start: tuple[float, float], end: tuple[float, float],
+              avoid=()) -> Route:
         body = {"coordinates": [[start[1], start[0]], [end[1], end[0]]],
                 "elevation": True, "instructions": False}
+        if avoid_list(avoid):
+            body["options"] = {"avoid_features": [AVOID_ORS[a]
+                                                  for a in avoid_list(avoid)]}
         data = _get_json("POST", f"{ORS_BASE}/v2/directions/driving-car/geojson",
                          json=body, headers={"Authorization": self.key})
         try:
@@ -130,6 +176,110 @@ class OpenRouteService:
             raise RoutingError("OpenRouteService returned an empty route")
         return Route(points, float(summary.get("distance", 0)) / 1000.0,
                      float(summary.get("duration", 0)))
+
+    def elevate(self, points: list[tuple]) -> list[tuple]:
+        """Heights for a route from another service (Mapbox gives none), on a
+        thinned copy of it -- so the planner still counts the hills. On any
+        failure the points come back as they were: flat."""
+        thin = thin_line(points, ELEVATION_MAX_POINTS)
+        body = {"format_in": "polyline", "format_out": "polyline",
+                "geometry": [[p[1], p[0]] for p in thin]}
+        try:
+            data = _get_json("POST", f"{ORS_BASE}/elevation/line", json=body,
+                             headers={"Authorization": self.key})
+            out = [(float(c[1]), float(c[0]), float(c[2]) if len(c) > 2 else None)
+                   for c in data["geometry"]]
+        except (RoutingError, KeyError, TypeError, ValueError, IndexError):
+            return points
+        return out if len(out) >= 2 else points
+
+
+class Mapbox:
+    """Driving routes in today's traffic (Mapbox Directions, driving-traffic):
+    the recommended way and up to two alternatives, each with the time it
+    would take in typical traffic and its heavy-traffic stretches."""
+
+    def __init__(self, token: str):
+        if not token:
+            raise RoutingError(
+                "No Mapbox token: set routing.mapbox_token in config.local.yaml.")
+        self.token = token
+
+    def routes(self, start: tuple[float, float], end: tuple[float, float],
+               avoid=()) -> list[TrafficRoute]:
+        coords = f"{start[1]:.6f},{start[0]:.6f};{end[1]:.6f},{end[0]:.6f}"
+        params = {"alternatives": "true", "geometries": "geojson", "overview": "full",
+                  "annotations": "congestion", "access_token": self.token}
+        if avoid_list(avoid):
+            params["exclude"] = ",".join(AVOID_MAPBOX[a] for a in avoid_list(avoid))
+        try:
+            data = _get_json("GET", f"{MAPBOX_BASE}/{coords}", params=params)
+        except RoutingError as exc:
+            # A network error quotes the request, token and all: keep the
+            # reason, drop the token (and the chained original).
+            msg = str(exc)
+            if len(self.token) >= 8:
+                msg = msg.replace(self.token, "…")
+            raise RoutingError(msg) from None
+        return parse_mapbox(data)
+
+
+def parse_mapbox(data: dict) -> list[TrafficRoute]:
+    """Mapbox Directions v5 (geojson, overview=full, annotations=congestion)."""
+    if not isinstance(data, dict) or data.get("code", "Ok") != "Ok":
+        msg = (data.get("message") or data.get("code")) if isinstance(data, dict) \
+            else "bad reply"
+        raise RoutingError(f"Mapbox found no route: {msg}")
+    out = []
+    for r in data.get("routes") or []:
+        try:
+            points = [(float(c[1]), float(c[0]), None)
+                      for c in r["geometry"]["coordinates"]]
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+        if len(points) < 2:
+            continue
+        legs = r.get("legs") or []
+        levels = [str(x) for leg in legs
+                  for x in ((leg.get("annotation") or {}).get("congestion") or [])]
+        typical = r.get("duration_typical")
+        out.append(TrafficRoute(
+            points=points,
+            distance_km=float(r.get("distance", 0)) / 1000.0,
+            duration_s=float(r.get("duration", 0)),
+            typical_s=None if typical is None else float(typical),
+            summary="; ".join(leg["summary"] for leg in legs if leg.get("summary")),
+            runs=congestion_runs(levels, cumulative_km(points))))
+    if not out:
+        raise RoutingError("Mapbox found no route")
+    return out
+
+
+def congestion_runs(levels: list[str],
+                    cum: list[float]) -> list[tuple[float, float, str]]:
+    """Heavy or severe stretches from per-segment congestion: (from km, to km,
+    worst level). Matches the phone's MapboxParse.runs, on the same sample."""
+    if not levels or len(cum) < 2:
+        return []
+    segs = len(cum) - 1
+
+    def km(i: int) -> float:          # segment i's start, proportionally if counts differ
+        pos = i * segs / len(levels)
+        k = min(segs - 1, int(pos))
+        return cum[k] + (pos - k) * (cum[k + 1] - cum[k])
+
+    out, start, worst = [], -1, ""
+    for i in range(len(levels) + 1):
+        heavy = i < len(levels) and levels[i] in ("heavy", "severe")
+        if heavy:
+            if start < 0:
+                start, worst = i, levels[i]
+            if levels[i] == "severe":
+                worst = "severe"
+        elif start >= 0:
+            out.append((km(start), cum[-1] if i >= len(levels) else km(i), worst))
+            start = -1
+    return out
 
 
 class OpenChargeMap:

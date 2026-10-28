@@ -451,7 +451,7 @@ def services(monkeypatch):
         return [providers.Place(f"{text}, England", pts[-1][0], 0.0),
                 providers.Place(f"{text} (other)", 0.0, 0.0)]
 
-    def route(self, start, end):
+    def route(self, start, end, avoid=()):
         return providers.Route(pts, 400.0, 15000)
 
     def along(self, points, radius_km):

@@ -1269,6 +1269,13 @@
       var map = L.map(el, { scrollWheelZoom: false, zoomSnap: 0.25 });
       if (data.tiles === "osm") osmLayer().addTo(map);
       var line = L.polyline(data.line, { color: COLORS[0], weight: 4, opacity: 0.85 }).addTo(map);
+      // Heavy traffic over the route: orange, very heavy red.
+      (data.traffic || []).forEach(function (t) {
+        L.polyline(t.line, { color: t.level === "severe" ? "#b71c1c" : "#e65100",
+                             weight: 6, opacity: 0.9 })
+          .bindPopup(textPopup([t.level === "severe" ? "Very heavy traffic" : "Heavy traffic"]))
+          .addTo(map);
+      });
       [[data.origin, "Start"], [data.destination, "Destination"]].forEach(function (p) {
         L.circleMarker([p[0].lat, p[0].lon], {
           radius: 7, color: "#ffffff", weight: 2, fillColor: INK_2, fillOpacity: 1,

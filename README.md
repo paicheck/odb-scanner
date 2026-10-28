@@ -97,6 +97,10 @@ the assumption for a home network. Further boundaries:
   to OpenRouteService and OpenChargeMap, from this machine (the keys,
   `routing.ors_api_key` / `routing.ocm_api_key` in `config.local.yaml`, never
   reach a web page). Without keys the page only explains how to get them.
+  With the optional `routing.mapbox_token` it also sends the start and
+  destination to Mapbox, to plan in today's traffic and offer up to two other
+  ways there (heavy traffic is drawn on the map); `routing.avoid` (motorways,
+  tolls, ferries) sets the form's roads to avoid.
 * **Cloud AI (opt-in):** with `ai.provider` set to a cloud service (Claude,
   OpenAI, Gemini, Mistral, Groq, OpenRouter, DeepSeek, xAI or any
   OpenAI-compatible endpoint) the AI Analysis page sends your question and the
