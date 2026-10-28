@@ -127,6 +127,41 @@ choice. The car screens could not be tried on a real head unit while building
 them; the Desktop Head Unit (`desktop-head-unit` in the SDK's
 `extras/google/auto`) is the way to try them on a computer.
 
+## AI assistant
+
+**Ask AI** (main screen) and **Assistant** (car screen) answer questions about
+the car and the trip, typed or spoken. Choose the AI service under Ask AI ->
+Settings: **Claude** (through Anthropic's Java SDK; `claude-opus-5-5` unless
+you pick another model), **OpenAI, Google Gemini, Mistral, Groq, OpenRouter,
+DeepSeek, xAI**, or any OpenAI-compatible https endpoint. Each needs your own
+API key from that service (billed per use); keys are stored encrypted with a
+key held in the Android Keystore.
+
+What it can do -- all read-only, nothing reaches the car: read the stored
+battery readings, fault codes and any measurement with its history; describe
+the trip being driven (stops ahead, charge, cost, the road each is on); read
+out the route's turn-by-turn steps ahead (junctions, exits); find chargers
+near you with prices; plan or re-plan a trip and open Google Maps. What is
+sent to the service: your question and what those tools return -- never the
+VIN, never your exact position.
+
+**Voice.** Speak asks one question through the phone's speech recogniser and
+answers aloud (as navigation guidance: music ducks; with Android Auto it plays
+through the car). Trip alerts are spoken too, as fixed sentences that cost no
+AI request: a charging stop about five miles ahead, a re-plan that changes the
+stops, a charge below plan.
+
+**Wake word** (off by default). With it on, the phone listens for "hey
+scanner" (or your phrase) using Vosk on the phone itself -- a 40 MB model,
+downloaded once; no audio leaves the phone until the phrase is heard. A
+notification shows while it listens, with Stop. It uses some battery, so it
+suits a phone on the car charger. Tested: the real Vosk engine on an emulator
+against recorded speech (`connectedDebugAndroidTest`); not yet with a live
+microphone in a car.
+
+In the car the microphone is the phone's own; Android Auto's car microphone
+is not used. The car screens and voice have not been tried on a head unit.
+
 ## Versioning
 
 The app version is one number, stored once: `version.json` at the repo root.

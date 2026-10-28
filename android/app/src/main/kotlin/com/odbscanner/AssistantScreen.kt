@@ -44,6 +44,9 @@ import com.odbscanner.ai.Assistant
 import com.odbscanner.ai.ClaudeChatSession
 import com.odbscanner.ai.OpenAiChatSession
 import com.odbscanner.ai.VoiceAssistant
+import com.odbscanner.ai.WakeMatch
+import com.odbscanner.ai.WakeModel
+import com.odbscanner.ai.WakeWordService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -124,6 +127,9 @@ fun AssistantDialog(onDismiss: () -> Unit) {
                     Button(onClick = { send() }, enabled = !busy && question.isNotBlank()) {
                         Text("Send")
                     }
+                }
+                // A second row: four buttons do not fit across a phone-width dialog.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { Assistant.newConversation() }) { Text("New chat") }
                     TextButton(onClick = { showSettings = true }) { Text("Settings") }
                 }
@@ -145,6 +151,14 @@ fun AssistantSettingsDialog(onDone: () -> Unit) {
     var baseUrl by remember { mutableStateOf(s.baseUrl) }
     var effort by remember { mutableStateOf(s.effort) }
     var speak by remember { mutableStateOf(s.speakAlerts) }
+    var wake by remember { mutableStateOf(s.wakeWord) }
+    var phrase by remember { mutableStateOf(s.wakePhrase) }
+    var modelReady by remember { mutableStateOf(WakeModel.installed(context)) }
+    var downloading by remember { mutableStateOf<Int?>(null) }
+    val wakeStatus by WakeWordService.status.collectAsState()
+    val askWakeMic = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (!granted) wake = false }
     var pickProvider by remember { mutableStateOf(false) }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
     var pickModel by remember { mutableStateOf(false) }
@@ -152,10 +166,17 @@ fun AssistantSettingsDialog(onDone: () -> Unit) {
     val preset = AiPresets.byId(provider)
 
     fun save() {
+        val on = wake && modelReady && ContextCompat.checkSelfPermission(context,
+            Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         AiPrefs.save(context, s.copy(provider = provider, model = model, baseUrl = baseUrl,
-            effort = effort, speakAlerts = speak))
+            effort = effort, speakAlerts = speak, wakeWord = on,
+            wakePhrase = WakeMatch.normalise(phrase).ifBlank { "hey scanner" }))
         if (key.isNotBlank()) AiPrefs.setKey(context, provider, key)
         Assistant.newConversation()
+        // Restart so a changed phrase takes effect; started here, in front, as
+        // Android requires for a microphone service.
+        WakeWordService.stop(context)
+        if (on) WakeWordService.start(context)
     }
 
     AlertDialog(
@@ -239,6 +260,43 @@ fun AssistantSettingsDialog(onDone: () -> Unit) {
                 Row {
                     Text("Speak trip alerts (re-plans, stops ahead)", modifier = Modifier.weight(1f))
                     TextButton(onClick = { speak = !speak }) { Text(if (speak) "On" else "Off") }
+                }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                Row {
+                    Text("Wake word: always listening", modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        wake = !wake
+                        if (wake && ContextCompat.checkSelfPermission(context,
+                                Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+                        ) askWakeMic.launch(Manifest.permission.RECORD_AUDIO)
+                    }) { Text(if (wake) "On" else "Off") }
+                }
+                if (wake) {
+                    Text("The phone listens for the phrase itself, offline -- no audio leaves " +
+                        "it until you have said it. It uses some battery; a notification shows " +
+                        "while it listens, with Stop.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(phrase, { phrase = it.take(30) },
+                        label = { Text("Wake phrase (two or three words)") }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth())
+                    if (!modelReady) {
+                        Button(enabled = downloading == null, onClick = {
+                            downloading = 0
+                            scope.launch {
+                                note = try {
+                                    WakeModel.download(context) { p -> downloading = p }
+                                    modelReady = true
+                                    null
+                                } catch (e: AiException) {
+                                    e.message
+                                }
+                                downloading = null
+                            }
+                        }) {
+                            Text(downloading?.let { "Downloading… $it %" }
+                                ?: "Download the speech model (40 MB)")
+                        }
+                    }
+                    Text("Status: $wakeStatus", style = MaterialTheme.typography.bodySmall)
                 }
             }
         },

@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.odbscanner.ai.WakeWordService
 import com.odbscanner.collect.Reading
 import com.odbscanner.db.AppDatabase
 import com.odbscanner.db.MeasurementEntity
@@ -66,6 +67,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The wake word survives a reboot or a killed process: back on when the
+        // app is next opened (a microphone service may only start from here).
+        WakeWordService.resumeIfOn(this)
         // A bad or unreadable spec must show an error screen, not a crash with
         // no explanation: the asset is generated, and a hand-edited or missing
         // one would otherwise take the whole app down before the UI exists.

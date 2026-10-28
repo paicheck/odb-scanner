@@ -35,6 +35,12 @@ android {
         targetSdk = 34
         versionCode = appVersionCode
         versionName = appVersion
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // The wake word's speech engine (Vosk) is native code: ship it for the
+        // phone (arm64) and the emulator (x86_64) only, not all four ABIs.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildFeatures {
@@ -83,6 +89,9 @@ dependencies {
     // Assistant: Claude through Anthropic's official SDK (the other AI services
     // share the OpenAI-style request, sent with HttpURLConnection like the rest).
     implementation("com.anthropic:anthropic-java:3.2.0")
+    // Wake word: Vosk keyword spotting, offline -- nothing leaves the phone
+    // until the phrase is heard.
+    implementation("com.alphacephei:vosk-android:0.3.75")
 
     // JVM unit tests (run with :app:testDebugUnitTest). Elm327ProtocolTest pins
     // the MEB wire form to the same captured truth the Python suite checks, so
@@ -91,6 +100,11 @@ dependencies {
     // android.jar's org.json is a stub on the JVM; PlannerTest parses the
     // shared route vectors with the real one.
     testImplementation("org.json:json:20240303")
+
+    // Instrumented tests (connectedDebugAndroidTest, on an emulator): the wake
+    // word against recorded speech, through the real Vosk engine.
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
 
 // This project lives inside a OneDrive-synced folder, and OneDrive's sync agent
