@@ -21,19 +21,33 @@ data class AiPreset(
     val protocol: String,        // "anthropic" | "openai"
     val baseUrl: String,
     val keyUrl: String,
+    /** The model used when the Model box is left blank; "" when one must be named. */
+    val defaultModel: String = "",
+    /** How its free tier works, shown under the key box; "" when it has none. */
+    val freeNote: String = "",
 )
 
 object AiPresets {
     const val CLAUDE_DEFAULT_MODEL = "claude-opus-5-5"
 
+    // The free tiers first: each needs only a key, and its default model can
+    // call the tools the assistant reads the car with (checked October 2026).
     val ALL = listOf(
         AiPreset("anthropic", "Claude (Anthropic)", "anthropic", "https://api.anthropic.com",
-            "console.anthropic.com"),
+            "console.anthropic.com", defaultModel = CLAUDE_DEFAULT_MODEL),
+        AiPreset("gemini", "Google Gemini (free tier)", "openai",
+            "https://generativelanguage.googleapis.com/v1beta/openai", "aistudio.google.com",
+            defaultModel = "gemini-3.8-flash",
+            freeNote = "Free, no card needed. On the free tier Google may use what is sent " +
+                "to improve its models."),
+        AiPreset("groq", "Groq (free tier)", "openai", "https://api.groq.com/openai/v1",
+            "console.groq.com", defaultModel = "llama-3.3-70b-versatile",
+            freeNote = "Free, with daily limits."),
+        AiPreset("mistral", "Mistral (free Experiment plan)", "openai", "https://api.mistral.ai/v1",
+            "console.mistral.ai", defaultModel = "mistral-small-latest",
+            freeNote = "Free with a verified phone number. On the free plan Mistral may use " +
+                "what is sent to train its models."),
         AiPreset("openai", "OpenAI", "openai", "https://api.openai.com/v1", "platform.openai.com"),
-        AiPreset("gemini", "Google Gemini", "openai",
-            "https://generativelanguage.googleapis.com/v1beta/openai", "aistudio.google.com"),
-        AiPreset("mistral", "Mistral", "openai", "https://api.mistral.ai/v1", "console.mistral.ai"),
-        AiPreset("groq", "Groq", "openai", "https://api.groq.com/openai/v1", "console.groq.com"),
         AiPreset("openrouter", "OpenRouter (many models, one key)", "openai",
             "https://openrouter.ai/api/v1", "openrouter.ai/keys"),
         AiPreset("deepseek", "DeepSeek", "openai", "https://api.deepseek.com/v1",
@@ -57,7 +71,7 @@ data class AiSettings(
 ) {
     val preset: AiPreset get() = AiPresets.byId(provider)
     val effectiveModel: String
-        get() = model.ifBlank { if (preset.protocol == "anthropic") AiPresets.CLAUDE_DEFAULT_MODEL else "" }
+        get() = model.ifBlank { preset.defaultModel }
     val effectiveBaseUrl: String get() = baseUrl.ifBlank { preset.baseUrl }.trimEnd('/')
 }
 

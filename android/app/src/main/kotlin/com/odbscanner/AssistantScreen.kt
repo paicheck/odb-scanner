@@ -208,6 +208,9 @@ fun AssistantSettingsDialog(onDone: () -> Unit) {
                 if (preset.keyUrl.isNotBlank()) {
                     Text("Create a key at ${preset.keyUrl}", style = MaterialTheme.typography.bodySmall)
                 }
+                if (preset.freeNote.isNotBlank()) {
+                    Text(preset.freeNote, style = MaterialTheme.typography.bodySmall)
+                }
                 OutlinedTextField(key, { key = it.trim() },
                     label = { Text(if (hasKey) "API key (saved; type to replace)" else "API key") },
                     singleLine = true, visualTransformation = PasswordVisualTransformation(),
@@ -215,8 +218,8 @@ fun AssistantSettingsDialog(onDone: () -> Unit) {
                     modifier = Modifier.fillMaxWidth())
                 Box {
                     OutlinedTextField(model, { model = it.trim() },
-                        label = { Text(if (preset.protocol == "anthropic")
-                            "Model (blank: ${AiPresets.CLAUDE_DEFAULT_MODEL})" else "Model") },
+                        label = { Text(if (preset.defaultModel.isNotBlank())
+                            "Model (blank: ${preset.defaultModel})" else "Model") },
                         singleLine = true, modifier = Modifier.fillMaxWidth())
                     DropdownMenu(expanded = pickModel, onDismissRequest = { pickModel = false }) {
                         models.take(40).forEach { m ->

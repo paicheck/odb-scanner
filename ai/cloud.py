@@ -45,6 +45,7 @@ class Preset:
     protocol: str          # "anthropic" | "openai" (OpenAI-compatible chat completions)
     base_url: str
     key_url: str           # where to create a key
+    default_model: str = ""   # used when ai.model is blank; "" means one must be named
 
 
 PRESETS: dict[str, Preset] = {
@@ -52,13 +53,17 @@ PRESETS: dict[str, Preset] = {
                         "https://console.anthropic.com/settings/keys"),
     "openai": Preset("OpenAI", "openai", "https://api.openai.com/v1",
                      "https://platform.openai.com/api-keys"),
-    "gemini": Preset("Google Gemini", "openai",
+    # Free tiers (checked October 2026): Gemini's needs no card; Groq's has daily
+    # limits; Mistral's Experiment plan needs a verified phone number. Gemini's
+    # and Mistral's free tiers may use what is sent to improve their models.
+    "gemini": Preset("Google Gemini (free tier)", "openai",
                      "https://generativelanguage.googleapis.com/v1beta/openai",
-                     "https://aistudio.google.com/apikey"),
-    "mistral": Preset("Mistral", "openai", "https://api.mistral.ai/v1",
-                      "https://console.mistral.ai/api-keys"),
-    "groq": Preset("Groq", "openai", "https://api.groq.com/openai/v1",
-                   "https://console.groq.com/keys"),
+                     "https://aistudio.google.com/apikey", "gemini-3.8-flash"),
+    "mistral": Preset("Mistral (free Experiment plan)", "openai",
+                      "https://api.mistral.ai/v1",
+                      "https://console.mistral.ai/api-keys", "mistral-small-latest"),
+    "groq": Preset("Groq (free tier)", "openai", "https://api.groq.com/openai/v1",
+                   "https://console.groq.com/keys", "llama-3.3-70b-versatile"),
     "openrouter": Preset("OpenRouter (many models, one key)", "openai",
                          "https://openrouter.ai/api/v1", "https://openrouter.ai/keys"),
     "deepseek": Preset("DeepSeek", "openai", "https://api.deepseek.com/v1",
@@ -281,7 +286,7 @@ def llm_from_config(cfg):
         raise CloudAIError(f"Unknown ai.provider '{provider}'. Use ollama or one of: "
                            + ", ".join(PRESETS))
     key = str(cfg.get("ai.api_key", "") or os.environ.get("ODB_AI_KEY", "")).strip()
-    model = str(cfg.get("ai.model", "") or "").strip()
+    model = str(cfg.get("ai.model", "") or "").strip() or PRESETS[provider].default_model
     timeout = float(cfg.get("ai.timeout", 300) or 300)
     if PRESETS[provider].protocol == "anthropic":
         return AnthropicClient(key, model, str(cfg.get("ai.effort", "medium")), timeout)

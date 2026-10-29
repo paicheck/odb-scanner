@@ -133,8 +133,10 @@ ai:
   # openrouter, deepseek, xai, or custom (any OpenAI-compatible base_url).
   # Put the key in config.local.yaml (or ODB_AI_KEY), never here.
   provider: ollama
-  # Blank: Claude uses claude-opus-5-5; the other services need one named
-  # (an unset model lists what the key can use when you ask).
+  # Blank: Claude uses claude-opus-5-5, gemini gemini-3.8-flash, groq
+  # llama-3.3-70b-versatile, mistral mistral-small-latest -- those three have
+  # free tiers. The others need one named (an unset model lists what the key
+  # can use when you ask).
   model: ""
   api_key: ""
   base_url: ""          # provider custom only, e.g. https://example.com/v1

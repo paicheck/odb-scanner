@@ -54,6 +54,18 @@ def test_openai_compatible_services_have_their_endpoints(provider, host):
     assert llm.base_url.split("/")[2] == host
 
 
+@pytest.mark.parametrize("provider,model", [
+    ("gemini", "gemini-3.8-flash"), ("groq", "llama-3.3-70b-versatile"),
+    ("mistral", "mistral-small-latest"), ("openai", ""),
+])
+def test_the_free_services_need_only_a_key(provider, model):
+    # Gemini, Groq and Mistral have free tiers; each gets a model that can
+    # call tools, so a key alone is enough. The others still need one named.
+    assert cloud.llm_from_config(_cfg(provider=provider, api_key="k")).model == model
+    assert cloud.llm_from_config(
+        _cfg(provider=provider, api_key="k", model="mine")).model == "mine"
+
+
 def test_key_from_the_environment(monkeypatch):
     monkeypatch.setenv("ODB_AI_KEY", "env-key")
     assert cloud.llm_from_config(_cfg(provider="openai", model="m")).key == "env-key"

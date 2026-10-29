@@ -175,8 +175,13 @@ the car and the trip, typed or spoken. Choose the AI service under Ask AI ->
 Settings: **Claude** (through Anthropic's Java SDK; `claude-opus-5-5` unless
 you pick another model), **OpenAI, Google Gemini, Mistral, Groq, OpenRouter,
 DeepSeek, xAI**, or any OpenAI-compatible https endpoint. Each needs your own
-API key from that service (billed per use); keys are stored encrypted with a
-key held in the Android Keystore.
+API key from that service; keys are stored encrypted with a key held in the
+Android Keystore. Three are free to start with and need only the key -- each
+has a default model that can use the assistant's tools: **Google Gemini**
+(`gemini-3.8-flash`, no card needed), **Groq** (`llama-3.3-70b-versatile`,
+daily limits) and **Mistral** (`mistral-small-latest`, a verified phone
+number). Gemini's and Mistral's free tiers may use what is sent to improve
+their models; the others are billed per use.
 
 What it can do -- all read-only, nothing reaches the car: read the stored
 battery readings, fault codes and any measurement with its history; describe
