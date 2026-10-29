@@ -69,7 +69,17 @@ CREATE TABLE IF NOT EXISTS measurements (
     success INTEGER NOT NULL DEFAULT 1,
     error TEXT
 );
-CREATE INDEX IF NOT EXISTS ix_measurements_key_ts ON measurements(key, ts);
+-- Per-key reads -- every chart, the newest value of each key, the planner's
+-- consumption, the trip log -- go through this index and never touch the
+-- table: it holds every column they filter on or return. One key's readings
+-- are spread through the whole file between every other key's, so reading
+-- them from the table cost one page per row (10 s for a month of one fast key
+-- with a cold cache); in the index they sit together. `id` follows `ts` so
+-- "newest first, later insert winning a tie" needs no sort either. It
+-- replaces (key, ts), which every one of those queries used and this covers.
+DROP INDEX IF EXISTS ix_measurements_key_ts;
+CREATE INDEX IF NOT EXISTS ix_measurements_series
+    ON measurements(key, vehicle_id, ts, id, success, value, provenance);
 CREATE INDEX IF NOT EXISTS ix_measurements_ts ON measurements(ts);
 
 CREATE TABLE IF NOT EXISTS battery_measurements (
