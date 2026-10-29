@@ -50,6 +50,8 @@ android {
     // The shared test data (the Mapbox route sample, ...) for the device tests.
     sourceSets {
         getByName("androidTest").assets.srcDir("../../tests/data")
+        // The exported Room schemas, for MigrationTestHelper.
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
     compileOptions {
@@ -110,6 +112,9 @@ dependencies {
     // word against recorded speech, through the real Vosk engine.
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    // MeasurementDaoDeviceTest: each Room migration run against the committed
+    // schema JSON, so a broken one fails here and not at the user's first start.
+    androidTestImplementation("androidx.room:room-testing:2.6.1")
 }
 
 // This project lives inside a OneDrive-synced folder, and OneDrive's sync agent

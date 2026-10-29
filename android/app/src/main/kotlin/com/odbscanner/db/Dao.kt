@@ -26,13 +26,20 @@ interface MeasurementDao {
     /**
      * The newest successful row per key, newest first. The screen used to load
      * the WHOLE table every 3 seconds and de-duplicate in Kotlin; an always-on
-     * car phone adds hundreds of rows a pass, so that grew without bound.
+     * car phone adds hundreds of rows a pass, so that grew without bound. A
+     * GROUP BY over the table still read every row each time, so this walks
+     * the distinct keys through the (vehicleId, key) index -- one seek per key
+     * -- and seeks each key's newest successful row.
      */
     @Query(
-        "SELECT m.* FROM measurements m JOIN (" +
-            "SELECT key, MAX(id) AS newest FROM measurements " +
-            "WHERE vehicleId = :vehicleId AND success = 1 GROUP BY key" +
-            ") latest ON m.id = latest.newest ORDER BY m.id DESC"
+        "WITH RECURSIVE k(key) AS (" +
+            "SELECT (SELECT MIN(key) FROM measurements WHERE vehicleId = :vehicleId) " +
+            "UNION ALL SELECT (SELECT MIN(key) FROM measurements " +
+            "WHERE vehicleId = :vehicleId AND key > k.key) FROM k WHERE k.key IS NOT NULL) " +
+            "SELECT m.* FROM k JOIN measurements m ON m.id = (" +
+            "SELECT x.id FROM measurements x WHERE x.vehicleId = :vehicleId " +
+            "AND x.key = k.key AND x.success = 1 ORDER BY x.id DESC LIMIT 1) " +
+            "ORDER BY m.id DESC"
     )
     suspend fun latestPerKey(vehicleId: Long): List<MeasurementEntity>
 
@@ -46,11 +53,14 @@ interface MeasurementDao {
     /**
      * The newest [limit] successful numeric values for one key, oldest first.
      * Feeds the trend charts; `value IS NOT NULL` keeps out the text-only rows
-     * (VIN, gear) that have no y-axis to plot.
+     * (VIN, gear) that have no y-axis to plot. (It once ordered ascending before
+     * the LIMIT, which returned the OLDEST [limit] values: the trend chart
+     * froze on the first 50 minutes of a key and never moved again.)
      */
     @Query(
-        "SELECT * FROM measurements WHERE vehicleId = :vehicleId AND key = :key " +
-            "AND success = 1 AND value IS NOT NULL ORDER BY id ASC LIMIT :limit"
+        "SELECT * FROM (SELECT * FROM measurements WHERE vehicleId = :vehicleId " +
+            "AND key = :key AND success = 1 AND value IS NOT NULL " +
+            "ORDER BY id DESC LIMIT :limit) ORDER BY id ASC"
     )
     suspend fun valueHistory(vehicleId: Long, key: String, limit: Int): List<MeasurementEntity>
 
@@ -62,9 +72,9 @@ interface MeasurementDao {
 
     // -- cloud upload queue --------------------------------------------------
     /**
-     * The next rows to upload. An index on uploadedAt is deliberately absent:
-     * the table is small (thousands of rows) and the query already scans for
-     * NULLs, so an index would only add write cost.
+     * The next rows to upload: the uploadedAt index holds the NULLs (the
+     * queue) together, in id order. Without it each batch walked past every
+     * row already uploaded, which on an always-on car phone is millions.
      *
      * remoteId IS NOT NULL because a row with no id cannot be uploaded
      * idempotently; those are filled first by Repository.backfillRemoteIds().

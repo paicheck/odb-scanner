@@ -11,7 +11,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * The single Room database, mirroring the Python side's `odb_scanner.db`.
  *
  * Every version step ships a real migration (1 -> 2 adds the cloud-upload
- * columns, 2 -> 3 the DTC, charging-session and event tables), and there is NO
+ * columns, 2 -> 3 the DTC, charging-session and event tables, 3 -> 4 the
+ * measurement indexes), and there is NO
  * destructive fallback. The fallback used to cover every other version change
  * -- including a downgrade when an older APK is installed -- by dropping every
  * table, so the un-uploaded measurements and the tx_log safety manifest were
@@ -31,7 +32,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChargingSessionEntity::class,
         DiagnosticEventEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -89,6 +90,24 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Indexes measurements by (vehicleId, key) and by uploadedAt (see
+         * MeasurementEntity). Building them reads the table once, at the first
+         * start after the update; nothing is rewritten or lost.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_measurements_vehicleId_key " +
+                        "ON measurements (vehicleId, key)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_measurements_uploadedAt " +
+                        "ON measurements (uploadedAt)"
+                )
+            }
+        }
+
         @Volatile private var instance: AppDatabase? = null
 
         fun get(context: Context): AppDatabase =
@@ -97,7 +116,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "odb_scanner.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { instance = it }
             }

@@ -15,7 +15,14 @@ import androidx.room.PrimaryKey
  * nullable because rows written before cloud support existed have neither --
  * [Repository.backfillRemoteIds] fills the first, the uploader fills the second.
  */
-@Entity(tableName = "measurements")
+@Entity(
+    tableName = "measurements",
+    // (vehicleId, key): every per-key lookup -- the newest value, the trend
+    // history, the latest-per-key walk -- seeks instead of scanning the table.
+    // uploadedAt: the upload queue is the rows where it is NULL; without an
+    // index each batch walked past every row already uploaded.
+    indices = [Index(value = ["vehicleId", "key"]), Index(value = ["uploadedAt"])],
+)
 data class MeasurementEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val vehicleId: Long = 1,
