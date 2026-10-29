@@ -20,11 +20,37 @@ sys.path.insert(0, str(ROOT))
 
 tk = pytest.importorskip("tkinter", reason="GUI tests need a Tk build")
 
+from database.repository import Repository  # noqa: E402
 from gui.app import (  # noqa: E402
     ACTIONS,
     CommandRunner,
     load_state,
 )
+
+SYNTHETIC_VIN = "WVWZZZE1ZMS000001"
+
+
+@pytest.fixture()
+def gui_db(tmp_path, monkeypatch):
+    """A seeded temp database that load_state() reads instead of the real one.
+
+    load_state() loads the real config, so without ODB_DB_PATH it opened
+    database.path -- on the owner's PC the car's database, or data/real_car.db
+    without a config.local.yaml -- with a Repository that runs the schema
+    script on it. One key is read three times, so a view that counts rows
+    instead of keys shows 3 where it should show 1.
+    """
+    db = tmp_path / "gui.db"
+    with Repository(db) as repo:
+        vid = repo.ensure_vehicle(SYNTHETIC_VIN)
+        for minute in range(3):
+            repo.record_measurement(
+                vid, f"2026-10-05T18:0{minute}:00+00:00", "soc_abs",
+                "bat_mgmt", "UDS-0x22", "0x028C", "%",
+                "imported: Car Scanner CSV", "identity",
+                "experimentally determined", "AB", value=50.0 + minute)
+    monkeypatch.setenv("ODB_DB_PATH", str(db))
+    return db
 
 
 def _drain(q, codes, timeout=60):
@@ -112,7 +138,7 @@ def test_stop_and_status_stay_clickable_while_busy():
 
 # --- the database view -------------------------------------------------------
 
-def test_load_state_reports_per_key_not_per_row():
+def test_load_state_reports_per_key_not_per_row(gui_db):
     """The counts must match the web /sources page, which counts registry keys.
 
     An earlier version counted measurement rows, so 1959 rows of ordinary
@@ -122,11 +148,12 @@ def test_load_state_reports_per_key_not_per_row():
     """
     rows, counts, vin, note = load_state()
     assert note == "", note
-    assert vin
+    assert vin == SYNTHETIC_VIN, "read a database other than the seeded one"
     assert rows, "expected one row per registry key"
     # Keys are unique: a per-key view cannot list the same measurement twice.
     keys = [r["key"] for r in rows]
     assert len(keys) == len(set(keys)), "duplicate keys: this is a per-row view"
+    assert counts["imported"] == 1, "three rows of one key must count once"
     assert counts["total"] == len(rows)
     for state in ("live", "imported", "stale", "unavailable"):
         assert counts[state] >= 0
@@ -263,7 +290,7 @@ def test_runner_sets_utf8_so_output_cannot_fail_to_decode():
 
 # --- the launch path a user actually takes -----------------------------------
 
-def test_gui_runs_as_a_script_from_a_foreign_working_directory(tmp_path):
+def test_gui_runs_as_a_script_from_a_foreign_working_directory(tmp_path, gui_db):
     """`python gui\\app.py` must work when nothing else put the root on the path.
 
     Regression, and the reason --selftest exists. Run as a script, sys.path[0]
@@ -279,9 +306,18 @@ def test_gui_runs_as_a_script_from_a_foreign_working_directory(tmp_path):
     """
     import subprocess
 
+    # The seeded database, named relative to the project root the way
+    # config.yaml names database.path ("data/real_car.db"), so only a launch
+    # that resolves it against the root finds it.
+    try:
+        db_arg = os.path.relpath(gui_db, ROOT)
+    except ValueError:  # Windows: temp dir and checkout on different drives
+        db_arg = str(gui_db)
+
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)          # must not smuggle the root in
     env["PYTHONIOENCODING"] = "utf-8"
+    env["ODB_DB_PATH"] = db_arg
     proc = subprocess.run(
         [sys.executable, str(ROOT / "gui" / "app.py"), "--selftest"],
         cwd=str(tmp_path), env=env, capture_output=True, text=True,
@@ -301,6 +337,7 @@ def test_gui_runs_as_a_script_from_a_foreign_working_directory(tmp_path):
     root_env = dict(os.environ)
     root_env.pop("PYTHONPATH", None)
     root_env["PYTHONIOENCODING"] = "utf-8"
+    root_env["ODB_DB_PATH"] = db_arg
     from_root = subprocess.run(
         [sys.executable, str(ROOT / "gui" / "app.py"), "--selftest"],
         cwd=str(ROOT), env=root_env, capture_output=True, text=True,
@@ -311,6 +348,8 @@ def test_gui_runs_as_a_script_from_a_foreign_working_directory(tmp_path):
     def counts_of(text: str) -> str:
         return text.split("counts=", 1)[1].strip() if "counts=" in text else ""
 
+    # The seeded key, so two runs that both missed it cannot agree on zeros.
+    assert "'imported': 1" in counts_of(root_out), root_out
     assert counts_of(out) == counts_of(root_out), (
         "a foreign working directory read a different database:\n"
         f"  foreign cwd : {counts_of(out)}\n"

@@ -197,7 +197,9 @@ def load_state():
         stale_after = float(cfg.get("collector.max_value_age_s", 900.0))
         registry = build_default_registry(profile)
 
-        repo = Repository(cfg.get("database.path"))
+        # cfg.db_path, like main.py and the dashboard, so ODB_DB_PATH redirects
+        # the GUI too -- which is how the tests keep it off the car's database.
+        repo = Repository(cfg.db_path)
         try:
             vehicle = repo.first_vehicle()
             vid = vehicle["id"] if vehicle else None
