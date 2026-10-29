@@ -55,7 +55,8 @@ def build_context(vehicle: dict, overview: dict, dtcs: dict,
                   *, quality: dict | None = None,
                   freshness: dict | None = None,
                   provenance: dict | None = None,
-                  investigation: dict | None = None) -> dict:
+                  investigation: dict | None = None,
+                  capacity: dict | None = None) -> dict:
     """Assemble the structured evidence packet (compact JSON).
 
     The optional arguments carry the platform's newer evidence discipline:
@@ -89,6 +90,10 @@ def build_context(vehicle: dict, overview: dict, dtcs: dict,
         context["provenance"] = provenance
     if investigation is not None:
         context["investigation"] = investigation
+    if capacity is not None:
+        # analysis/health.capacity_trend: the rated-energy trend and, when the
+        # fall is significant, today's rate carried to the warranty line.
+        context["battery"]["capacity_trend"] = capacity
     return context
 
 

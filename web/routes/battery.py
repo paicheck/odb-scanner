@@ -99,10 +99,12 @@ def register(app, ctx) -> None:
         ctx["panel_data"]["cell_bar"] = (
             {"latest": latest, "axis": latest_axis} if latest else None)
         soh = ctx["series"].get("soh_pct") or chart_series(["soh_pct"], days)["soh_pct"]
+        from analysis.health import capacity_trend
         return render(
             "battery.html", request, trend=trend, days=days,
             windows=_windows(days),
-            sweeps=sweeps, soh=soh, bms_refusal=bms_refusal(), **ctx,
+            sweeps=sweeps, soh=soh, bms_refusal=bms_refusal(),
+            health=capacity_trend(repo, vid) if vid else None, **ctx,
         )
 
     @app.get("/range", response_class=HTMLResponse)

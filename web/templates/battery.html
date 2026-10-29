@@ -35,6 +35,37 @@ requires a CAN-EV tap (e.g. the preheat-harness hardware) — see events log.
       capacity test; no uncertainty band is established.</div></div>
 </div>
 
+{% if health %}
+<div class="cards" style="margin-top:12px;">
+  <div class="card" style="flex:2;"><h3>Capacity trend (all history)</h3>
+    {% if health.status == "ok" %}
+    <div class="big">{{ "%+.2f" | format(health.kwh_per_year) }} kWh a year</div>
+    <div class="note">{{ "%+.1f" | format(health.pct_per_year) }} % of the marketed
+      {{ health.nominal_kwh | int }} kWh a year (95 % interval
+      {{ "%+.2f" | format(health.kwh_per_year_low) }} to
+      {{ "%+.2f" | format(health.kwh_per_year_high) }} kWh), fitted to
+      {{ health.days_with_readings }} days of readings over {{ health.span_days }} days.
+      {% if health.years_to_warranty_line is defined %}At this rate the pack would
+      reach {{ health.warranty_pct | int }} % — VW's battery warranty line — in about
+      {{ health.years_to_warranty_line | fmtnum(0) }} years. That carries today's rate
+      forward; it is not a forecast of failure.{% else %}No fall the interval
+      agrees on: nothing is projected.{% endif %}</div>
+    {% elif health.status == "insufficient" %}
+    <div class="big">Not enough history yet</div>
+    <div class="note">{{ health.days_with_readings }} days of readings over
+      {{ health.span_days }} days; a trend needs {{ health.min_span_days }} days of
+      history with readings on at least {{ health.min_days }} of them. Latest:
+      {{ health.latest_kwh | fmtnum(1) }} kWh ({{ health.latest_pct | fmtnum(1) }} %).</div>
+    {% else %}
+    <div class="big">Unavailable</div>
+    <div class="note">The BMS-rated maximum energy (hv_energy_max) has not been read.</div>
+    {% endif %}
+    <div class="note">From the BMS-rated maximum energy (hv_energy_max, a verified
+      decoder): one median a day, Theil-Sen slope, so a BMS recalibration step or an
+      odd day cannot drag it.</div></div>
+</div>
+{% endif %}
+
 <div class="cards" style="margin-top:12px;">
   <div class="card"><h3>Cell delta, {{ trend.window_days if trend.window_days is defined else days }}-day mean</h3>
     <div class="big">{% if trend.mean_mv is defined and trend.mean_mv is not none %}{{ trend.mean_mv }} mV{% else %}Unavailable{% endif %}</div>

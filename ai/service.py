@@ -81,8 +81,17 @@ class AnalysisService:
         anomalies = [dict(a) for a in self.repo.anomalies(vehicle_id, days)]
         ecus = [dict(e) for e in self.repo.list_ecus(vehicle_id)]
         platform = self._platform_evidence(vehicle_id)
+        capacity = None
+        if vehicle_id:
+            # Like the platform evidence: a failure here never breaks the AI.
+            try:
+                from analysis.health import capacity_trend
+                capacity = capacity_trend(self.repo, vehicle_id)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("capacity trend left out of the evidence: %s", exc)
         return prompts.build_context(vehicle, overview, dtcs, charging,
-                                     correlation, anomalies, ecus, **platform)
+                                     correlation, anomalies, ecus,
+                                     capacity=capacity, **platform)
 
     def _platform_evidence(self, vehicle_id: int | None) -> dict:
         """Quality / freshness / provenance summary for the evidence packet.
