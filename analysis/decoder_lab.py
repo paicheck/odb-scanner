@@ -101,12 +101,26 @@ def _raw_hex(raw) -> str | None:
     return text
 
 
-def evaluate_key(repo, vehicle_id: int, key: str, profile: str = "meb", *,
-                 sample_limit: int = 25) -> KeyEvaluation:
-    """Re-decode a key's stored raw bytes and judge the decoder against them."""
-    quality = quality_registry(profile).get(key)
+def _decoders(profile: str):
+    """The live registry, its catalogue and the specs by key, built once.
+
+    Building the catalogue derives and hashes every definition, so doing it
+    per key made `evaluate_all` quadratic: 290 keys rebuilt 290 definitions
+    each (84,100 signatures, about 4 s) on every view of the quality page.
+    """
     registry = build_default_registry(profile)
-    catalogue = build_catalogue(profile, registry)
+    return (build_catalogue(profile, registry),
+            {s.key: s for s in registry.all()})
+
+
+def evaluate_key(repo, vehicle_id: int, key: str, profile: str = "meb", *,
+                 sample_limit: int = 25, decoders=None) -> KeyEvaluation:
+    """Re-decode a key's stored raw bytes and judge the decoder against them.
+
+    `decoders` is `_decoders(profile)`, passed in when evaluating many keys.
+    """
+    quality = quality_registry(profile).get(key)
+    catalogue, specs = decoders or _decoders(profile)
     defn = catalogue.get(key)
     verification = (quality.verification.value if quality
                     else Verification.UNKNOWN.value)
@@ -120,7 +134,7 @@ def evaluate_key(repo, vehicle_id: int, key: str, profile: str = "meb", *,
             method="structural", n_samples=0, issues=issues,
             verification=verification)
 
-    spec = registry.get(key) if key in {s.key for s in registry.all()} else None
+    spec = specs.get(key)
     # Only THIS TOOL's reads count as vehicle responses. An imported Car
     # Scanner row carries the CSV line in raw_response, not UDS bytes; treating
     # it as evidence would flag the import as a decoder failure (it did, for
@@ -243,7 +257,9 @@ def evaluate_all(repo, vehicle_id: int, profile: str = "meb", *,
         if quality.data_kind is not DataKind.DERIVED)
     if limit is not None:
         keys = keys[:limit]
-    out = [evaluate_key(repo, vehicle_id, k, profile) for k in keys]
+    decoders = _decoders(profile)
+    out = [evaluate_key(repo, vehicle_id, k, profile, decoders=decoders)
+           for k in keys]
     rank = {"FAIL": 0, "INDETERMINATE": 1, "PASS": 2}
     out.sort(key=lambda e: (rank.get(e.verdict, 3), e.key))
     return out
