@@ -48,6 +48,47 @@ class NavTest {
     }
 
     @Test
+    fun speedLimitsAreStretchesOfOnePostedLimit() {
+        val data = JSONObject(sample.toString())
+        val leg = data.getJSONArray("routes").getJSONObject(0)
+            .getJSONArray("legs").getJSONObject(0)
+        // Eight segments: 30, 30, unknown, 60, 60, 60, no limit, 50 km/h.
+        val posted = org.json.JSONArray()
+        listOf("30mph", "30mph", "unknown", "60mph", "60mph", "60mph", "none", "50km/h")
+            .forEach { v ->
+                posted.put(when (v) {
+                    "unknown" -> JSONObject().put("unknown", true)
+                    "none" -> JSONObject().put("none", true)
+                    else -> JSONObject().put("speed", v.takeWhile(Char::isDigit).toInt())
+                        .put("unit", v.dropWhile(Char::isDigit))
+                })
+            }
+        leg.getJSONObject("annotation").put("maxspeed", posted)
+        val r = MapboxParse.routes(data)[0]
+        assertEquals(listOf(30 to "mph", 60 to "mph", 50 to "km/h"),
+            r.speedLimits.map { it.value to it.unit })
+        assertEquals(r.cumKm[0], r.speedLimits[0].fromKm, 1e-9)
+        assertEquals(r.cumKm[2], r.speedLimits[0].toKm, 1e-9)
+        assertEquals(r.cumKm[3], r.speedLimits[1].fromKm, 1e-9)
+        assertEquals(r.cumKm[6], r.speedLimits[1].toKm, 1e-9)
+        assertEquals(30, r.speedLimitAt(0.0)?.value)
+        assertNull("unknown is no sign", r.speedLimitAt((r.cumKm[2] + r.cumKm[3]) / 2))
+        assertEquals(60, r.speedLimitAt(r.cumKm[4])?.value)
+        assertNull("no limit is no sign", r.speedLimitAt((r.cumKm[6] + r.cumKm[7]) / 2))
+        assertEquals(50, r.speedLimitAt(r.distanceKm - 0.001)?.value)
+        assertNull(r.speedLimitAt(r.distanceKm + 1.0))
+        assertEquals(96.56, r.speedLimits[1].kmh, 0.01)
+        assertTrue("the plain sample has no limits", route().speedLimits.isEmpty())
+    }
+
+    @Test
+    fun theLimitIsSaidTheBritishWay() {
+        assertEquals("The speed limit is 30.", NavSpeech.speedLimit(SpeedLimit(0.0, 1.0, 30, "mph")))
+        assertEquals("The speed limit is 50 kilometres an hour.",
+            NavSpeech.speedLimit(SpeedLimit(0.0, 1.0, 50, "km/h")))
+    }
+
+    @Test
     fun heavyTrafficIsOneRunAtItsWorstLevel() {
         val r = route()
         // Segments 2-4 (heavy, heavy, severe) of 8: from point 2 to point 5.

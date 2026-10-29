@@ -49,6 +49,11 @@ object Navigator {
     const val LEAVE_STOP_KM = 0.25          // this far from the charger: driving on
     const val ANNOUNCE_DELAY_S = 300.0      // say what traffic adds from this much
     const val STOP_OVERHEAD_S = 600.0       // parking, plugging in (as PlanSettings)
+    // Over the limit means past it by 10 % plus 2 mph (the UK police guideline),
+    // on two fixes running -- one noisy GPS speed is not a reason to speak.
+    const val OVER_LIMIT_FACTOR = 1.10
+    const val OVER_LIMIT_KMH = 3.2
+    const val OVER_LIMIT_FIXES = 2
 
     enum class Phase { ROUTING, DRIVING, AT_STOP, ARRIVED }
 
@@ -103,6 +108,8 @@ object Navigator {
     private var routedAtMs = 0L
     private var lastFix: Location? = null
     private val warned = mutableListOf<Pair<Double, Double>>()   // where announced jams start
+    private var overFixes = 0                                   // fixes running over the limit
+    private var limitSaid: SpeedLimit? = null                   // said once per stretch
     private val legsAnnounced = HashSet<Int>()     // "traffic adds N minutes", once a leg
 
     val active: Boolean get() = _state.value != null
@@ -161,6 +168,8 @@ object Navigator {
         guidance = null
         lastFix = null
         warned.clear()
+        overFixes = 0
+        limitSaid = null
         legsAnnounced.clear()
         said.value = emptyList()
     }
@@ -400,6 +409,16 @@ object Navigator {
                 warned += lat to lon
                 words = listOfNotNull(words, NavSpeech.traffic(run, gs.kmAlong)).joinToString(" ")
             }
+        }
+        // Over the posted limit: say the limit, once for each stretch of it.
+        val limit = if (gs.offRoute) null else g.route.speedLimitAt(gs.kmAlong)
+        if (limit != null && speed > limit.kmh * OVER_LIMIT_FACTOR + OVER_LIMIT_KMH) {
+            if (++overFixes >= OVER_LIMIT_FIXES && limit != limitSaid) {
+                limitSaid = limit
+                words = listOfNotNull(words, NavSpeech.speedLimit(limit)).joinToString(" ")
+            }
+        } else {
+            overFixes = 0
         }
         val close = gs.next?.let { it.atKm - gs.kmAlong < 0.5 } == true
         words?.let { speak(it, urgent = close) }

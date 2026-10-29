@@ -38,6 +38,11 @@ data class Maneuver(
 /** A stretch of heavy or severe traffic along the route. */
 data class CongestionRun(val fromKm: Double, val toKm: Double, val level: String)
 
+/** A stretch of road with one posted limit, in the unit it is posted in. */
+data class SpeedLimit(val fromKm: Double, val toKm: Double, val value: Int, val unit: String) {
+    val kmh: Double get() = if (unit == "mph") value * 1.609344 else value.toDouble()
+}
+
 class NavRoute(
     val points: List<RoutePoint>,
     val maneuvers: List<Maneuver>,
@@ -47,6 +52,7 @@ class NavRoute(
     val legEndsKm: List<Double>,           // charging stops, then the destination
     val summary: String,                   // main roads, e.g. "A40, M40"
     val source: String,
+    val speedLimits: List<SpeedLimit> = emptyList(),   // Mapbox only; gaps are unknown
 ) {
     val cumKm: DoubleArray = Planner.cumulativeKm(points)
     val distanceKm: Double get() = cumKm.last()
@@ -73,6 +79,22 @@ class NavRoute(
             }
         }
         return durationS
+    }
+
+    /** The posted limit at [km], or null where it is not known. */
+    fun speedLimitAt(km: Double): SpeedLimit? {
+        var lo = 0
+        var hi = speedLimits.size - 1
+        while (lo <= hi) {
+            val mid = (lo + hi) / 2
+            val l = speedLimits[mid]
+            when {
+                km < l.fromKm -> hi = mid - 1
+                km >= l.toKm -> lo = mid + 1
+                else -> return l
+            }
+        }
+        return null
     }
 
     /** The heavy-traffic stretch at or ahead of [km], within [withinKm]; null if none. */
@@ -181,6 +203,11 @@ object NavSpeech {
         else "$what in ${distance(run.fromKm - km)}, for about $length."
     }
 
+    /** "The speed limit is 30." -- miles an hour go unsaid on British roads. */
+    fun speedLimit(limit: SpeedLimit): String =
+        if (limit.unit == "mph") "The speed limit is ${limit.value}."
+        else "The speed limit is ${limit.value} kilometres an hour."
+
     /** "In half a mile, turn left onto Station Road." */
     fun lead(km: Double, instruction: String): String =
         "In ${distance(km)}, ${instruction.replaceFirstChar { it.lowercase() }.trimEnd('.')}."
@@ -262,6 +289,7 @@ object MapboxParse {
         val steps = mutableListOf<JSONObject>()
         val legEnds = mutableListOf<Double>()
         val congestion = mutableListOf<String>()
+        val maxspeed = mutableListOf<Pair<Int, String>?>()
         val summaries = mutableListOf<String>()
         var stepKm = 0.0
         val legs = r.optJSONArray("legs") ?: JSONArray()
@@ -276,6 +304,14 @@ object MapboxParse {
             legEnds.add(stepKm)
             leg.optJSONObject("annotation")?.optJSONArray("congestion")?.let { c ->
                 for (i in 0 until c.length()) congestion.add(c.optString(i, "unknown"))
+            }
+            // Per segment: {"speed": 30, "unit": "mph"}, {"unknown": true} or
+            // {"none": true} (no limit). Only posted numbers are kept.
+            leg.optJSONObject("annotation")?.optJSONArray("maxspeed")?.let { m ->
+                for (i in 0 until m.length()) maxspeed.add(m.optJSONObject(i)?.let { o ->
+                    if (o.has("speed") && !o.isNull("speed"))
+                        o.optInt("speed") to o.optString("unit", "km/h") else null
+                })
             }
             leg.optString("summary").takeIf { it.isNotBlank() }?.let(summaries::add)
         }
@@ -327,6 +363,7 @@ object MapboxParse {
             legEndsKm = legEnds.map { it * scale },
             summary = summaries.joinToString("; "),
             source = "Mapbox (live traffic)",
+            speedLimits = limits(maxspeed, cum),
         )
     }
 
@@ -349,15 +386,35 @@ object MapboxParse {
         return emptyList()
     }
 
+    /** Where annotation segment [i] of [n] starts along the geometry: one segment
+     *  per pair of points, spread proportionally if the counts differ. */
+    private fun segmentKm(i: Int, n: Int, cum: DoubleArray): Double {
+        val segs = cum.size - 1
+        val pos = i.toDouble() * segs / n
+        val k = min(segs - 1, pos.toInt())
+        return cum[k] + (pos - k) * (cum[k + 1] - cum[k])
+    }
+
+    /** Stretches of one posted limit, from the per-segment maxspeed annotation. */
+    fun limits(values: List<Pair<Int, String>?>, cum: DoubleArray): List<SpeedLimit> {
+        if (values.isEmpty() || cum.size < 2) return emptyList()
+        val out = mutableListOf<SpeedLimit>()
+        var start = 0
+        for (i in 1..values.size) {
+            if (i < values.size && values[i] == values[start]) continue
+            values[start]?.let { (v, unit) ->
+                out.add(SpeedLimit(segmentKm(start, values.size, cum),
+                    if (i >= values.size) cum.last() else segmentKm(i, values.size, cum), v, unit))
+            }
+            start = i
+        }
+        return out
+    }
+
     /** Heavy or severe stretches, from per-segment congestion along the geometry. */
     fun runs(levels: List<String>, cum: DoubleArray): List<CongestionRun> {
         if (levels.isEmpty() || cum.size < 2) return emptyList()
-        val segs = cum.size - 1
-        fun km(i: Int): Double {                     // segment i's start, proportionally if counts differ
-            val pos = i.toDouble() * segs / levels.size
-            val k = min(segs - 1, pos.toInt())
-            return cum[k] + (pos - k) * (cum[k + 1] - cum[k])
-        }
+        fun km(i: Int) = segmentKm(i, levels.size, cum)
         val out = mutableListOf<CongestionRun>()
         var start = -1
         var worst = ""

@@ -87,8 +87,11 @@ both services. Without a token: OpenRouteService's one route, no traffic.
 
 **Navigation.** Turn by turn on the phone: the next turn with its distance,
 an arrow, the road and the exit; the lanes to be in, lit up; a heading-up map
-of the road ahead with heavy traffic in orange and very heavy in red; the
-arrival time (including charging), and what traffic adds. It speaks each turn
+of the road ahead with heavy traffic in orange and very heavy in red; with
+a Mapbox token, the posted speed limit as a sign beside your speed (red once
+you are past it by 10% plus 2 mph, when it also says the limit, once for that
+stretch); the arrival time (including charging), the charge you should arrive
+with (re-planned from the car's battery as you drive), and what traffic adds. It speaks each turn
 in British English -- "In a quarter of a mile, take the ramp on the left
 towards the M40. Use the left two lanes." -- warns of heavy traffic about
 three km ahead, and re-routes when you leave the route. Tap the instruction to

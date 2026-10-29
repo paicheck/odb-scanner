@@ -2,6 +2,7 @@ package com.odbscanner
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -110,11 +112,43 @@ fun NavigationScreen(onClose: () -> Unit) {
                     Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
                         NavMap(s)
                         TrafficChip(s, Modifier.align(Alignment.TopCenter).padding(8.dp))
+                        SpeedSign(s, Modifier.align(Alignment.BottomStart).padding(12.dp))
                     }
                     BottomBar(s, onClose)
                 }
             }
         }
+    }
+}
+
+/**
+ * The posted limit where the car is, as a British sign, beside the speed now
+ * -- red when past the limit by the margin the navigator speaks at. No sign
+ * where the limit is not known (always, without a Mapbox token).
+ */
+@Composable
+private fun SpeedSign(s: Navigator.State, modifier: Modifier = Modifier) {
+    val g = s.guidance ?: return
+    if (s.phase != Navigator.Phase.DRIVING || g.offRoute) return
+    val limit = s.route?.speedLimitAt(g.kmAlong)
+    val kmh = limit?.unit == "km/h"
+    val shown = if (kmh) s.speedKmh else s.speedKmh / 1.609344
+    val over = limit != null &&
+        s.speedKmh > limit.kmh * Navigator.OVER_LIMIT_FACTOR + Navigator.OVER_LIMIT_KMH
+    Row(modifier, verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (limit != null) {
+            Box(Modifier.size(58.dp).background(Color.White, CircleShape)
+                .border(7.dp, Color(0xFFD32F2F), CircleShape),
+                contentAlignment = Alignment.Center) {
+                Text(limit.value.toString(), color = Color.Black, fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold)
+            }
+        }
+        Text(String.format(java.util.Locale.ROOT, "%.0f %s", shown, if (kmh) "km/h" else "mph"),
+            color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.background(if (over) SEVERE else Color(0xCC263238),
+                RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp))
     }
 }
 
@@ -226,7 +260,12 @@ private fun BottomBar(s: Navigator.State, onClose: () -> Unit) {
                 color = if ((delay ?: 0.0) >= 300) SEVERE else MaterialTheme.colorScheme.onSurface)
             s.target?.stop?.let { st ->
                 Text("Charging stop ${s.trip.plan.stops.indexOf(st) + 1}: ${st.charger.name} in " +
-                    "${NavText.distance(g.remainingKm)} · arrive ${clockIn(g.remainingS)}",
+                    "${NavText.distance(g.remainingKm)} · arrive ${clockIn(g.remainingS)} " +
+                    "with ${st.arrivePct.toInt()} %",
+                    style = MaterialTheme.typography.bodySmall)
+            } ?: s.trip.plan.arrivalPct?.let { pct ->
+                // From the latest plan: re-planned from the car's battery as it drives.
+                Text("Arrive with about ${pct.toInt()} % charge",
                     style = MaterialTheme.typography.bodySmall)
             }
         }

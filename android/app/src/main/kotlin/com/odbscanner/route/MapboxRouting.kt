@@ -65,7 +65,7 @@ class MapboxRouting(private val token: String, private val timeoutMs: Int = 20_0
             append("?geometries=geojson&overview=full&steps=true")
             append("&banner_instructions=true&voice_instructions=true")
             append("&voice_units=british_imperial&language=en")
-            append("&annotations=congestion")
+            append("&annotations=congestion,maxspeed")
             if (alternatives && waypoints.size == 2) append("&alternatives=true")
             if (avoid.mapbox.isNotEmpty()) append("&exclude=").append(avoid.mapbox.joinToString(","))
             append("&access_token=").append(URLEncoder.encode(token, "UTF-8"))
