@@ -186,6 +186,30 @@ class CollectorTest {
     }
 
     @Test
+    fun `a carried value stops feeding derived values once it is too old`() = runBlocking {
+        var now = 1_000L
+        val port = ReadingPort(
+            mapOf(
+                "221E3B" to listOf(single("221E3B", "0BB8")),
+                "221E40" to listOf(single("221E40", "0C1C")),
+            ),
+        )
+        val c = collector(listOf(scalar("fast", 0x1E3B), cell(0, 0x1E40)), port,
+            now = { now }, slowIntervalMs = 2_000_000L)
+        c.collectOnce()
+        assertEquals(setOf("fast", "cell_v_000"), c.freshSnapshot().keys)
+
+        now += 900_000                                  // the slow DID is not re-read
+        c.collectOnce()
+        assertEquals(setOf("fast", "cell_v_000"), c.freshSnapshot().keys)
+
+        now += 1
+        c.collectOnce()
+        assertEquals("a value read 900 s ago must no longer count",
+            setOf("fast"), c.freshSnapshot().keys)
+    }
+
+    @Test
     fun `NRC 0x31 retires the DID from the next pass`() = runBlocking {
         val port = ReadingPort(mapOf("221E3B" to listOf("037F2231")))
         val c = collector(listOf(scalar("fast", 0x1E3B)), port)

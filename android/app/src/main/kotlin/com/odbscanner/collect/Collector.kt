@@ -58,6 +58,12 @@ class Collector(
      * that moves in millivolts per minute.
      */
     private val slowIntervalMs: Long = 60_000L,
+    /**
+     * `collector.max_value_age_s` in Python: the oldest a value carried from
+     * an earlier pass may be and still feed a derived value or the charging
+     * state. Must exceed [slowIntervalMs], or a slow DID could never pair.
+     */
+    private val maxValueAgeMs: Long = 900_000L,
     /** Injectable clock so the cadence is testable without sleeping. */
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
@@ -90,6 +96,9 @@ class Collector(
 
     /** Latest decoded value per key, carried across passes for derived values. */
     private val snapshot = mutableMapOf<String, Any?>()
+
+    /** When each [snapshot] value was read, by [nowMs]. */
+    private val snapshotAtMs = mutableMapOf<String, Long>()
 
     /** The charging session currently open, if any (opened/closed by charge_mode). */
     private var activeSessionId: Long? = null
@@ -225,7 +234,10 @@ class Collector(
         return try {
             val record = readRaw(m, did)
             val value = Decoder.decode(m.decode, record)
-            if (value != null) snapshot[m.key] = value
+            if (value != null) {
+                snapshot[m.key] = value
+                snapshotAtMs[m.key] = nowMs()
+            }
             _recordSuccess(m, record, tsNow)
             everSucceeded.add(m.ecuKey to did)
             silentCount.remove(m.ecuKey to did)
@@ -356,10 +368,23 @@ class Collector(
         pendingSilent.clear()
     }
 
+    /**
+     * The carried values no older than [maxValueAgeMs]. Without the bound a
+     * DID that stopped answering kept feeding every pass: pack power from
+     * this pass's voltage and an hour-old current, recorded as calculated,
+     * and a charge mode from before the car slept holding a session open.
+     */
+    internal fun freshSnapshot(): Map<String, Any?> {
+        val now = nowMs()
+        return snapshot.filterKeys { key ->
+            snapshotAtMs[key]?.let { now - it <= maxValueAgeMs } ?: false
+        }
+    }
+
     /** Compute the derived values (power, spreads, SoH) and persist them. */
     private suspend fun recordDerived(ts: String) {
         repository ?: return
-        for (d in computeDerived(snapshot)) {
+        for (d in computeDerived(freshSnapshot())) {
             repository.recordMeasurement(
                 vehicleId = vehicleId, ts = ts, key = d.key, ecu = d.ecu,
                 service = "calc", pid = "-", unit = d.unit, provenance = d.provenance,
@@ -373,16 +398,18 @@ class Collector(
     /** Open/close a charging session from the charge_mode DID. */
     private suspend fun trackCharging(ts: String) {
         repository ?: return
-        val mode = (snapshot["charge_mode"] as? Number)?.toInt()
-        // Unknown is not the same as "not charging": a missed read must not
-        // close a live session on no evidence.
+        val fresh = freshSnapshot()
+        val mode = (fresh["charge_mode"] as? Number)?.toInt()
+        // Unknown -- never read, or not for longer than maxValueAgeMs -- is not
+        // the same as "not charging": a missed read must not close a live
+        // session on no evidence, nor a stale one keep it open.
         if (mode == null) return
         val charging = mode in 1..3
         when {
             charging && activeSessionId == null -> {
                 val type = if (mode == 2) "DC" else "AC"
                 activeSessionId = repository.openSession(
-                    vehicleId, ts, type, (snapshot["soc_normal"] as? Number)?.toDouble(),
+                    vehicleId, ts, type, (fresh["soc_normal"] as? Number)?.toDouble(),
                 )
                 repository.addEvent(
                     vehicleId, ts, "charge-start", "$type charging detected (mode=$mode)",
@@ -390,7 +417,7 @@ class Collector(
             }
             !charging && activeSessionId != null -> {
                 repository.closeSession(
-                    activeSessionId!!, ts, (snapshot["soc_normal"] as? Number)?.toDouble(),
+                    activeSessionId!!, ts, (fresh["soc_normal"] as? Number)?.toDouble(),
                 )
                 repository.addEvent(vehicleId, ts, "charge-end", "Charging ended")
                 activeSessionId = null
