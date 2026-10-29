@@ -247,6 +247,8 @@ RANGE_PANELS = [
 # Pairing tolerance for range-vs-SoC: the two DIDs are polled in the same
 # collector cycle, so readings more than this far apart are not compared.
 RANGE_SOC_PAIR_TOLERANCE_S = 120.0
+# Most points a scatter is given; more is megabytes of page and no more to see.
+SCATTER_MAX_POINTS = 2000
 
 _KEY_PATTERN = re.compile(r"^[A-Za-z0-9_]{1,80}$")
 

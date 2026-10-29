@@ -58,7 +58,9 @@
     <li>{{ pairs | length }} pair{{ 's' if pairs | length != 1 }}: each SoC reading is matched
       with the nearest displayed-range reading no more than {{ pair_tolerance_s | int }} s away.
       Unmatched readings are left out, never interpolated; both real timestamps
-      are kept in the tooltip.</li>
+      are kept in the tooltip.{% if pairs_shown < pairs | length %} The chart
+      shows {{ pairs_shown }} of them, evenly spread through the window, with
+      the lowest and highest of each axis kept.{% endif %}</li>
     <li>No line is fitted. The vehicle's range estimate also depends on recent
       consumption, temperature and climate use, so SoC alone does not determine
       it and no linear relationship is assumed.</li>

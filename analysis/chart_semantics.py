@@ -188,6 +188,9 @@ def axis_for(key: str, unit: str | None, values=()) -> dict:
 # ---------------------------------------------------------------------------
 
 def _is_num(v) -> bool:
+    t = type(v)
+    if t is float or t is int:            # every value SQLite hands back
+        return math.isfinite(v)
     return (isinstance(v, (int, float)) and not isinstance(v, bool)
             and math.isfinite(v))
 
@@ -295,8 +298,9 @@ def build_series(key: str, rows, *, name: str, unit: str, quality,
     provs = [provenance_kind(r[2]) for r in rows]
     payload = series_mod.numeric_payload(ts_list, values, max_points=max_points,
                                          method=method, provenance=provs)
-    num_ts = [t for t, v in zip(ts_list, values) if _is_num(v)]
-    nums = [v for v in values if _is_num(v)]
+    numeric = [i for i, v in enumerate(values) if _is_num(v)]
+    num_ts = [ts_list[i] for i in numeric]
+    nums = [values[i] for i in numeric]
 
     pmin, pmax = quality.plausible_min, quality.plausible_max
     payload["out_of_range"] = [
@@ -304,9 +308,8 @@ def build_series(key: str, rows, *, name: str, unit: str, quality,
         for v in payload["value"]]
 
     counts: dict[str, int] = {}
-    for v, p in zip(values, provs):
-        if _is_num(v):
-            counts[p] = counts.get(p, 0) + 1
+    for i in numeric:
+        counts[provs[i]] = counts.get(provs[i], 0) + 1
     payload.update({
         "key": key,
         "name": name,
@@ -433,6 +436,22 @@ def pair_nearest(a_rows, b_rows, tolerance_s: float) -> list[dict]:
                         "ts_b": best[1][0],
                         "dt_s": round((best[1][1] - da).total_seconds(), 1)})
     return out
+
+
+def thin_pairs(pairs: list[dict], limit: int) -> list[dict]:
+    """At most about `limit` of `pairs`, evenly spread through them, keeping
+    the lowest and highest x and y so the axes and the outliers stay put.
+
+    A month of a fast-polled signal pairs into tens of thousands of points:
+    megabytes in the page, and more than a scatter can show apart.
+    """
+    if limit <= 0 or len(pairs) <= limit:
+        return list(pairs)
+    keep = {round(i * (len(pairs) - 1) / (limit - 1)) for i in range(limit)}
+    for axis in ("x", "y"):
+        keep.add(min(range(len(pairs)), key=lambda i: pairs[i][axis]))
+        keep.add(max(range(len(pairs)), key=lambda i: pairs[i][axis]))
+    return [pairs[i] for i in sorted(keep)]
 
 
 def counter_delta(rows) -> dict:

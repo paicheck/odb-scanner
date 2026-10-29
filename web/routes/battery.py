@@ -13,6 +13,7 @@ from web.dashboard import (
     BATTERY_PANELS,
     RANGE_PANELS,
     RANGE_SOC_PAIR_TOLERANCE_S,
+    SCATTER_MAX_POINTS,
     _int_param,
 )
 
@@ -53,12 +54,17 @@ def register(app, ctx) -> None:
             [(s["ts"], s["spread_mv"], "calculated") for s in sweeps],
             name="Cell voltage spread from individual cells (calculated)",
             unit="mV", quality=quality_for(_profile(), "cell_delta_mv"),
-            gap_s=chart_gap_s, max_points=0)
-        series["point_notes"] = [
-            f"lowest cell #{s['min_cell']:03d} {s['min_v']:.3f} V, highest cell "
-            f"#{s['max_cell']:03d} {s['max_v']:.3f} V, {s['cells']} cells"
-            + (f", {s['missing']} missing" if s["missing"] else "")
-            for s in sweeps]
+            gap_s=chart_gap_s)
+        # Downsampled like every other series (spikes kept); each kept point
+        # finds its note by its sweep's timestamp. Sending every sweep with
+        # its note grew the page by ~100 bytes a minute of collecting.
+        notes = {
+            s["ts"]: f"lowest cell #{s['min_cell']:03d} {s['min_v']:.3f} V, "
+                     f"highest cell #{s['max_cell']:03d} {s['max_v']:.3f} V, "
+                     f"{s['cells']} cells"
+                     + (f", {s['missing']} missing" if s["missing"] else "")
+            for s in sweeps}
+        series["point_notes"] = [notes.get(t, "") for t in series["ts"]]
         return series, summary
 
     @app.get("/battery", response_class=HTMLResponse)
@@ -108,7 +114,7 @@ def register(app, ctx) -> None:
         available are either UNKNOWN-confidence or not segmented into
         journeys, so such a figure would look precise without being so.
         """
-        from analysis.chart_semantics import counter_delta, pair_nearest
+        from analysis.chart_semantics import counter_delta, pair_nearest, thin_pairs
 
         _, vid = vehicle_and_id()
         days = _window_days(request)
@@ -121,15 +127,16 @@ def register(app, ctx) -> None:
             pairs = pair_nearest(rows["soc_abs"], rows["range_displayed"],
                                  RANGE_SOC_PAIR_TOLERANCE_S)
             distance = counter_delta(rows["odometer_km"])
+        shown = thin_pairs(pairs, SCATTER_MAX_POINTS)
         ctx["panel_data"]["scatter"] = {
-            "pairs": pairs, "tolerance_s": RANGE_SOC_PAIR_TOLERANCE_S,
+            "pairs": shown, "tolerance_s": RANGE_SOC_PAIR_TOLERANCE_S,
             "x": {"label": "State of charge (BMS)", "unit_label": "%"},
             "y": {"label": "Estimated range (displayed)", "unit_label": "miles"},
         }
         return render(
             "range.html", request, days=days,
             windows=_windows(days),
-            pairs=pairs, distance=distance,
+            pairs=pairs, pairs_shown=len(shown), distance=distance,
             pair_tolerance_s=RANGE_SOC_PAIR_TOLERANCE_S, **ctx,
         )
 
@@ -158,7 +165,14 @@ def register(app, ctx) -> None:
 
     # ---- JSON API ------------------------------------------------------------
     @app.get("/api/battery")
-    def api_battery():
+    def api_battery(request: Request):
+        """Battery snapshots over the trend window, oldest first: all of them
+        up to `max_points` (default 2000), else that many spread evenly, the
+        first and last kept. A month of 10 s snapshots was 13 MB of JSON."""
         _, vid = vehicle_and_id()
         rows = repo.battery_history(trend_days, vid) if vid else []
+        limit = _int_param(request, "max_points", 2000, 2, 100_000)
+        if len(rows) > limit:
+            rows = [rows[round(i * (len(rows) - 1) / (limit - 1))]
+                    for i in range(limit)]
         return [dict(r) for r in rows]
