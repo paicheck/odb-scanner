@@ -74,6 +74,22 @@ DEAD_CYCLE_MIN_ATTEMPTS = 3
 RECONNECT_BACKOFF_S = 5.0
 RECONNECT_MAX_BACKOFF_S = 300.0
 
+# Parked car. A sleeping car fails every read, which used to look like a dead
+# adapter: the collector then reconnected every RECONNECT_MAX_BACKOFF_S all
+# night, and each reconnect put the 0100 warm-up and a VIN read on the bus of
+# a car that was trying to sleep. Now, once the car is silent and the adapter
+# still answers ATRV (its own reading of the 12 V rail, no bus traffic) below
+# collector.wake_voltage, the collector sends the car nothing until that
+# voltage rises. The defaults: probe every 10 minutes; 13.5 V is above the
+# surface charge a resting 12 V battery shows after the car switches off
+# (about 13.2 V) and below what the DC-DC converter supplies when the car is
+# awake, driving or charging (about 14 V).
+PARKED_PROBE_INTERVAL_S = 600.0
+WAKE_VOLTAGE_V = 13.5
+# A high voltage with the car still silent (the car topping up its own 12 V
+# battery, say) doubles the wait before the next attempt to resume, up to this.
+PARKED_RESUME_MAX_HOLD_S = 3600.0
+
 # Pacing when a cycle raises rather than merely finds no data. Short, because
 # the commonest cause is transient -- SQLite's busy timeout expiring while the
 # dashboard reads, or a transient I/O error -- and stopping collection for a
@@ -148,6 +164,20 @@ class Collector:
         self.simulated = False
         self.slow_interval = float(
             self.cfg.get("collector.slow_poll_interval", 60.0))
+        # Parked-car watch (see PARKED_PROBE_INTERVAL_S). While _parked, the
+        # car is sent nothing; _resume_hold/_resume_not_before pace attempts
+        # to resume while the voltage is high but the car stays silent.
+        self.parked_probe_interval = float(self.cfg.get(
+            "collector.parked_probe_interval", PARKED_PROBE_INTERVAL_S))
+        self.wake_voltage = float(
+            self.cfg.get("collector.wake_voltage", WAKE_VOLTAGE_V))
+        self._parked = False
+        self._parked_since: float | None = None
+        self._resume_hold = self.parked_probe_interval
+        self._resume_not_before = 0.0
+        # False until discover_ecus() has run: a collector that starts while
+        # the car is asleep discovers when the car first wakes.
+        self._discovered = False
         # Nominal pack capacity, only ever used for the ESTIMATED SOH figure.
         # Overridable for a different pack; the constant stays the single
         # source of truth in decoders/bms.py.
@@ -988,6 +1018,9 @@ class Collector:
         Closes the transport first: a Bluetooth SPP port whose far end has
         gone away frequently leaves the handle open but deaf, so re-running
         initialize() on it can silently do nothing.
+
+        An adapter that comes back reading a sleeping car's voltage parks the
+        collector instead (False: collection does not resume).
         """
         self._dead_cycles += 1
         delay = min(RECONNECT_MAX_BACKOFF_S,
@@ -1004,21 +1037,140 @@ class Collector:
         except Exception:
             log.debug("error closing a dead transport", exc_info=True)
         time.sleep(delay)
+        dead = self._dead_cycles
         try:
-            self.conn.open()
+            # The adapter alone first, without the bus warm-up, so a car that
+            # turns out to be asleep is sent nothing. open_and_identify() does
+            # the full open, warm-up included -- once. (This used to open fully
+            # here and again inside open_and_identify(), so every reconnect put
+            # the warm-up on the bus twice.)
+            self.conn.open(warm_up=False)
+            volts = self._adapter_voltage()
+            if volts is not None and volts < self.wake_voltage:
+                self._dead_cycles = 0
+                self._enter_parked(volts)
+                return False
             self.open_and_identify()
-            # The vehicle may have driven or charged while we were blind; take
-            # a full slow pass immediately rather than waiting out the interval.
-            self._last_slow = -self.slow_interval
-            self._cells_readable = True
-            self._dtc_snapshots.clear()
-            self._dead_cycles = 0
-            log.info("Adapter recovered after %d dead cycle(s)", self._dead_cycles)
+            self._after_blind_period()
+            log.info("Adapter recovered after %d dead cycle(s)", dead)
             return True
         except Exception as exc:
             log.error("Reconnect attempt failed (%s: %s)",
                       type(exc).__name__, exc)
             return False
+
+    def _after_blind_period(self) -> None:
+        """Reset what a stretch without readings made stale.
+
+        The vehicle may have driven or charged meanwhile: take a full slow pass
+        immediately rather than waiting out the interval, and re-probe what had
+        been refused.
+        """
+        self._last_slow = -self.slow_interval
+        self._cells_readable = True
+        self._dtc_snapshots.clear()
+        self._dead_cycles = 0
+
+    # -- parked car (see PARKED_PROBE_INTERVAL_S) -------------------------------
+    def _adapter_voltage(self) -> float | None:
+        """ATRV through the open transport, or None without a voltage.
+
+        None covers an adapter that did not answer and one that answered
+        without a voltage (no ATRV); either way it cannot say the car is
+        asleep, so the caller does what it did before this check existed.
+        """
+        read = getattr(self.conn.t, "read_voltage", None)
+        if read is None:
+            return None
+        try:
+            return read()
+        except CommunicationError:
+            return None
+
+    def _park_if_asleep(self) -> bool:
+        """After a dead cycle: park and return True if the car is asleep.
+
+        An adapter that still answers ATRV, below wake_voltage, means the link
+        is fine and the car is silent because it is asleep -- nothing to
+        reconnect. No voltage, or a high one (the car should be answering),
+        is left to _recover_adapter as before.
+        """
+        volts = self._adapter_voltage()
+        if volts is None or volts >= self.wake_voltage:
+            return False
+        self._enter_parked(volts)
+        return True
+
+    def _enter_parked(self, volts: float) -> None:
+        self._parked = True
+        self._parked_since = time.monotonic()
+        self._resume_hold = self.parked_probe_interval
+        self._resume_not_before = 0.0
+        self._record_event(
+            f"Car asleep: the adapter reads {volts:.1f} V and the car answers "
+            f"nothing. Sending the car nothing; reading the adapter's voltage "
+            f"every {self.parked_probe_interval:.0f} s, resuming at "
+            f"{self.wake_voltage:.1f} V.")
+
+    def _parked_probe(self) -> bool:
+        """One step of the parked watch. True when collection resumes.
+
+        Sends the car nothing unless the adapter's voltage says it is awake.
+        """
+        time.sleep(self.parked_probe_interval)
+        volts = self._adapter_voltage()
+        if volts is None:
+            # The adapter has gone quiet too: asleep itself, or the Bluetooth
+            # link dropped. Reopen it without the warm-up -- the car is still
+            # sent nothing -- and ask again.
+            self.conn.close()
+            try:
+                self.conn.open(warm_up=False)
+            except Exception as exc:
+                log.debug("parked: adapter not reachable (%s: %s)",
+                          type(exc).__name__, exc)
+                return False
+            volts = self._adapter_voltage()
+            if volts is None:
+                return False
+        log.debug("parked: adapter reads %.2f V", volts)
+        if volts < self.wake_voltage:
+            self._resume_hold = self.parked_probe_interval
+            self._resume_not_before = 0.0
+            return False
+        now = time.monotonic()
+        if now < self._resume_not_before:
+            return False
+        try:
+            self.open_and_identify()
+            if not self._discovered:
+                self.discover_ecus()
+                self._discovered = True
+        except Exception as exc:
+            self._resume_not_before = now + self._resume_hold
+            log.info("The adapter reads %.1f V but the car did not answer "
+                     "(%s: %s); staying parked, next attempt in %.0f s.",
+                     volts, type(exc).__name__, exc, self._resume_hold)
+            self._resume_hold = min(self._resume_hold * 2,
+                                    PARKED_RESUME_MAX_HOLD_S)
+            return False
+        parked_min = (now - (self._parked_since or now)) / 60
+        self._parked = False
+        self._after_blind_period()
+        self._record_event(
+            f"Car awake: the adapter reads {volts:.1f} V. Collection resumed "
+            f"after {parked_min:.0f} min parked.")
+        return True
+
+    def _record_event(self, text: str) -> None:
+        """Log `text` and, once the vehicle is known, keep it as an event."""
+        log.info(text)
+        if self.vehicle_id is None:
+            return
+        try:
+            self.repo.add_event(self.vehicle_id, utcnow(), "adapter", text)
+        except Exception:
+            log.debug("could not record event", exc_info=True)
 
     def _check_disk(self) -> None:
         """Warn, every DISK_CHECK_S, while the database's drive is low. When
@@ -1035,16 +1187,44 @@ class Collector:
                         "recorded.", space["free"] / 1024 ** 3, space["dir"],
                         space["db"] / 1024 ** 2)
 
+    def _start(self) -> None:
+        """Identify the car and discover its ECUs, or start parked.
+
+        A car asleep at start-up used to end the run: the VIN read on a silent
+        bus raises ProtocolError and nothing caught it, so a collector started
+        at night exited at once. An adapter that is not there still raises.
+        """
+        try:
+            self.open_and_identify()
+        except CommunicationError as exc:
+            volts = self._adapter_voltage()
+            if volts is None or volts >= self.wake_voltage:
+                raise
+            log.info("The car did not answer at start-up (%s: %s).",
+                     type(exc).__name__, exc)
+            self._enter_parked(volts)
+            return
+        self.discover_ecus()
+        self._discovered = True
+
     def run(self, max_cycles: int | None = None) -> None:
         interval = float(self.cfg.get("collector.poll_interval", 5.0))
-        self.open_and_identify()
-        self.discover_ecus()
+        self._start()
         cycles = 0
         # Target the configured period rather than sleeping a whole interval
         # after each cycle: the work itself takes about a second, so the old
         # form ran every ~6.1 s against a 5 s setting.
         next_due = time.monotonic()
         while max_cycles is None or cycles < max_cycles:
+            if self._parked:
+                # One probe per pass, counted as a cycle so a bounded run ends.
+                cycles += 1
+                try:
+                    self._parked_probe()
+                except Exception:
+                    log.exception("parked probe failed; still parked")
+                next_due = time.monotonic()
+                continue
             try:
                 snap = self.collect_once()
             except Exception as exc:
@@ -1087,6 +1267,9 @@ class Collector:
             if self._cycle_is_dead(snap):
                 # Do not record a DTC pass on a dead link, and do not log a
                 # cycle summary of nothing: both add noise, not information.
+                if self._park_if_asleep():
+                    next_due = time.monotonic()
+                    continue
                 if self._dead_cycles == 0:
                     self._note_adapter_lost()
                 if self._recover_adapter():

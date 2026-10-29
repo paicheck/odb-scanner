@@ -25,11 +25,17 @@ class DiagnosticConnection:
         self.t = transport
         self.tx_logger = tx_logger or (lambda **kw: None)
 
-    def open(self) -> None:
+    def open(self, *, warm_up: bool = True) -> None:
+        """Open and initialise the adapter. warm_up=False sends the vehicle
+        nothing (see Elm327Transport.initialize)."""
         self.t.open()
-        identity = self.t.initialize()
-        self.tx_logger(direction="NOTE", ecu=None, payload="",
-                       purpose=f"Adapter initialized: {identity}")
+        if warm_up:
+            identity = self.t.initialize()
+            note = f"Adapter initialized: {identity}"
+        else:
+            identity = self.t.initialize(warm_up=False)
+            note = f"Adapter initialized, no bus warm-up: {identity}"
+        self.tx_logger(direction="NOTE", ecu=None, payload="", purpose=note)
 
     def close(self) -> None:
         try:

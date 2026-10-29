@@ -464,6 +464,9 @@ class SimHandler(socketserver.BaseRequestHandler):
             if cmd == "ATI":
                 return ["SIM327 v1.5 (odb_scanner simulator)"]
             c = cmd.replace(" ", "")
+            if c == "ATRV":
+                # An awake car: the DC-DC converter holds the 12 V rail up.
+                return ["14.2V"]
             if c.startswith("ATCP") and len(c) == 6:
                 try:
                     self.cp = int(c[4:6], 16)

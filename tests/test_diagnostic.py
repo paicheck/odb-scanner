@@ -4062,7 +4062,7 @@ def test_run_backs_off_instead_of_spinning_on_a_dead_adapter(tmp_path,
     monkeypatch.setattr("collector.time.sleep", lambda s: slept.append(s))
     monkeypatch.setattr(col.conn, "close", lambda: None)
 
-    def fake_open():
+    def fake_open(**_kw):
         attempts["n"] += 1
         from diagnostic.interface import AdapterNotFoundError
         raise AdapterNotFoundError("still absent")
@@ -4111,7 +4111,7 @@ def test_recovery_resumes_collection_when_the_adapter_returns(tmp_path,
 
     monkeypatch.setattr("collector.time.sleep", lambda s: None)
     monkeypatch.setattr(col.conn, "close", lambda: None)
-    monkeypatch.setattr(col.conn, "open", lambda: None)
+    monkeypatch.setattr(col.conn, "open", lambda **_kw: None)
     monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMP087053")
 
     assert col._recover_adapter() is True
@@ -4130,7 +4130,7 @@ def test_recovery_reports_failure_and_keeps_trying(tmp_path, monkeypatch):
     monkeypatch.setattr("collector.time.sleep", lambda s: None)
     monkeypatch.setattr(col.conn, "close", lambda: None)
 
-    def boom():
+    def boom(**_kw):
         raise AdapterNotFoundError("nope")
 
     monkeypatch.setattr(col.conn, "open", boom)

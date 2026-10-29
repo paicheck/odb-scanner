@@ -51,6 +51,13 @@ collector:
   # it if you collect while the car is asleep; a DID that has EVER answered is
   # never retired, because silence then means "car asleep", not "DID dead".
   silent_retire_threshold: 3
+  # Parked car. Once the car stops answering, the collector sends it nothing:
+  # every parked_probe_interval seconds it reads only the adapter's own voltage
+  # (ATRV, measured at the OBD port -- no traffic on the car's bus) and resumes
+  # when that reaches wake_voltage, which needs the DC-DC converter running
+  # (car awake, driving or charging). A resting 12 V battery reads 12.4-13.2 V.
+  parked_probe_interval: 600.0
+  wake_voltage: 13.5
   # UDS DTC status mask for the single functional 0x19 0x02 read each cycle.
   # 0x8F asks for DTCs that are lighting the warning lamp (0x80), or that are
   # confirmed (0x08), pending (0x04), failed-this-cycle (0x02) or testFailed

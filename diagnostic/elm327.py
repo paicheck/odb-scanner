@@ -24,6 +24,7 @@ sender either way.
 from __future__ import annotations
 
 import logging
+import re
 import socket
 import time
 
@@ -42,6 +43,10 @@ _ADAPTER_HINTS = ("ELM327", "OBDLINK", "STN", "OBDII", "OBD-II")
 # (18DAF1xx / 18DB33F1) and is silent under ATSP6 (11-bit). Verified with
 # tools/doctor.py stage 5; change it there first if a vehicle disagrees.
 PINNED_PROTOCOL = "7"
+
+# An ATRV answer: the adapter's own reading of its supply (OBD pin 16, the car's
+# 12 V rail), e.g. "12.6V" or "12.6 V".
+_VOLTAGE_RE = re.compile(r"^(\d{1,2}(?:\.\d{1,2})?)\s*V$", re.IGNORECASE)
 
 
 class Elm327Transport(OBDInterface):
@@ -364,8 +369,14 @@ class Elm327Transport(OBDInterface):
         self._proto = PINNED_PROTOCOL
         self._meb_module = None
 
-    def initialize(self) -> str:
-        """Bring the adapter into a known state. Returns adapter identity."""
+    def initialize(self, warm_up: bool = True) -> str:
+        """Bring the adapter into a known state. Returns adapter identity.
+
+        Everything before the 0100 warm-up configures the adapter itself and
+        puts nothing on the vehicle's bus. warm_up=False stops there, which is
+        how the collector reconnects to a car it believes is asleep without
+        sending that car anything.
+        """
         time.sleep(0.3)
         self.send_command("ATZ")
         time.sleep(0.3)
@@ -373,6 +384,10 @@ class Elm327Transport(OBDInterface):
         self.identity = " ".join(resp) if resp else "unknown"
         self._base_init()
         self._negotiate_meb()
+        if not warm_up:
+            log.info("Adapter initialized without the bus warm-up: %s",
+                     self.identity)
+            return self.identity
         # OBD-II warm-up: '0100' (supported-PID request) makes the ELM finish
         # CAN bus init and shows whether anything is awake. On a silent bus
         # (vehicle asleep, gateway off) it returns NO DATA — logged, not
@@ -392,6 +407,20 @@ class Elm327Transport(OBDInterface):
             log.info("CAN bus alive after warm-up: %s", warm)
         log.info("Adapter initialized: %s", self.identity)
         return self.identity
+
+    def read_voltage(self) -> float | None:
+        """The adapter's own reading of the car's 12 V rail (ATRV), in volts.
+
+        The adapter measures this at OBD pin 16; nothing is sent on the
+        vehicle's bus, so it is safe to ask a sleeping car. None when the
+        adapter answered but not with a voltage (a clone without ATRV);
+        CommunicationError, from send_command, when it did not answer at all.
+        """
+        for line in self.send_command("ATRV"):
+            m = _VOLTAGE_RE.match(line.strip())
+            if m:
+                return float(m.group(1))
+        return None
 
     def set_header(self, tx_id: int | None) -> None:
         """No-op: this transport stays on functional addressing.

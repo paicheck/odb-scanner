@@ -267,6 +267,21 @@ snapshot, the loop kept running at `poll_interval` forever, and each cycle
 wrote a failed row for every registered DID — 146 rows per 3 cycles, with
 nothing in the log to say why.
 
+### When the car is parked
+
+A sleeping car fails every read too, but the adapter still answers. So before
+reconnecting, the collector asks the adapter for its own reading of the 12 V
+rail (`ATRV`, measured at the OBD port — nothing goes onto the car's bus). Below
+`collector.wake_voltage` (13.5 V) the car is asleep, and from then on it is sent
+**nothing**: every `collector.parked_probe_interval` (10 minutes) the collector
+reads only that voltage, and it resumes when the voltage shows the DC-DC
+converter running — the car awake, driving or charging. If the adapter goes
+quiet as well, it is reopened without the bus warm-up. A car asleep when the
+collector starts makes it start in this state instead of exiting. Both events
+are recorded ("Car asleep", "Car awake") in the dashboard's event history.
+Before this, a parked car was reconnected to every five minutes all night, each
+time with the OBD warm-up and a VIN read on its bus.
+
 ### If you would rather not type commands
 
 On Windows there are double-clickable shortcuts next to this file, and
