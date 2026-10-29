@@ -25,6 +25,9 @@ data class AiPreset(
     val defaultModel: String = "",
     /** How its free tier works, shown under the key box; "" when it has none. */
     val freeNote: String = "",
+    /** reasoning_effort to send, for services whose models think by default
+     *  and accept it; "" sends none (other models reject the field). */
+    val reasoningEffort: String = "",
 )
 
 object AiPresets {
@@ -37,7 +40,7 @@ object AiPresets {
             "console.anthropic.com", defaultModel = CLAUDE_DEFAULT_MODEL),
         AiPreset("gemini", "Google Gemini (free tier)", "openai",
             "https://generativelanguage.googleapis.com/v1beta/openai", "aistudio.google.com",
-            defaultModel = "gemini-3.8-flash",
+            defaultModel = "gemini-3.8-flash", reasoningEffort = "low",
             freeNote = "Free, no card needed. On the free tier Google may use what is sent " +
                 "to improve its models."),
         AiPreset("groq", "Groq (free tier)", "openai", "https://api.groq.com/openai/v1",

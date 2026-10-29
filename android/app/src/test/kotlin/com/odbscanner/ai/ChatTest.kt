@@ -159,6 +159,28 @@ class ChatTest {
     }
 
     @Test
+    fun geminiIsAskedToThinkBriefly() = runBlocking {
+        replies.add("""{"choices":[{"message":{"role":"assistant","content":"80 %"},
+            "finish_reason":"stop"}]}""")
+        val chat = OpenAiChatSession(base, "k", "gemini-3.8-flash", "Be brief.", listOf(battery),
+            reasoningEffort = AiPresets.byId("gemini").reasoningEffort)
+        assertEquals("80 %", chat.ask("Charge?", runner))
+        assertEquals("low", requests[0].second.getString("reasoning_effort"))
+    }
+
+    @Test
+    fun aSlowServiceIsToldApartFromNoConnection() {
+        // A server that accepts and never answers: the read wait runs out.
+        val silent = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        thread(isDaemon = true) { runCatching { silent.accept(); Thread.sleep(10_000) } }
+        val chat = OpenAiChatSession("http://127.0.0.1:${silent.localPort}", "k", "m", "s",
+            emptyList(), timeoutMs = 500)
+        val e = runCatching { runBlocking { chat.ask("hi", runner) } }.exceptionOrNull()
+        silent.close()
+        assertTrue(e?.message, e is AiException && e.message!!.contains("did not answer within"))
+    }
+
+    @Test
     fun openAiCompatibleToolLoop() = runBlocking {
         replies.add("""{"choices":[{"message":{"role":"assistant","content":null,
             "tool_calls":[{"id":"call_1","type":"function",
@@ -176,6 +198,7 @@ class ChatTest {
         assertEquals("system", first.getJSONArray("messages").getJSONObject(0).getString("role"))
         assertEquals("function", first.getJSONArray("tools").getJSONObject(0).getString("type"))
         assertFalse(first.has("temperature") || first.has("max_tokens"))
+        assertFalse("only sent when the service asks for it", first.has("reasoning_effort"))
         val msgs = requests[1].second.getJSONArray("messages")
         assertEquals("call_1", msgs.getJSONObject(2).getJSONArray("tool_calls")
             .getJSONObject(0).getString("id"))

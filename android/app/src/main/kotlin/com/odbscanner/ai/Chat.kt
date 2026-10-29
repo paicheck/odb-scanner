@@ -47,7 +47,11 @@ class OpenAiChatSession(
     override val model: String,
     system: String,
     private val tools: List<ToolSpec>,
-    private val timeoutMs: Int = 60_000,
+    // Long enough for a thinking model given the tools; a spoken question
+    // waits, but a failed one helps nobody.
+    private val timeoutMs: Int = 90_000,
+    /** Sent as reasoning_effort when set (AiPreset.reasoningEffort); "" sends none. */
+    private val reasoningEffort: String = "",
 ) : ChatSession {
     private val messages = JSONArray().put(JSONObject().put("role", "system").put("content", system))
 
@@ -72,6 +76,7 @@ class OpenAiChatSession(
 
     private fun request(): JSONObject {
         val body = JSONObject().put("model", model).put("messages", messages)
+        if (reasoningEffort.isNotBlank()) body.put("reasoning_effort", reasoningEffort)
         if (tools.isNotEmpty()) {
             body.put("tools", JSONArray().apply {
                 this@OpenAiChatSession.tools.forEach { t ->
@@ -87,6 +92,7 @@ class OpenAiChatSession(
     private fun post(url: String, body: String): String {
         val host = runCatching { URL(url).host }.getOrDefault(url)
         val conn = URL(url).openConnection() as HttpURLConnection
+        var sent = false
         try {
             conn.requestMethod = "POST"
             conn.connectTimeout = 15_000
@@ -95,7 +101,12 @@ class OpenAiChatSession(
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             conn.setRequestProperty("Accept", "application/json")
             if (key.isNotBlank()) conn.setRequestProperty("Authorization", "Bearer $key")
-            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            val bytes = body.toByteArray(Charsets.UTF_8)
+            // A known length makes the connection open here, not at the reply,
+            // so `sent` really marks the request as on its way.
+            conn.setFixedLengthStreamingMode(bytes.size)
+            conn.outputStream.use { it.write(bytes) }
+            sent = true
             val code = conn.responseCode
             val text = (if (code < 400) conn.inputStream else conn.errorStream)
                 ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
@@ -106,6 +117,16 @@ class OpenAiChatSession(
                 code >= 400 -> throw AiException("$host returned HTTP $code: ${text.take(200)}")
             }
             return text
+        } catch (e: java.net.UnknownHostException) {
+            throw AiException("No internet connection: could not look up $host", e)
+        } catch (e: java.net.SocketTimeoutException) {
+            // Which wait ran out says where the problem is: the phone's
+            // connection, or the service taking too long to think.
+            val connecting = !sent || e.message?.contains("connect", ignoreCase = true) == true
+            throw AiException(if (connecting)
+                "Could not connect to $host: check the phone's internet connection"
+                else "$host did not answer within ${timeoutMs / 1000} s; " +
+                    "try again, or a quicker service such as Groq", e)
         } catch (e: IOException) {
             throw AiException("Could not reach $host: ${e.message}", e)
         } finally {

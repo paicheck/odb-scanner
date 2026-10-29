@@ -95,7 +95,8 @@ object Assistant {
             val base = s.effectiveBaseUrl.ifBlank {
                 throw AiException("set the service address in Assistant settings")
             }
-            OpenAiChatSession(base, key, model, AssistantTools.SYSTEM_PROMPT, AssistantTools.SPECS)
+            OpenAiChatSession(base, key, model, AssistantTools.SYSTEM_PROMPT, AssistantTools.SPECS,
+                reasoningEffort = s.preset.reasoningEffort)
         }
         session = fresh
         signature = sig
