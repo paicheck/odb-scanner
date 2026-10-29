@@ -359,4 +359,58 @@ CREATE TABLE IF NOT EXISTS investigation_evidence (
     certain INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS ix_invev_inv ON investigation_evidence(investigation_id, ts);
+
+-- ======================================================================
+-- Measurement summaries (additive; SCHEMA_VERSION stays 1)
+-- ======================================================================
+-- Counts the dashboard needs over the whole history or a 30-day window --
+-- reads and successes per key and per module, how far the values range,
+-- when each last answered, the recording sessions -- used to be computed from
+-- `measurements` on every page load. A wide table scanned in full costs about
+-- 8 s per pass on a month of readings, and the overview made five passes.
+-- These hold the same numbers per hour (and live activity per minute), so a
+-- page reads a few thousand summary rows instead of millions of readings.
+--
+-- They are a cache of `measurements`, never a source: Repository.
+-- refresh_summaries() folds in rows above the id watermark kept in `meta`,
+-- and rebuilds from scratch after any delete or any change to a counted
+-- column, which the triggers below flag -- so a prune, the synthetic-data
+-- purge or a hand edit in a database browser cannot leave them wrong.
+CREATE TABLE IF NOT EXISTS measurement_hours (
+    vehicle_id INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    ecu TEXT NOT NULL,             -- '' when the reading named none
+    hour TEXT NOT NULL,            -- substr(ts, 1, 13): 2026-10-28T14
+    kind TEXT NOT NULL,            -- live | imported | simulated
+    n INTEGER NOT NULL,            -- readings
+    ok INTEGER NOT NULL,           -- successful readings
+    vmin REAL, vmax REAL,          -- over successful numeric values
+    last_ok TEXT,                  -- newest successful ts
+    last_ts TEXT NOT NULL,         -- newest ts, failures included
+    PRIMARY KEY (vehicle_id, key, ecu, hour, kind)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS ix_mhours_hour ON measurement_hours(vehicle_id, hour);
+
+-- This vehicle's own successful readings per minute (live kind only): enough
+-- to split recording sessions exactly at any gap of a minute or more.
+CREATE TABLE IF NOT EXISTS measurement_minutes (
+    vehicle_id INTEGER NOT NULL,
+    minute TEXT NOT NULL,          -- substr(ts, 1, 16): 2026-10-28T14:03
+    n INTEGER NOT NULL,
+    first_ts TEXT NOT NULL,
+    last_ts TEXT NOT NULL,
+    PRIMARY KEY (vehicle_id, minute)
+) WITHOUT ROWID;
+
+CREATE TRIGGER IF NOT EXISTS measurements_deleted_summaries_stale
+AFTER DELETE ON measurements
+BEGIN
+    INSERT OR IGNORE INTO meta(key, value) VALUES ('summaries.stale', '1');
+END;
+CREATE TRIGGER IF NOT EXISTS measurements_changed_summaries_stale
+AFTER UPDATE OF vehicle_id, key, ecu, ts, value, provenance, success
+ON measurements
+BEGIN
+    INSERT OR IGNORE INTO meta(key, value) VALUES ('summaries.stale', '1');
+END;
 """

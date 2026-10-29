@@ -50,37 +50,64 @@ def sessions(timestamps: list[str], gap_s: float) -> list[dict]:
     return out
 
 
+def sessions_from_minutes(minutes: list[dict], gap_s: float) -> list[dict]:
+    """`sessions` over per-minute activity (Repository.activity_minutes).
+
+    Exact for any gap of a minute or more: readings inside one minute are
+    never further apart than that, and between minutes the gap compared is
+    the one between the last reading of one and the first of the next.
+    """
+    out: list[dict] = []
+    for m in minutes:
+        first, last = _parse(m["first_ts"]), _parse(m["last_ts"])
+        if first is None or last is None:
+            continue
+        if out and (first - out[-1]["_end"]).total_seconds() <= gap_s:
+            out[-1]["_end"] = last
+            out[-1]["end"] = m["last_ts"]
+            out[-1]["readings"] += m["n"]
+        else:
+            out.append({"start": m["first_ts"], "end": m["last_ts"],
+                        "_start": first, "_end": last, "readings": m["n"]})
+    for s in out:
+        s["duration_s"] = round((s.pop("_end") - s.pop("_start")).total_seconds())
+    return out
+
+
 def snapshot(repo, vehicle_id: int, days: int, profile: str,
              gap_s: float) -> dict:
-    """The overview's data-quality figures for the last `days` days."""
+    """The overview's data-quality figures for the last `days` days.
+
+    Counts come from the repository's measurement summaries, so this costs
+    the same on a month of readings as on a day; only a key whose values
+    stray outside its range is counted reading by reading.
+    """
     from decoders.quality import quality_registry
 
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(
         timespec="seconds")
-    live = ("provenance NOT LIKE ? AND provenance <> 'simulated'")
-    q = repo.conn.execute
+    totals = repo.measurement_totals(vehicle_id, since)
+    live = [t for t in totals if t["kind"] == "live"]
+    sess = sessions_from_minutes(repo.activity_minutes(vehicle_id, since), gap_s)
+    n_reads = sum(t["n"] for t in live)
+    n_ok = sum(t["ok"] for t in live)
+    by_prov = {kind: sum(t["ok"] for t in totals if t["kind"] == kind)
+               for kind in ("live", "imported", "simulated")}
+    last_ts = max((t["last_ok"] for t in live if t["last_ok"]), default=None)
 
-    live_ts = [r[0] for r in q(
-        f"SELECT ts FROM measurements WHERE vehicle_id=? AND ts>=? AND success=1 "
-        f"AND {live} ORDER BY ts", (vehicle_id, since, IMPORTED_PREFIX + "%"))]
-    sess = sessions(live_ts, gap_s)
-
-    reads = q(
-        f"SELECT COUNT(*) AS n, SUM(success) AS ok FROM measurements "
-        f"WHERE vehicle_id=? AND ts>=? AND {live}",
-        (vehicle_id, since, IMPORTED_PREFIX + "%")).fetchone()
-    n_reads, n_ok = reads["n"] or 0, reads["ok"] or 0
-
-    by_prov = {r["kind"]: r["n"] for r in q(
-        "SELECT CASE WHEN provenance LIKE ? THEN 'imported' "
-        "WHEN provenance = 'simulated' THEN 'simulated' ELSE 'live' END AS kind, "
-        "COUNT(*) AS n FROM measurements WHERE vehicle_id=? AND ts>=? "
-        "AND success=1 GROUP BY kind", (IMPORTED_PREFIX + "%", vehicle_id, since))}
+    ranges: dict[str, tuple] = {}
+    for t in live:
+        if not t["ok"]:
+            continue
+        lo, hi = ranges.get(t["key"], (None, None))
+        vals = [v for v in (lo, t["vmin"]) if v is not None]
+        lo = min(vals) if vals else None
+        vals = [v for v in (hi, t["vmax"]) if v is not None]
+        hi = max(vals) if vals else None
+        ranges[t["key"]] = (lo, hi)
+    keys = sorted(ranges)
 
     registry = quality_registry(profile)
-    keys = [r[0] for r in q(
-        f"SELECT DISTINCT key FROM measurements WHERE vehicle_id=? AND ts>=? "
-        f"AND success=1 AND {live}", (vehicle_id, since, IMPORTED_PREFIX + "%"))]
     evidence = {level: 0 for level in LEVELS}
     uncatalogued = 0
     implausible: list[dict] = []
@@ -92,12 +119,15 @@ def snapshot(repo, vehicle_id: int, days: int, profile: str,
         evidence[quality.verification.value] = \
             evidence.get(quality.verification.value, 0) + 1
         lo, hi = quality.plausible_min, quality.plausible_max
-        if lo is None or hi is None:
+        seen_lo, seen_hi = ranges[key]
+        if lo is None or hi is None or seen_lo is None \
+                or (seen_lo >= lo and seen_hi <= hi):
             continue
-        n = q(
-            f"SELECT COUNT(*) FROM measurements WHERE vehicle_id=? AND key=? "
-            f"AND ts>=? AND success=1 AND {live} AND typeof(value) IN "
-            f"('integer','real') AND (value < ? OR value > ?)",
+        n = repo.conn.execute(
+            "SELECT COUNT(*) FROM measurements WHERE vehicle_id=? AND key=? "
+            "AND ts>=? AND success=1 AND provenance NOT LIKE ? "
+            "AND provenance <> 'simulated' AND typeof(value) IN "
+            "('integer','real') AND (value < ? OR value > ?)",
             (vehicle_id, key, since, IMPORTED_PREFIX + "%", lo, hi)).fetchone()[0]
         if n:
             implausible.append({"key": key, "count": n, "range": [lo, hi]})
@@ -105,15 +135,15 @@ def snapshot(repo, vehicle_id: int, days: int, profile: str,
 
     return {
         "days": days,
-        "last_ts": live_ts[-1] if live_ts else None,
+        "last_ts": last_ts,
         "sessions": len(sess),
         "latest_session": sess[-1] if sess else None,
         "reads": n_reads,
         "reads_ok": n_ok,
         "success_pct": round(100.0 * n_ok / n_reads, 1) if n_reads else None,
-        "live_rows": by_prov.get("live", 0),
-        "imported_rows": by_prov.get("imported", 0),
-        "simulated_rows": by_prov.get("simulated", 0),
+        "live_rows": by_prov["live"],
+        "imported_rows": by_prov["imported"],
+        "simulated_rows": by_prov["simulated"],
         "signals": len(keys),
         "evidence": evidence,
         "uncatalogued": uncatalogued,

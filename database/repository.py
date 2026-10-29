@@ -877,6 +877,183 @@ class Repository:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (self.ID_REUSE_KEY, str(now_max)))
 
+    # -- measurement summaries -------------------------------------------------
+    # See the note above measurement_hours in models.py. A cache of
+    # `measurements`: refreshed from an id watermark, rebuilt after any delete
+    # or change (flagged by trigger), and bypassed -- the readings are read
+    # directly -- whenever it cannot be brought up to date.
+    SUMMARY_DONE_KEY = "summaries.max_id"
+    SUMMARY_STALE_KEY = "summaries.stale"
+    # Rows folded in per write transaction. A first build over a large
+    # database proceeds in steps this size so the collector's own writes are
+    # never held off for more than a second or so.
+    SUMMARY_BATCH = 200_000
+    _KIND = (f"CASE WHEN provenance LIKE '{IMPORTED_PREFIX}%' THEN 'imported' "
+             "WHEN provenance = 'simulated' THEN 'simulated' ELSE 'live' END")
+    _NUMERIC_OK = "success=1 AND typeof(value) IN ('integer','real')"
+    _TOTALS = ("COUNT(*) AS n, SUM(success) AS ok, "
+               f"MIN(CASE WHEN {_NUMERIC_OK} THEN value END) AS vmin, "
+               f"MAX(CASE WHEN {_NUMERIC_OK} THEN value END) AS vmax, "
+               "MAX(CASE WHEN success=1 THEN ts END) AS last_ok, "
+               "MAX(ts) AS last_ts")
+
+    def _summarise(self, first_id: int, last_id: int) -> None:
+        """Fold measurements with first_id < id <= last_id into the summaries."""
+        self.conn.execute(
+            "INSERT INTO measurement_hours(vehicle_id, key, ecu, hour, kind, n, "
+            "ok, vmin, vmax, last_ok, last_ts) "
+            "SELECT vehicle_id, key, COALESCE(ecu, ''), substr(ts, 1, 13), "
+            f"{self._KIND}, {self._TOTALS} FROM measurements "
+            "WHERE id > ? AND id <= ? GROUP BY 1, 2, 3, 4, 5 "
+            "ON CONFLICT(vehicle_id, key, ecu, hour, kind) DO UPDATE SET "
+            "n = n + excluded.n, ok = ok + excluded.ok, "
+            "vmin = CASE WHEN vmin IS NULL OR excluded.vmin < vmin "
+            "THEN excluded.vmin ELSE vmin END, "
+            "vmax = CASE WHEN vmax IS NULL OR excluded.vmax > vmax "
+            "THEN excluded.vmax ELSE vmax END, "
+            "last_ok = CASE WHEN last_ok IS NULL OR excluded.last_ok > last_ok "
+            "THEN excluded.last_ok ELSE last_ok END, "
+            "last_ts = max(last_ts, excluded.last_ts)",
+            (first_id, last_id))
+        self.conn.execute(
+            "INSERT INTO measurement_minutes(vehicle_id, minute, n, first_ts, "
+            "last_ts) SELECT vehicle_id, substr(ts, 1, 16), COUNT(*), MIN(ts), "
+            "MAX(ts) FROM measurements WHERE id > ? AND id <= ? AND success=1 "
+            f"AND {self._KIND} = 'live' GROUP BY 1, 2 "
+            "ON CONFLICT(vehicle_id, minute) DO UPDATE SET n = n + excluded.n, "
+            "first_ts = min(first_ts, excluded.first_ts), "
+            "last_ts = max(last_ts, excluded.last_ts)",
+            (first_id, last_id))
+
+    def _summary_state(self) -> tuple[int, bool]:
+        meta = {r["key"]: r["value"] for r in self.conn.execute(
+            "SELECT key, value FROM meta WHERE key IN (?, ?)",
+            (self.SUMMARY_DONE_KEY, self.SUMMARY_STALE_KEY))}
+        try:
+            done = int(meta.get(self.SUMMARY_DONE_KEY) or 0)
+        except ValueError:
+            done = -1                       # unreadable: rebuild
+        return done, self.SUMMARY_STALE_KEY in meta
+
+    def refresh_summaries(self) -> bool:
+        """Bring the summaries up to date; False when that is not possible now
+        (the database cannot be written, or this thread is mid-transaction).
+
+        The common case -- nothing new since the last call -- costs two reads
+        and takes no lock. Otherwise each step runs under BEGIN IMMEDIATE, so
+        reading the stale flag, folding rows in and clearing the flag happen
+        with no other writer in between: a delete committed meanwhile can never
+        have its flag cleared without its rebuild.
+        """
+        conn = self.conn
+        if conn.in_transaction:
+            return False                    # pending writes of the caller
+        try:
+            done, stale = self._summary_state()
+            if not stale and done == self.max_measurement_id():
+                return True
+            while True:
+                conn.execute("BEGIN IMMEDIATE")
+                done, stale = self._summary_state()
+                top = self.max_measurement_id()
+                if stale or done < 0 or done > top:
+                    conn.execute("DELETE FROM measurement_hours")
+                    conn.execute("DELETE FROM measurement_minutes")
+                    conn.execute("DELETE FROM meta WHERE key=?",
+                                 (self.SUMMARY_STALE_KEY,))
+                    done = 0
+                step = min(top, done + self.SUMMARY_BATCH)
+                if step > done:
+                    self._summarise(done, step)
+                conn.execute(
+                    "INSERT INTO meta(key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (self.SUMMARY_DONE_KEY, str(step)))
+                conn.commit()
+                if step >= top:
+                    return True
+        except sqlite3.Error as exc:
+            # _RollbackOnErrorConnection has rolled the step back already.
+            log.warning("measurement summaries not refreshed (%s); reading "
+                        "the measurements directly", exc)
+            return False
+
+    @staticmethod
+    def _next_prefix(prefix: str, minutes: int) -> str:
+        """The bucket prefix `minutes` later, in the same width as `prefix`."""
+        fmt = "%Y-%m-%dT%H" if len(prefix) == 13 else "%Y-%m-%dT%H:%M"
+        try:
+            at = datetime.strptime(prefix, fmt) + timedelta(minutes=minutes)
+        except ValueError:
+            return prefix + "￿"        # not a stamp this code wrote
+        return at.strftime(fmt)
+
+    def measurement_totals(self, vehicle_id: int,
+                           since: str | None = None) -> list[dict]:
+        """Readings per (key, ecu, kind) -- kind is live, imported or
+        simulated -- over all time or from `since` on: `n` rows, `ok`
+        successful, `vmin`/`vmax` over successful numeric values, `last_ok`,
+        and `last_ts` (failures included).
+
+        Served from the hourly summary; the partly-covered hour at `since` is
+        counted from the readings themselves, so the window is exact.
+        """
+        group = "GROUP BY key, ecu, kind"
+        raw = (f"SELECT key, COALESCE(ecu, '') AS ecu, {self._KIND} AS kind, "
+               f"{self._TOTALS} FROM measurements WHERE vehicle_id=? ")
+        summed = ("SELECT key, ecu, kind, SUM(n) AS n, SUM(ok) AS ok, "
+                  "MIN(vmin) AS vmin, MAX(vmax) AS vmax, MAX(last_ok) AS last_ok, "
+                  "MAX(last_ts) AS last_ts FROM measurement_hours "
+                  "WHERE vehicle_id=? ")
+        if not self.refresh_summaries():
+            if since is None:
+                return [dict(r) for r in self.conn.execute(
+                    raw + group, (vehicle_id,))]
+            return [dict(r) for r in self.conn.execute(
+                raw + "AND ts >= ? " + group, (vehicle_id, since))]
+        if since is None:
+            return [dict(r) for r in self.conn.execute(
+                summed + group, (vehicle_id,))]
+        hour = since[:13]
+        merged: dict[tuple, dict] = {}
+        for r in [*self.conn.execute(summed + "AND hour > ? " + group,
+                                     (vehicle_id, hour)),
+                  *self.conn.execute(raw + "AND ts >= ? AND ts < ? " + group,
+                                     (vehicle_id, since,
+                                      self._next_prefix(hour, 60)))]:
+            k = (r["key"], r["ecu"], r["kind"])
+            m = merged.get(k)
+            if m is None:
+                merged[k] = dict(r)
+                continue
+            m["n"] += r["n"]
+            m["ok"] = (m["ok"] or 0) + (r["ok"] or 0)
+            for col, pick in (("vmin", min), ("vmax", max),
+                              ("last_ok", max), ("last_ts", max)):
+                vals = [v for v in (m[col], r[col]) if v is not None]
+                m[col] = pick(vals) if vals else None
+        return list(merged.values())
+
+    def activity_minutes(self, vehicle_id: int, since: str) -> list[dict]:
+        """This vehicle's own successful readings per minute from `since` on,
+        oldest first: `minute`, `n`, `first_ts`, `last_ts`. Exact at `since`."""
+        per_minute = ("SELECT substr(ts, 1, 16) AS minute, COUNT(*) AS n, "
+                      "MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM measurements "
+                      f"WHERE vehicle_id=? AND success=1 AND {self._KIND} = 'live' "
+                      "AND ts >= ? ")
+        if not self.refresh_summaries():
+            return [dict(r) for r in self.conn.execute(
+                per_minute + "GROUP BY 1 ORDER BY 1", (vehicle_id, since))]
+        minute = since[:16]
+        head = self.conn.execute(
+            per_minute + "AND ts < ? GROUP BY 1",
+            (vehicle_id, since, self._next_prefix(minute, 1))).fetchall()
+        rest = self.conn.execute(
+            "SELECT minute, n, first_ts, last_ts FROM measurement_minutes "
+            "WHERE vehicle_id=? AND minute > ? ORDER BY minute",
+            (vehicle_id, minute)).fetchall()
+        return [dict(r) for r in head] + [dict(r) for r in rest]
+
     def _table_exists(self, name: str) -> bool:
         return self.conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",

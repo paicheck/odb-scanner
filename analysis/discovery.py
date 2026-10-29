@@ -99,15 +99,16 @@ class KeyEntry:
 
 
 def _aggregate(repo, vehicle_id: int) -> dict[str, dict]:
-    """One row per key: success/failure counts and the last success stamp."""
-    rows = repo.conn.execute(
-        "SELECT key, SUM(success) AS ok, SUM(1-success) AS bad, "
-        "       MAX(CASE WHEN success=1 THEN ts END) AS last_success "
-        "FROM measurements WHERE vehicle_id=? GROUP BY key",
-        (vehicle_id,),
-    ).fetchall()
-    return {r["key"]: {"ok": int(r["ok"] or 0), "bad": int(r["bad"] or 0),
-                       "last_success": r["last_success"]} for r in rows}
+    """One row per key: success/failure counts and the last success stamp,
+    over all time (from the repository's measurement summaries)."""
+    out: dict[str, dict] = {}
+    for t in repo.measurement_totals(vehicle_id):
+        a = out.setdefault(t["key"], {"ok": 0, "bad": 0, "last_success": None})
+        a["ok"] += int(t["ok"] or 0)
+        a["bad"] += int(t["n"]) - int(t["ok"] or 0)
+        if t["last_ok"] and (a["last_success"] or "") < t["last_ok"]:
+            a["last_success"] = t["last_ok"]
+    return out
 
 
 def _state(agg: dict | None, now: datetime,

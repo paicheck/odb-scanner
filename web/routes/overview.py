@@ -163,9 +163,9 @@ def register(app, ctx) -> None:
                 seconds_ago = None
 
         totals = {
-            "measurements": repo.conn.execute(
-                "SELECT COUNT(*) FROM measurements WHERE vehicle_id=?", (vid,)
-            ).fetchone()[0],
+            # From the summaries: a COUNT(*) here walked every reading on
+            # every poll of the progress page.
+            "measurements": sum(t["n"] for t in repo.measurement_totals(vid)),
             "battery_snapshots": repo.conn.execute(
                 "SELECT COUNT(*) FROM battery_measurements WHERE vehicle_id=?", (vid,)
             ).fetchone()[0],

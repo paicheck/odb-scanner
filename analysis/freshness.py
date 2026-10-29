@@ -273,6 +273,29 @@ class ModuleStatus:
         return self.__dict__.copy()
 
 
+def _per_module(repo, vehicle_id: int) -> list[dict]:
+    """All-time answer counts per ECU, from the measurement summaries."""
+    out: dict[str, dict] = {}
+
+    def later(a, b):
+        return b if a is None or (b is not None and b > a) else a
+
+    for t in repo.measurement_totals(vehicle_id):
+        r = out.setdefault(t["ecu"], {
+            "ecu": t["ecu"] or None, "last_success": None, "live_success": None,
+            "last_attempt": None, "ok": 0, "bad": 0, "imported_ok": 0})
+        ok = int(t["ok"] or 0)
+        r["ok"] += ok
+        r["bad"] += int(t["n"]) - ok
+        r["last_success"] = later(r["last_success"], t["last_ok"])
+        r["last_attempt"] = later(r["last_attempt"], t["last_ts"])
+        if t["kind"] == "imported":
+            r["imported_ok"] += ok
+        else:
+            r["live_success"] = later(r["live_success"], t["last_ok"])
+    return list(out.values())
+
+
 def module_status(repo, vehicle_id: int, *, now: datetime | None = None,
                   silent_after_s: float = DEFAULT_SILENT_AFTER_S,
                   window_days: int = 30) -> list[ModuleStatus]:
@@ -294,18 +317,7 @@ def module_status(repo, vehicle_id: int, *, now: datetime | None = None,
     `failed` means it is answering now but mostly with errors.
     """
     reference = now or datetime.now(tz=timezone.utc)
-    rows = repo.conn.execute(
-        "SELECT ecu, "
-        "       MAX(CASE WHEN success=1 THEN ts END) AS last_success, "
-        "       MAX(CASE WHEN success=1 AND provenance NOT LIKE 'imported%' "
-        "                THEN ts END) AS live_success, "
-        "       MAX(ts) AS last_attempt, "
-        "       SUM(success) AS ok, SUM(1-success) AS bad, "
-        "       SUM(CASE WHEN success=1 AND provenance LIKE 'imported%' "
-        "                THEN 1 ELSE 0 END) AS imported_ok "
-        "FROM measurements WHERE vehicle_id=? GROUP BY ecu",
-        (vehicle_id,),
-    ).fetchall()
+    rows = _per_module(repo, vehicle_id)
     live_last = max((r["live_success"] for r in rows if r["live_success"]),
                     default=None)
     # How long ago the whole vehicle (not this module) last produced a live
