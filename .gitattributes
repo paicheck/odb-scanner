@@ -6,3 +6,8 @@
 # Vendored third-party files are kept byte-for-byte as downloaded, so their
 # SHA-256 in web/static/vendor/README.md stays checkable on any checkout.
 web/static/vendor/** -text
+# Archived evidence is kept byte-for-byte as captured, so the SHA-256 and
+# byte count in each *.manifest.json (and in the docs that quote them) match
+# on any checkout. The archives were written on Windows with CRLF endings;
+# git used to store them as LF, so the hashes only held on a Windows checkout.
+research/measurement_discovery/captures/*.json -text
