@@ -278,6 +278,24 @@ def test_car_energy_uses_the_bms_and_ignores_imported_rows(tmp_path):
     repo.close()
 
 
+def test_car_energy_measures_recent_driving_only(tmp_path):
+    repo = Repository(str(tmp_path / "c.db"))
+    vid = repo.ensure_vehicle("SYNTHETIC00000000", make="VW", model="ID.3")
+    for days_ago in (120, 2):                   # one drive long ago, one recent
+        start = days_ago * 1440
+        odo, energy = _drive(start, 60, 1000.0 + days_ago, 60.0,
+                             50000.0, 50000.0 - 60 * (250 if days_ago > 90 else 150))
+        for (ts, km), (_, wh) in zip(odo, energy):
+            for key, value in (("odometer_km", km), ("hv_energy_content", wh)):
+                repo.record_measurement(vid, ts, key, "bat_mgmt", "UDS-0x22",
+                                        "0x0000", "", "reported", "builtin",
+                                        "experimental", "", value)
+    got = car_energy(repo, vid, Config({}))
+    assert got["consumption_kwh_per_100km"] == 15.0
+    assert got["consumption_basis"].endswith("in the last 90 days")
+    repo.close()
+
+
 # -- providers (requests stubbed) ------------------------------------------------
 class _Reply:
     def __init__(self, status, body):
