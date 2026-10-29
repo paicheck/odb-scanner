@@ -8,8 +8,13 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -18,8 +23,10 @@ import com.odbscanner.MainActivity
 import com.odbscanner.route.PhoneLocation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -28,8 +35,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
-import org.vosk.android.RecognitionListener
-import org.vosk.android.SpeechService
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -131,6 +136,75 @@ object WakeMatch {
 }
 
 /**
+ * Feeds the microphone to a Vosk recogniser on one thread of its own, which
+ * opens, reads and releases the recorder itself -- so the recorder can never
+ * be read after it is released.
+ *
+ * It replaces Vosk's SpeechService, whose shutdown() released the recorder
+ * while its thread was still reading: the next read failed and the thread
+ * threw "error reading audio buffer", which nothing can catch, so the whole
+ * app crashed -- each time the wake word was restarted (saving the settings,
+ * opening the app) and whenever another app took the microphone. Here a
+ * failed read ends the listening and says so through [onError].
+ */
+internal class Spotter(
+    private val recognizer: Recognizer,
+    private val onHeard: (String) -> Unit,       // a final result, on the main thread
+    private val onError: (String) -> Unit,       // listening ended, on the main thread
+) {
+    @Volatile private var running = true
+    private val main = Handler(Looper.getMainLooper())
+    private val thread = Thread(::run, "wake-word")
+
+    fun start() = thread.start()
+
+    /** Stop listening and wait for the microphone to be released. */
+    fun stop() {
+        running = false
+        if (Thread.currentThread() !== thread) thread.join(2_000)
+    }
+
+    private fun run() {
+        var recorder: AudioRecord? = null
+        try {
+            val rate = WakeWordService.SAMPLE_RATE.toInt()
+            val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT)
+            if (min <= 0) return fail("Microphone unavailable")
+            val r = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, rate,
+                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, 8192) * 2)
+            recorder = r
+            if (r.state != AudioRecord.STATE_INITIALIZED) return fail("Microphone unavailable")
+            r.startRecording()
+            if (r.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                return fail("Microphone in use by another app")
+            }
+            val buf = ShortArray(rate / 10)            // a tenth of a second at a time
+            while (running) {
+                val n = r.read(buf, 0, buf.size)
+                if (n < 0) return fail("Microphone taken by another app (error $n)")
+                if (n > 0 && recognizer.acceptWaveForm(buf, n)) {
+                    val result = recognizer.result
+                    main.post { if (running) onHeard(result) }
+                }
+            }
+        } catch (e: SecurityException) {
+            fail("Microphone permission is off")
+        } catch (e: Exception) {
+            Log.w("WakeWord", "listening failed", e)
+            fail("Listening stopped (${e.message ?: e.javaClass.simpleName})")
+        } finally {
+            recorder?.let { runCatching { it.stop() }; it.release() }
+            recognizer.close()
+        }
+    }
+
+    private fun fail(why: String) {
+        if (running) main.post { onError(why) }
+    }
+}
+
+/**
  * Always listening for the wake phrase, while the driver has it on. A
  * foreground service of type microphone (the notification says it is
  * listening, with Stop): Vosk spots the phrase on the phone; then the mic is
@@ -140,7 +214,8 @@ object WakeMatch {
 class WakeWordService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var model: Model? = null
-    private var speech: SpeechService? = null
+    private var loading: Job? = null
+    private var speech: Spotter? = null
     private var phrase = "hey scanner"
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -173,8 +248,11 @@ class WakeWordService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (model == null) {
-            scope.launch {
+        // A second start while the model loads, or while already listening
+        // (the screen and the app's start both ask), changes nothing: two
+        // loads meant two listeners, the second shutting the first down.
+        when {
+            model == null && loading?.isActive != true -> loading = scope.launch {
                 model = runCatching { withContext(Dispatchers.IO) { Model(WakeModel.dir(this@WakeWordService).path) } }
                     .onFailure { Log.w(TAG, "model failed to load", it) }.getOrNull()
                 if (model == null) {
@@ -182,38 +260,36 @@ class WakeWordService : Service() {
                     stopSelf()
                 } else spot()
             }
+            model != null && speech == null -> spot()
         }
         return START_STICKY
     }
 
     private fun spot() {
         val m = model ?: return
-        speech?.shutdown()
+        speech?.stop()
         speech = try {
             val rec = Recognizer(m, SAMPLE_RATE, WakeMatch.grammar(phrase)).apply { setWords(true) }
-            SpeechService(rec, SAMPLE_RATE).also { it.startListening(listener) }
+            Spotter(rec, onHeard = { if (WakeMatch.matches(it, phrase)) wake() }, onError = { why ->
+                Log.w(TAG, "spotting stopped: $why")
+                speech = null
+                _status.value = why
+                notify(why)
+                // A call or another app had the microphone: try again shortly.
+                if (!why.contains("permission")) scope.launch {
+                    delay(RETRY_MS)
+                    if (running === this@WakeWordService) resumeSpotting()
+                }
+            }).also { it.start() }
         } catch (e: IOException) {
-            Log.w(TAG, "microphone unavailable", e)
-            _status.value = "Microphone unavailable"
+            Log.w(TAG, "recogniser unavailable", e)
+            _status.value = "The wake-word model would not load; download it again"
             null
         }
         if (speech != null) {
             _status.value = "Listening for \"$phrase\""
             notify("Say \"$phrase\" and ask")
         }
-    }
-
-    private val listener = object : RecognitionListener {
-        override fun onResult(hypothesis: String?) {
-            if (hypothesis != null && WakeMatch.matches(hypothesis, phrase)) wake()
-        }
-        override fun onPartialResult(hypothesis: String?) = Unit
-        override fun onFinalResult(hypothesis: String?) = Unit
-        override fun onError(exception: Exception?) {
-            Log.w(TAG, "spotting stopped", exception)
-            _status.value = "Listening stopped (${exception?.message ?: "error"})"
-        }
-        override fun onTimeout() = Unit
     }
 
     /** The phrase was heard: take the question and answer it (converse pauses spotting). */
@@ -228,7 +304,7 @@ class WakeWordService : Service() {
 
     /** Give up the microphone (a question is being taken). */
     private fun pauseSpotting() {
-        speech?.shutdown()
+        speech?.stop()
         speech = null
     }
 
@@ -239,7 +315,8 @@ class WakeWordService : Service() {
 
     override fun onDestroy() {
         if (running === this) running = null
-        speech?.shutdown()
+        loading?.cancel()
+        speech?.stop()                       // the microphone released before the model
         speech = null
         model?.close()
         model = null
@@ -281,6 +358,7 @@ class WakeWordService : Service() {
         private const val NOTIFICATION_ID = 4713
         private const val ACTION_STOP = "com.odbscanner.WAKE_STOP"
         const val SAMPLE_RATE = 16000f
+        private const val RETRY_MS = 30_000L        // after the microphone was taken
 
         private val _status = MutableStateFlow("Off")
         val status: StateFlow<String> = _status
