@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% from "_panels.html" import window_form %}
+{% block content %}
+<h2>Trips</h2>
+{{ window_form('/trips', days, windows) }}
+
+{% if not log %}
+<p>No vehicle recorded yet. Trips appear once the collector has read the car
+while it was driven.</p>
+{% elif not log.drives %}
+<p>No drives in the last {{ days }} day{{ 's' if days != 1 }}. A drive needs
+odometer readings while the car moved: the collector reads the odometer on its
+slow pass, so drives taken without the collector running are not here.</p>
+{% else %}
+<div class="cards">
+  <div class="card"><h3>Drives</h3>
+    <div class="big">{{ log.count }}</div>
+    <div class="note">{{ log.total_s // 3600 }} h {{ "%02d" | format((log.total_s % 3600) // 60) }} min at the wheel</div></div>
+  <div class="card"><h3>Distance</h3>
+    <div class="big">{{ log.total_mi | fmtnum(0) }} mi</div>
+    <div class="note">{{ log.total_km | fmtnum(0) }} km, from the odometer</div></div>
+  <div class="card"><h3>Efficiency</h3>
+    <div class="big">{% if log.mi_per_kwh %}{{ log.mi_per_kwh | fmtnum(1) }} mi/kWh{% else %}Unavailable{% endif %}</div>
+    <div class="note">{% if log.kwh_per_100km %}{{ log.kwh_per_100km | fmtnum(1) }} kWh/100 km over
+      {{ log.rated_km | fmtnum(0) }} km with the battery's energy read at both ends{% else %}needs the battery's
+      energy content read at both ends of a drive{% endif %}</div></div>
+  <div class="card"><h3>Longest drive</h3>
+    <div class="big">{{ (log.longest.distance_mi) | fmtnum(0) }} mi</div>
+    <div class="note">{{ log.longest.start_ts | fmtts }}</div></div>
+</div>
+
+{% if log.bands %}
+<h3>What the cold costs</h3>
+<table>
+<tr><th>Outside temperature</th><th>Drives</th><th>Distance</th><th>Efficiency</th></tr>
+{% for b in log.bands %}
+<tr><td>{{ b.label }}</td><td>{{ b.drives }}</td>
+  <td>{{ (b.km / 1.609344) | fmtnum(0) }} mi</td>
+  <td>{% if b.kwh_per_100km %}{{ (62.137 / b.kwh_per_100km) | fmtnum(1) }} mi/kWh
+      ({{ b.kwh_per_100km | fmtnum(1) }} kWh/100 km){% else %}—{% endif %}</td></tr>
+{% endfor %}
+</table>
+<p class="note">Each drive is placed by the average of the outside-temperature
+readings taken during it. Heating and cold cells make winter driving cost more;
+the route planner measures its consumption from the last 90 days for that
+reason. The outside-temperature decoder is not yet verified on this car.</p>
+{% endif %}
+
+<h3>Drives, newest first</h3>
+<table class="trips">
+<tr><th>Started</th><th>Time</th><th>Distance</th><th>Energy</th><th>Efficiency</th>
+    <th>Average</th><th>Top</th><th>Charge</th><th>Outside</th></tr>
+{% for d in log.drives %}
+<tr><td>{{ d.start_ts | fmtts }}</td>
+  <td>{{ "%.0f" | format(d.duration_s / 60) }} min</td>
+  <td>{{ d.distance_mi | fmtnum(1) }} mi <span class="note">({{ d.distance_km | fmtnum(0) }} km)</span></td>
+  <td>{% if d.energy_kwh is not none %}{{ d.energy_kwh | fmtnum(1) }} kWh{% else %}—{% endif %}</td>
+  <td>{% if d.mi_per_kwh %}{{ d.mi_per_kwh | fmtnum(1) }} mi/kWh{% elif d.energy_kwh is not none and d.distance_km < min_rate_km %}<span class="note">too short</span>{% else %}—{% endif %}</td>
+  <td>{% if d.avg_kmh is not none %}{{ (d.avg_kmh / 1.609344) | fmtnum(0) }} mph{% else %}—{% endif %}</td>
+  <td>{% if d.top_kmh is not none %}{{ (d.top_kmh / 1.609344) | fmtnum(0) }} mph{% else %}—{% endif %}</td>
+  <td>{% if d.soc_start is not none and d.soc_end is not none %}{{ d.soc_start | fmtnum(0) }} → {{ d.soc_end | fmtnum(0) }} %{% else %}—{% endif %}</td>
+  <td>{% if d.outside_c is not none %}{{ d.outside_c | fmtnum(0) }} °C{% else %}—{% endif %}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+
+<p class="note">How drives are found: from this car's own odometer readings
+(never imported or simulated ones), cut wherever the recording is silent for
+over {{ gap_min }} minutes (a drive or a charge may have gone unseen), the
+battery's energy rose while standing (a charge), or the car stood still for
+over {{ park_min }} minutes. The odometer counts whole kilometres, so a short
+drive's distance is coarse: drives under {{ min_rate_km | int }} km get no
+efficiency of their own, though they count in the totals. Energy is the
+battery's own energy content (a verified decoder) at each end, so regeneration
+on the way is included; charge is the dashboard's displayed SoC. "—" means not
+recorded, never zero.</p>
+{% endblock %}

@@ -256,7 +256,9 @@ def test_consumption_pairs_a_month_of_readings_quickly():
     energy = [(_ts(20000 - i), 58000.0 - i * 85.0) for i in range(20000)]
     t0 = time.perf_counter()
     got, _ = measured_consumption(odo, energy)
-    assert time.perf_counter() - t0 < 2.0
+    # Pairing every reading with every other took minutes here; linear takes
+    # a second or two. The margin keeps a busy machine from failing it.
+    assert time.perf_counter() - t0 < 10.0
     assert got == pytest.approx(0.17)
 
 

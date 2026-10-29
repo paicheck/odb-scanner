@@ -408,6 +408,21 @@ the scheme.
 | `python main.py backup` | Consistent database snapshot (safe while a collector runs) |
 | `python main.py unsupported-dids` | List the DIDs the collector has stopped polling (`--clear` to poll them again) |
 
+### Trips
+
+The dashboard's **Trips** page is a drive log made from the car's own
+readings: each drive's distance (miles and km), time, the battery energy it
+used, its efficiency in mi/kWh (and kWh/100 km), average and top speed, the
+charge at each end and the outside temperature -- and, over the window, what
+the cold costs ("below 5 °C: 3.1 mi/kWh; above 15 °C: 4.1"). A drive is cut
+from the odometer's readings wherever the recording falls silent for over 15
+minutes, the battery's energy rose while the car stood (a charge), or it
+stood still for over 10 minutes. Only drives the collector saw are there; the
+odometer counts whole kilometres, so drives under 5 km get no efficiency of
+their own. The route planner measures its consumption figure from the same
+drives (the last 90 days), so the two always agree. `/api/trips?days=30`
+returns the same as JSON.
+
 ### Database growth
 
 An always-on collector appends a few hundred rows a minute, so an unattended
@@ -419,6 +434,14 @@ promptly (it vacuums). Vehicles, ECUs, sessions, DTCs and generated reports are
 never pruned — and neither is `tx_log`, the safety manifest that records every
 request ever sent to the vehicle. That record exists to be kept, so neither
 prune mode touches it.
+
+The dashboard does not scan the readings for its counts: it keeps hourly
+summaries of them (`measurement_hours`, `measurement_minutes`), brought up to
+date from the newest rows on each page view. They are only a cache -- any
+delete or edit of a reading, a prune included, makes the next page view
+rebuild them -- so they never need managing. Per-key reads (charts, newest
+values, the planner, the trip log) go through one covering index,
+`ix_measurements_series`, which costs about 14% of the file's size.
 
 ### Retired DIDs
 
