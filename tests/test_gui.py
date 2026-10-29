@@ -18,7 +18,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-tk = pytest.importorskip("tkinter", reason="GUI tests need a Tk build")
+# ImportError, not only ModuleNotFoundError: on Arch the tkinter module ships
+# with Python but fails to import until the separate `tk` package provides
+# libtk8.6.so, and importorskip treats that as an error rather than a skip.
+tk = pytest.importorskip("tkinter", reason="GUI tests need a Tk build",
+                         exc_type=ImportError)
 
 from database.repository import Repository  # noqa: E402
 from gui.app import (  # noqa: E402
