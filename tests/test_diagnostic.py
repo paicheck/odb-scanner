@@ -2655,6 +2655,38 @@ def test_latest_measurements_means_latest_in_time_not_latest_inserted(repo):
     assert fresh["pack_voltage_v"]["value"] == 355.0, fresh
 
 
+def test_latest_measurements_per_vehicle_skips_failures_and_breaks_ties(repo):
+    """The newest SUCCESSFUL row of THIS vehicle, later insert winning a tie.
+
+    The query walks every key in the table and seeks each one's newest row,
+    so a key known only from another vehicle, or only from failed reads, must
+    come back absent rather than borrowed or empty.
+    """
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
+    other = repo.ensure_vehicle("WVWZZZE1ZMS000002")
+
+    def add(v, key, ts, value, ok=True):
+        repo.record_measurement(v, ts, key, "bat_mgmt", "22", "2AB7", "V",
+                                "reported", "builtin", "x", "62",
+                                value=value if ok else None, success=ok,
+                                error=None if ok else "NO DATA")
+
+    add(vid, "pack_voltage_v", "2026-10-01T10:00:00+00:00", 350.0)
+    add(vid, "pack_voltage_v", "2026-10-01T10:05:00+00:00", 351.0)
+    add(vid, "pack_voltage_v", "2026-10-01T10:05:00+00:00", 352.0)   # tie
+    add(vid, "pack_voltage_v", "2026-10-01T10:09:00+00:00", 0, ok=False)
+    add(other, "pack_voltage_v", "2026-10-02T00:00:00+00:00", 999.0)
+    add(other, "only_other_car", "2026-10-02T00:00:00+00:00", 1.0)
+    add(vid, "never_answered", "2026-10-01T10:00:00+00:00", 0, ok=False)
+    repo.conn.commit()
+
+    latest = repo.latest_measurements(vid)
+    assert latest["pack_voltage_v"]["value"] == 352.0
+    assert latest["pack_voltage_v"]["ts"] == "2026-10-01T10:05:00+00:00"
+    assert "only_other_car" not in latest and "never_answered" not in latest
+    assert repo.latest_measurements(other)["pack_voltage_v"]["value"] == 999.0
+
+
 def test_dtc_correlation_windows_its_occurrences_too(repo):
     """All-time occurrences were counted beside a windowed session list.
 

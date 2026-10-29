@@ -645,14 +645,7 @@ class Repository:
         #
         # ts alone can tie, so order by ts DESC then id DESC: on a tie the
         # later-inserted row is the one that most recently confirmed the value.
-        if max_age_s is None:
-            cutoff = None
-            inner_age = ""
-        else:
-            cutoff = (datetime.now(timezone.utc)
-                      - timedelta(seconds=max_age_s)).isoformat(
-                          timespec="seconds")
-            inner_age = "AND m2.ts >= ?"
+        #
         # Carried-forward values feed derived numbers -- pack power, SoH,
         # charging detection -- so a row this tool did not measure must
         # never stand in for one it did. An imported Car Scanner export is
@@ -661,41 +654,31 @@ class Repository:
         # an hour ago lands inside any reasonable bound and would be
         # silently re-stamped as ours.
         #
-        # Both the outer row and the inner "latest" lookup must exclude it.
-        # Excluding only the inner one would let an imported outer row pair
-        # with a genuine inner row, mixing two different epochs in one
-        # result.
+        # Shape: walk the distinct keys through the (key, ts) index -- a skip
+        # scan, one seek per key -- then seek each key's newest qualifying row.
+        # The previous form ran the "newest row" subquery once for EVERY row
+        # in the table: 17 s on a month of readings, on every overview load.
+        filters, args = "", [vehicle_id]
+        if max_age_s is not None:
+            filters += "AND m2.ts >= ? "
+            args.append((datetime.now(timezone.utc)
+                         - timedelta(seconds=max_age_s)).isoformat(
+                             timespec="seconds"))
         if live_only:
-            outer_prov = "AND m.provenance NOT LIKE ? "
-            inner_prov = "AND m2.provenance NOT LIKE ? "
-            prov_arg: str | None = IMPORTED_PREFIX + "%"
-        else:
-            outer_prov = ""
-            inner_prov = ""
-            prov_arg = None
-        # Arg order must follow the clause order in the query below exactly:
-        # vehicle_id, [outer cutoff], [outer prov], [inner cutoff], [inner
-        # prov]. Each optional clause contributes one binding only when present.
-        args: list = [vehicle_id]
-        if cutoff is not None:
-            args.append(cutoff)
-        if prov_arg is not None:
-            args.append(prov_arg)
-        if cutoff is not None:
-            args.append(cutoff)
-        if prov_arg is not None:
-            args.append(prov_arg)
+            filters += "AND m2.provenance NOT LIKE ? "
+            args.append(IMPORTED_PREFIX + "%")
         rows = self.conn.execute(
-            "SELECT key, value, text_value, unit, provenance, ts, doc_status "
-            "FROM measurements m "
-            "WHERE m.vehicle_id=? AND m.success=1 "
-            + ("" if cutoff is None else "AND m.ts >= ? ")
-            + outer_prov
-            + "AND id = (SELECT m2.id FROM measurements m2 "
-            "             WHERE m2.vehicle_id = m.vehicle_id "
-            "               AND m2.key = m.key AND m2.success=1 "
-            + inner_age + inner_prov +
-            "             ORDER BY m2.ts DESC, m2.id DESC LIMIT 1)",
+            "WITH RECURSIVE k(key) AS ("
+            " SELECT (SELECT MIN(key) FROM measurements)"
+            " UNION ALL"
+            " SELECT (SELECT MIN(key) FROM measurements WHERE key > k.key)"
+            " FROM k WHERE k.key IS NOT NULL) "
+            "SELECT m.key, m.value, m.text_value, m.unit, m.provenance, m.ts, "
+            "m.doc_status FROM k JOIN measurements m ON m.id = ("
+            " SELECT m2.id FROM measurements m2"
+            " WHERE m2.key = k.key AND m2.vehicle_id = ? AND m2.success = 1 "
+            + filters +
+            " ORDER BY m2.ts DESC, m2.id DESC LIMIT 1)",
             tuple(args),
         ).fetchall()
         return {r["key"]: dict(r) for r in rows}
