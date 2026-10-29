@@ -208,19 +208,56 @@ def _put(repo, vid, key, minutes_ago, value, prov="reported"):
                             "0x0000", "", prov, "builtin", "experimental", "", value)
 
 
+def _drive(start_min, minutes, km0, km, wh0, wh, step=5):
+    """Readings every `step` minutes over a steady drive; oldest first."""
+    n = minutes // step
+    odo = [(_ts(start_min - i * step), km0 + km * i / n) for i in range(n + 1)]
+    energy = [(_ts(start_min - i * step), wh0 - (wh0 - wh) * i / n)
+              for i in range(n + 1)]
+    return odo, energy
+
+
 def test_consumption_needs_enough_driving():
-    odo = [(_ts(60), 1000.0), (_ts(30), 1020.0)]
-    energy = [(_ts(60), 40000.0), (_ts(30), 36600.0)]
-    assert measured_consumption(odo, energy) == (None, 20.0)
-
-
-def test_consumption_skips_stretches_with_charging():
-    odo = [(_ts(300), 1000.0), (_ts(200), 1060.0), (_ts(100), 1060.0), (_ts(0), 1100.0)]
-    energy = [(_ts(300), 50000.0), (_ts(200), 39800.0),      # 60 km, 10.2 kWh
-              (_ts(100), 45000.0),                           # charged, parked
-              (_ts(0), 38200.0)]                             # 40 km, 6.8 kWh
+    odo, energy = _drive(60, 30, 1000.0, 20.0, 40000.0, 36600.0)
     got, km = measured_consumption(odo, energy)
-    assert km == 100.0 and got == pytest.approx(0.17)
+    assert got is None and km == pytest.approx(20.0)
+
+
+def test_consumption_skips_charging_while_parked():
+    a_odo, a_e = _drive(300, 60, 1000.0, 60.0, 50000.0, 39800.0)    # 10.2 kWh
+    parked = [(_ts(235), 1060.0), (_ts(230), 1060.0)]               # charging
+    parked_e = [(_ts(235), 42000.0), (_ts(230), 45000.0)]
+    b_odo, b_e = _drive(225, 40, 1060.0, 40.0, 45000.0, 38200.0)    # 6.8 kWh
+    got, km = measured_consumption(a_odo + parked + b_odo, a_e + parked_e + b_e)
+    assert km == pytest.approx(100.0) and got == pytest.approx(0.17)
+
+
+def test_consumption_ignores_a_gap_that_could_hide_a_charge():
+    # Two observed drives with three unrecorded hours between: the car went
+    # 150 km and was charged in that time, so energy fell only 2 kWh across it.
+    a_odo, a_e = _drive(600, 60, 1000.0, 60.0, 50000.0, 39800.0)
+    b_odo, b_e = _drive(360, 40, 1210.0, 40.0, 37800.0, 31000.0)
+    got, km = measured_consumption(a_odo + b_odo, a_e + b_e)
+    assert km == pytest.approx(100.0) and got == pytest.approx(0.17)
+
+
+def test_consumption_nets_regeneration_against_the_climb():
+    # Up 30 km for 7.5 kWh, then down 30 km regaining 1.5 kWh: 6 kWh for 60 km.
+    # Dropping the descent as if it were a charge would give 0.25 kWh/km.
+    up_odo, up_e = _drive(300, 30, 1000.0, 30.0, 50000.0, 42500.0)
+    down_odo, down_e = _drive(270, 30, 1030.0, 30.0, 42500.0, 44000.0)
+    got, km = measured_consumption(up_odo + down_odo[1:], up_e + down_e[1:])
+    assert km == pytest.approx(60.0) and got == pytest.approx(0.10)
+
+
+def test_consumption_pairs_a_month_of_readings_quickly():
+    import time
+    odo = [(_ts(20000 - i), 1000.0 + i * 0.5) for i in range(20000)]
+    energy = [(_ts(20000 - i), 58000.0 - i * 85.0) for i in range(20000)]
+    t0 = time.perf_counter()
+    got, _ = measured_consumption(odo, energy)
+    assert time.perf_counter() - t0 < 2.0
+    assert got == pytest.approx(0.17)
 
 
 def test_car_energy_uses_the_bms_and_ignores_imported_rows(tmp_path):
