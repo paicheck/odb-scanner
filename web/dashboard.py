@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -524,28 +525,19 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
 
         return table_groups, chart_groups, counts
 
+    disk_seen: list = [0.0, None]           # (monotonic time, disk_space())
+
+    def disk_warning() -> dict | None:
+        """disk_space() when the drive is low, checked at most once a minute."""
+        now = time.monotonic()
+        if now - disk_seen[0] > 60:
+            disk_seen[:] = [now, repo.disk_space()]
+        space = disk_seen[1]
+        return space if space and space["low"] else None
+
     def render(name: str, request: Request, **extra):
         vehicle, _ = vehicle_and_id()
-        ctx = {
-            "vehicle": vehicle,
-            "nav": [
-                "Overview",
-                "Progress",
-                "Measurements",
-                "Explore",
-                "Status",
-                "Battery",
-                "Range",
-                "Faults",
-                "Timeline",
-                "Charging",
-                "Quality",
-                "Investigations",
-                "AI Analysis",
-                "Sources",
-            ],
-            **extra,
-        }
+        ctx = {"vehicle": vehicle, "disk": disk_warning(), **extra}
         return _templates.TemplateResponse(request, name, ctx)
 
     def panels_context(defs: list[dict], days: int) -> dict:

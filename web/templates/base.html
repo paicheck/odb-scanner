@@ -66,6 +66,15 @@
   <a href="/sources">Sources</a>
 </nav>
 <main>
+{% if disk %}
+<div class="warn" role="alert"><strong>{% if disk.critical %}The drive holding the
+  database is almost full{% else %}The drive holding the database is running
+  low{% endif %}: {{ "%.1f" | format(disk.free / 1073741824) }} GB free.</strong>
+  When it fills, the collector keeps running but nothing more is recorded.
+  The database itself is {{ "%.0f" | format(disk.db / 1048576) }} MB
+  (<code>{{ disk.dir }}</code>); free some space, or move
+  <code>database.path</code> to another drive.</div>
+{% endif %}
 {% block content %}{% endblock %}
 </main>
 </body>

@@ -30,6 +30,8 @@ from diagnostic.elm327 import Elm327Transport
 from diagnostic.interface import CommunicationError
 from diagnostic.uds import NegativeResponseError, ProtocolError
 
+DISK_CHECK_S = 600.0       # how often the collector looks at free space
+
 log = logging.getLogger(__name__)
 
 # Adapter identification strings that mean "this is our own simulator, not a
@@ -212,6 +214,7 @@ class Collector:
         self._dead_cycles = 0
         self._failed_cycles = 0
         self._reported_cycle_failures = 0
+        self._disk_checked = -DISK_CHECK_S   # first cycle looks
 
     def _attempt(self, ok: bool) -> None:
         """Count one read attempt and whether it produced data."""
@@ -1017,6 +1020,21 @@ class Collector:
                       type(exc).__name__, exc)
             return False
 
+    def _check_disk(self) -> None:
+        """Warn, every DISK_CHECK_S, while the database's drive is low. When
+        it fills, every write fails: the loop survives that (see run), but the
+        readings of the drive are lost, so say so before it happens."""
+        now = time.monotonic()
+        if now - self._disk_checked < DISK_CHECK_S:
+            return
+        self._disk_checked = now
+        space = self.repo.disk_space()
+        if space and space["low"]:
+            log.warning("Only %.1f GB free on the drive holding the database "
+                        "(%s, %.0f MB). When it fills, readings stop being "
+                        "recorded.", space["free"] / 1024 ** 3, space["dir"],
+                        space["db"] / 1024 ** 2)
+
     def run(self, max_cycles: int | None = None) -> None:
         interval = float(self.cfg.get("collector.poll_interval", 5.0))
         self.open_and_identify()
@@ -1065,6 +1083,7 @@ class Collector:
                 continue
             self._failed_cycles = 0
             cycles += 1
+            self._check_disk()
             if self._cycle_is_dead(snap):
                 # Do not record a DTC pass on a dead link, and do not log a
                 # cycle summary of nothing: both add noise, not information.

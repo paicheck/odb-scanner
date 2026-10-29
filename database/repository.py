@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import sqlite3
 import threading
 import weakref
@@ -36,6 +37,13 @@ def _apply_additive_migrations(conn: sqlite3.Connection) -> None:
 # vocabulary; analysis/provenance.py imports it rather than restating it, so
 # the two cannot drift into disagreeing about what counts as imported.
 IMPORTED_PREFIX = "imported"
+
+
+# Below this much free space on the database's drive the dashboard shows a
+# warning and the collector logs one. When the drive fills, SQLite refuses
+# every write: the collector keeps running but records nothing.
+LOW_DISK_BYTES = 2 * 1024 ** 3
+CRITICAL_DISK_BYTES = 512 * 1024 ** 2
 
 
 def utcnow() -> str:
@@ -1053,6 +1061,21 @@ class Repository:
             "WHERE vehicle_id=? AND minute > ? ORDER BY minute",
             (vehicle_id, minute)).fetchall()
         return [dict(r) for r in head] + [dict(r) for r in rest]
+
+    def disk_space(self) -> dict | None:
+        """Free space on the drive holding the database, and the database's
+        own size (with its write-ahead log); None for an in-memory one."""
+        if self.path == ":memory:" or self.path.startswith("file:"):
+            return None
+        db = Path(self.path)
+        try:
+            free = shutil.disk_usage(db.parent).free
+            size = sum(f.stat().st_size for f in (
+                db, Path(self.path + "-wal")) if f.exists())
+        except OSError:
+            return None
+        return {"free": free, "db": size, "dir": str(db.parent),
+                "low": free < LOW_DISK_BYTES, "critical": free < CRITICAL_DISK_BYTES}
 
     def _table_exists(self, name: str) -> bool:
         return self.conn.execute(
