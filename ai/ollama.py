@@ -7,6 +7,7 @@ JSON evidence and returns text only.
 from __future__ import annotations
 
 import logging
+import time
 
 import requests
 
@@ -31,6 +32,8 @@ DEFAULT_NUM_PREDICT = 1024
 
 TRUNCATED_MARKER = "[OUTPUT TRUNCATED: the model hit the num_predict limit]"
 
+AVAILABLE_TTL_S = 30.0
+
 
 class OllamaClient:
     sends_offsite = False            # runs on this machine (or the LAN host set)
@@ -44,13 +47,25 @@ class OllamaClient:
         self.timeout = timeout
         self.num_ctx = int(num_ctx)
         self.num_predict = int(num_predict)
+        self._seen: tuple[float, bool] | None = None
 
     def available(self) -> bool:
+        """Whether Ollama answers, remembered for AVAILABLE_TTL_S.
+
+        When Ollama is not running, Windows takes about 2 s per address of
+        "localhost" (::1, then 127.0.0.1) to refuse the connection, so an
+        unremembered probe made every /api/health call take 4 s.
+        """
+        now = time.monotonic()
+        if self._seen is not None and now - self._seen[0] < AVAILABLE_TTL_S:
+            return self._seen[1]
         try:
             r = requests.get(f"{self.host}/api/tags", timeout=5)
-            return r.status_code == 200
+            ok = r.status_code == 200
         except requests.RequestException:
-            return False
+            ok = False
+        self._seen = (now, ok)
+        return ok
 
     def list_models(self) -> list[str]:
         try:
