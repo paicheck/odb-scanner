@@ -158,6 +158,10 @@ month of synthetic readings:
 
 ## Open items
 
+- **Project review, 2026-10-29:**
+  `docs/investigation/project_review_20261029.md` lists the bugs, hardening
+  and extensions found after the move to Linux, in the order to tackle them.
+  Start there.
 - **HONOR X8a** still has the 20261029c APK, which has the wake-word crash —
   copy the current APK to it next time it is connected.
 - Not yet tried for real: the speed-limit sign and arrival charge on the road
