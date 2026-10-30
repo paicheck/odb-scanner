@@ -123,8 +123,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # The runner image ships the Android SDK, ANDROID_HOME set and its
+      # licences accepted. android-actions/setup-android only re-ran
+      # sdkmanager, which (cmdline-tools 16.0) stops on the SDK *preview*
+      # licence and exits 1 -- the step that failed this job on every run.
+      # Gradle installs any missing component itself.
+      - name: Android SDK (preinstalled on the runner)
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools"
 
       - name: Unit tests
         working-directory: android
