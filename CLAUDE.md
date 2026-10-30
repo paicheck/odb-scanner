@@ -74,7 +74,7 @@ only: `web.auth_token`, `database.path`, `database.backup_dir`,
 `cloud.enabled/api_url/token`, `ingest.db_path/host/port`, `vehicle.vin` (the
 car's own; config.yaml's is empty because the repository is public),
 `routing.ors_api_key`, `routing.ocm_api_key`, `routing.countries`, optionally
-`routing.mapbox_token`, `ai.provider/api_key`, `notify.ntfy_url/ntfy_token/
+`routing.mapbox_token`, `ai.provider/api_key/fallbacks`, `notify.ntfy_url/ntfy_token/
 desktop`, `charging.home_tariff_per_kwh`.
 The phones hold their own keys (Route → Settings: OpenRouteService,
 OpenChargeMap, Mapbox; Assistant → Settings: the AI service), encrypted.

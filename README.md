@@ -105,7 +105,10 @@ the assumption for a home network. Further boundaries:
   OpenAI, Gemini, Mistral, Groq, OpenRouter, DeepSeek, xAI or any
   OpenAI-compatible endpoint) the AI Analysis page sends your question and the
   evidence summary there, with the VIN removed; the page says so. The default,
-  `ollama`, keeps everything on this machine.
+  `ollama`, keeps everything on this machine. `ai.fallbacks` lists backups
+  asked in turn when one fails (a rate limit, an outage, Ollama not running);
+  a report written by a backup says so. If any backup is a cloud service, the
+  VIN is removed even when the first service is the local Ollama.
 * **DNS rebinding:** a page on `attacker.example` can point that name at
   `127.0.0.1` and so read a loopback dashboard (which needs no token) as if
   same-origin. `HostAllowListMiddleware` refuses any `Host` header that is not
