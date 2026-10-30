@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from analysis.trips import measured_rate, split_drives
+from analysis.consumption_model import DriveSample, estimate
+from analysis.trips import PAIR_WITHIN_S, _Lookup, measured_rate, split_drives
 from database.repository import IMPORTED_PREFIX
 
 DEFAULT_USABLE_KWH = 58.0            # ID.3 Pro 58 kWh: net capacity when new
@@ -52,6 +53,49 @@ def measured_consumption(odometer, energy) -> tuple[float | None, float]:
     if km < MIN_MEASURED_KM or rate is None:
         return None, km
     return rate, km
+def measured_consumption_model(repo, vid: int, days: float = CONSUMPTION_DAYS):
+    """A personalised consumption model from this car's own drives, or None.
+
+    Uses the same drives as the trip log (analysis/trips.py). Returns a dict
+    of coefficients (serialisable) rather than the dataclass, so it can travel
+    through the web context and config without import cycles.
+    """
+    since_dt = datetime.now(timezone.utc) - timedelta(days=days)
+    since = since_dt.isoformat(timespec="seconds")
+    lead_days = days + PAIR_WITHIN_S / 86400.0
+    drives = [d for d in split_drives(
+        _series(repo, vid, "odometer_km", lead_days),
+        _series(repo, vid, "hv_energy_content", lead_days))
+        if d.end_ts >= since]
+    speed_lookup = _Lookup(_series(repo, vid, "speed_kmh", lead_days))
+    outside_lookup = _Lookup(_series(repo, vid, "outside_temp", lead_days))
+    samples = []
+    for d in drives:
+        if d.distance_km < 5 or d.energy_kwh is None:
+            continue
+        speeds = speed_lookup.between(d.start_s, d.end_s)
+        temps = outside_lookup.between(d.start_s, d.end_s) or [
+            v for v in (outside_lookup.nearest(d.start_s),) if v is not None]
+        avg_speed = (sum(speeds) / len(speeds)) if speeds else None
+        temp = (sum(temps) / len(temps)) if temps else None
+        samples.append(DriveSample(
+            distance_km=d.distance_km, energy_kwh=d.energy_kwh,
+            temp_c=temp, avg_speed_kmh=avg_speed))
+    model = estimate(samples)
+    if model is None:
+        return None
+    return {
+        "base_kwh_per_km": model.base_kwh_per_km,
+        "temp_coeff": model.temp_coeff,
+        "speed_coeff": model.speed_coeff,
+        "elev_coeff": model.elev_coeff,
+        "hvac_coeff": model.hvac_coeff,
+        "residual_std": model.residual_std,
+        "sample_km": model.sample_km,
+        "n_drives": model.n_drives,
+        "features_used": list(model.features_used),
+    }
+
 
 
 def car_energy(repo, vid: int, cfg) -> dict:
@@ -92,9 +136,11 @@ def car_energy(repo, vid: int, cfg) -> dict:
                 f"last {CONSUMPTION_DAYS} days (needs {MIN_MEASURED_KM:.0f} km "
                 f"to measure)")
 
+    model = measured_consumption_model(repo, vid)
     return {
         "usable_kwh": round(usable_kwh, 2), "usable_basis": usable_basis,
         "start_pct": round(start_pct, 1), "start_ts": now_ts, "start_basis": now_basis,
         "consumption_kwh_per_100km": round(cons * 100.0, 1),
         "consumption_basis": cons_basis,
+        "consumption_model": model,
     }
