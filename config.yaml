@@ -251,6 +251,18 @@ routing:
   # (matched against the charger's operator name). Put yours in
   # config.local.yaml, e.g.  prices: {Ionity: 0.39, Tesla: 0.55}
   prices: {}
+  # Charging networks, matched against the charger's operator name by any part,
+  # ignoring case ("ionity" matches "IONITY GmbH"). The Route form can change
+  # them per trip. avoid_networks are never used. prefer_networks are favoured:
+  # their energy counts prefer_discount (0.25 = 25 %) cheaper while stops are
+  # chosen, so they win unless clearly worse; the costs shown stay real.
+  avoid_networks: []        # e.g. [Shell Recharge, Pod Point]
+  prefer_networks: []       # e.g. [Ionity, Gridserve]
+  prefer_discount: 0.25
+  # Private, restricted and staff/customer-only chargers are always left out.
+  # true also leaves out "public, membership required" and "public, notice
+  # required" ones.
+  public_only: false
   # Countries place search is limited to, ISO codes: "GB" or "GB,FR". Blank
   # searches everywhere, and a town name may then resolve abroad ("Brighton"
   # comes back as Brighton, NY). Set it in config.local.yaml.

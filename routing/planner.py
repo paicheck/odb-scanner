@@ -61,6 +61,17 @@ CHEAPEST_TIME_VALUE = 3.0         # per hour: enough to refuse silly detours
 DETOUR_ROAD_FACTOR = 1.4          # road km per straight-line km off the route
 DETOUR_SPEED_KMH = 40.0
 NEAREST_STRIDE = 10               # coarse step when matching a charger to the route
+# Open Charge Map UsageTypeID: public, but only for members or after notice --
+# not for a passing car without an account. Left out under public_only. (The
+# private and staff-only types are dropped when chargers are fetched.)
+MEMBERS_ONLY_USAGE = (4, 7)
+USAGE_LABELS = {1: "public", 4: "public, membership required",
+                5: "public, pay at location", 7: "public, notice required"}
+# Search-only cost of NOT using a charger the driver chose: large enough that
+# the plan uses it whenever it can be reached. Never part of a shown cost.
+PIN_BONUS = 1e6
+ALT_WINDOW_KM = 30.0              # alternatives: this far either side of a stop
+ALT_MAX = 4
 
 
 @dataclass
@@ -86,6 +97,15 @@ class PlanSettings:
     level_step_pct: float = 5.0       # leave-at levels the search considers
     min_charge_pct: float = 10.0      # a stop adds at least this much
     charging_eff: float = 0.92        # battery kWh per kWh billed
+    # Charger choice. Networks match the operator's name, ignoring case, by
+    # any part ("ionity" matches "IONITY GmbH"). Chargers are Open Charge Map
+    # IDs (Charger.id).
+    avoid_networks: tuple[str, ...] = ()   # never used
+    prefer_networks: tuple[str, ...] = ()  # cheaper by prefer_discount, when choosing
+    prefer_discount: float = 0.25
+    public_only: bool = False              # also leave out MEMBERS_ONLY_USAGE
+    avoid_chargers: tuple[str, ...] = ()   # never used
+    use_chargers: tuple[str, ...] = ()     # used whenever reachable
 
     def time_value(self) -> float:
         if self.mode == "fastest":
@@ -107,6 +127,8 @@ class Charger:
     fee: float = 0.0                      # per session
     price_source: str = ""
     usage_cost: str = ""                  # Open Charge Map's price text, as listed
+    id: str = ""                          # Open Charge Map ID, for avoid / use
+    usage_type: int | None = None         # Open Charge Map UsageTypeID
 
 
 @dataclass
@@ -250,6 +272,41 @@ class _Candidate:
     table: list[float]
     level_cost: list[float]           # per leave level: price + time terms
     fixed_cost: float                 # fee + overhead + detour
+    choice_price: float               # price as the search sees it (preferences)
+    preferred: bool
+
+
+def network_in(operator: str, names) -> bool:
+    """Whether `operator` belongs to one of the networks `names`: any of them
+    found in it, ignoring case ("ionity" matches "IONITY GmbH")."""
+    op = (operator or "").lower()
+    return any(n.strip().lower() in op for n in names if n and n.strip())
+
+
+def usable(c: Charger, settings: PlanSettings) -> bool:
+    """Whether the driver's choices allow charger `c` at all."""
+    if c.id and c.id in settings.avoid_chargers:
+        return False
+    if network_in(c.operator, settings.avoid_networks):
+        return False
+    return not (settings.public_only and c.usage_type in MEMBERS_ONLY_USAGE)
+
+
+def _alternatives(cand, cands, cum) -> list[dict]:
+    """Up to ALT_MAX other usable chargers within ALT_WINDOW_KM of a stop,
+    nearest along the route first: what the driver can pick instead."""
+    km = cum[cand.idx]
+    near = [d for d in cands if d is not cand
+            and abs(cum[d.idx] - km) <= ALT_WINDOW_KM
+            and not (d.charger.id and d.charger.id == cand.charger.id)]
+    near.sort(key=lambda d: (round(abs(cum[d.idx] - km), 3), -d.charger.power_kw,
+                             d.charger.name))
+    return [{"id": d.charger.id, "name": d.charger.name,
+             "operator": d.charger.operator, "power_kw": d.charger.power_kw,
+             "km": round(cum[d.idx], 1), "detour_km": round(d.offset_km, 1),
+             "price_per_kwh": round(d.price, 4),
+             "access": USAGE_LABELS.get(d.charger.usage_type, ""),
+             "preferred": d.preferred} for d in near[:ALT_MAX]]
 
 
 def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
@@ -283,7 +340,7 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
     tables: dict[float, list[float]] = {}
     cands: list[_Candidate] = []
     for c in chargers:
-        if c.power_kw < settings.min_charger_kw:
+        if c.power_kw < settings.min_charger_kw or not usable(c, settings):
             continue
         idx, off = nearest_point(points, c.lat, c.lon)
         if off > settings.search_radius_km or idx == n - 1:
@@ -291,12 +348,19 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
         table = tables.setdefault(c.power_kw, charge_table(car, c.power_kw))
         price = c.price_per_kwh if c.price_per_kwh is not None \
             else settings.default_price_per_kwh
+        # Preferences change what the search weighs, never a shown cost:
+        # _simulate prices every stop at `price`.
+        preferred = network_in(c.operator, settings.prefer_networks)
+        choice = price * (1.0 - settings.prefer_discount) if preferred else price
         detour_s = 2 * off * DETOUR_ROAD_FACTOR / DETOUR_SPEED_KMH * 3600.0
+        fixed = c.fee + tv * (settings.stop_overhead_min * 60.0 + detour_s) / 3600.0
+        if c.id and c.id in settings.use_chargers:
+            fixed -= PIN_BONUS
         cands.append(_Candidate(
             idx, off, c, price, table,
-            [price * e / settings.charging_eff + tv * table_seconds(table, x) / 3600.0
+            [choice * e / settings.charging_eff + tv * table_seconds(table, x) / 3600.0
              for x, e in zip(levels, level_kwh)],
-            c.fee + tv * (settings.stop_overhead_min * 60.0 + detour_s) / 3600.0))
+            fixed, choice, preferred))
     cands.sort(key=lambda d: d.idx)   # stable: equal points keep input order
 
     # Node 0 is the start; node j >= 1 is cands[j - 1].
@@ -336,7 +400,7 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
                 cand = cands[k - 1]
                 arrive = min(cap, dep - used)
                 base = cost + cand.fixed_cost \
-                    - cand.price * arrive / settings.charging_eff \
+                    - cand.choice_price * arrive / settings.charging_eff \
                     - tv * table_seconds(cand.table, arrive / cap * 100.0) / 3600.0
                 row = best[k]
                 for l2 in range(len(levels)):
@@ -452,6 +516,9 @@ def _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct, car,
             "price_per_kwh": round(cand.price, 4), "fee": round(c.fee, 2),
             "price_source": c.price_source or "default price",
             "cost": round(money, 2), "detour_km": round(cand.offset_km, 1),
+            "id": c.id, "access": USAGE_LABELS.get(c.usage_type, ""),
+            "preferred": cand.preferred,
+            "alternatives": _alternatives(cand, cands, cum),
         })
         profile.append((cand.idx, depart))      # vertical step: arrive -> depart
         energy = depart
@@ -525,4 +592,21 @@ def assumptions(car: CarModel, settings: PlanSettings) -> list[str]:
         f"added divided by {settings.charging_eff:.2f} (charging losses).",
         "Charging time follows the ID.3 58 kWh DC curve, capped by the "
         "charger's rated power; real sessions are often slower.",
-    ]
+    ] + _choice_assumptions(settings)
+
+
+def _choice_assumptions(settings: PlanSettings) -> list[str]:
+    out = []
+    if settings.avoid_networks:
+        out.append("Never uses: " + ", ".join(settings.avoid_networks) + ".")
+    if settings.prefer_networks:
+        out.append("Prefers " + ", ".join(settings.prefer_networks) + ": their energy "
+                   f"counts {settings.prefer_discount * 100:.0f} % cheaper when choosing "
+                   "stops; the costs shown are the real prices.")
+    if settings.public_only:
+        out.append("Public access only: chargers that need a membership or notice "
+                   "are left out.")
+    if settings.avoid_chargers or settings.use_chargers:
+        out.append(f"Your picks: {len(settings.use_chargers)} charger(s) used where "
+                   f"reachable, {len(settings.avoid_chargers)} avoided.")
+    return out

@@ -405,7 +405,7 @@ def test_chargers_along_the_route_keep_power_operator_and_price(http):
     assert got == [Charger("Services", 51.1, -0.2, 350.0, "Ionity", "M23, Crawley",
                            usage_cost="£0.69/kWh"),
                    Charger("Open to all", 51.2, -0.2, 250.0,
-                           "Tesla (including non-tesla)")]
+                           "Tesla (including non-tesla)", usage_type=5)]
     params = calls[0][2]["params"]
     assert (params["distance"], params["connectiontypeid"]) == (5, 33)
     assert len(params["polyline"]) < 3000                 # thinned to fit a URL

@@ -348,9 +348,12 @@ def _charger(poi: dict) -> Charger | None:
         if not powers:
             return None
         street = ", ".join(x for x in (addr.get("AddressLine1"), addr.get("Town")) if x)
+        usage = poi.get("UsageTypeID")
         return Charger(name=addr.get("Title") or "Charger",
                        lat=float(addr["Latitude"]), lon=float(addr["Longitude"]),
                        power_kw=max(powers), operator=op,
-                       address=street, usage_cost=str(poi.get("UsageCost") or ""))
+                       address=street, usage_cost=str(poi.get("UsageCost") or ""),
+                       id=str(poi.get("ID") or ""),
+                       usage_type=int(usage) if usage is not None else None)
     except (KeyError, TypeError, ValueError):
         return None

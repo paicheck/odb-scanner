@@ -50,6 +50,19 @@
     {% for a in avoid_names %}<label class="rf-check"><input type="checkbox" name="avoid_{{ a }}" value="1"{% if a in form.avoid %} checked{% endif %}> Avoid {{ a }}</label>
     {% endfor %}
   </div>
+  <div class="rf-row rf-small">
+    <input type="hidden" name="net_set" value="1">
+    <label>Prefer networks
+      <input name="prefer" value="{{ form.prefer | join(', ') }}" maxlength="400"
+             placeholder="e.g. Ionity, Gridserve" autocomplete="off"></label>
+    <label>Never use networks
+      <input name="avoid_nets" value="{{ form.avoid_nets | join(', ') }}" maxlength="400"
+             placeholder="e.g. Shell Recharge" autocomplete="off"></label>
+    <label class="rf-check"><input type="checkbox" name="public_only" value="1"{% if form.public_only %} checked{% endif %}>
+      Public access only (no membership or notice needed)</label>
+    {% if form.avoid_ids %}<input type="hidden" name="avoid_ids" value="{{ form.avoid_ids | join(',') }}">{% endif %}
+    {% if form.use_ids %}<input type="hidden" name="use_ids" value="{{ form.use_ids | join(',') }}">{% endif %}
+  </div>
   {% if car %}
   <p class="chart-note">From this car: start {{ car.start_pct }} % ({{ car.start_basis }}{% if car.start_ts %},
     <span class="age{% if car.start_ts | stale %} age-stale{% endif %}" title="{{ car.start_ts | fmtts }}">{{ car.start_ts | age }}</span>{% endif %});
@@ -138,17 +151,29 @@
   <tr><th>#</th><th>At</th><th>Charger</th><th>Power</th><th>Arrive</th><th>Leave</th><th>Charging</th><th>Price</th><th>Cost</th></tr>
   {% for s in pl.stops %}
   <tr><td>{{ loop.index }}</td><td>{{ s.km | round | int }} km</td>
-    <td><strong>{{ s.name }}</strong>{% if s.operator %} · {{ s.operator }}{% endif %}
+    <td><strong>{{ s.name }}</strong>{% if s.operator %} · {{ s.operator }}{% endif %}{% if s.preferred %} <span class="note">(preferred)</span>{% endif %}
       {% if s.address %}<br><span class="note">{{ s.address }}</span>{% endif %}
+      {% if s.access %}<br><span class="note">{{ s.access }}</span>{% endif %}
       <br><a href="https://www.openstreetmap.org/?mlat={{ s.lat }}&amp;mlon={{ s.lon }}#map=17/{{ s.lat }}/{{ s.lon }}"
-             target="_blank" rel="noopener noreferrer">map</a></td>
+             target="_blank" rel="noopener noreferrer">map</a>{% if s.avoid_url %}
+      · <a href="{{ s.avoid_url }}">avoid this one</a>{% endif %}</td>
     <td>{{ s.power_kw | round | int }} kW</td><td>{{ s.arrive_pct }} %</td>
     <td>{{ s.depart_pct }} %</td><td>{{ s.charge_min }} min</td>
     <td>£{{ '%.2f' | format(s.price_per_kwh) }}/kWh{% if s.fee %} + £{{ '%.2f' | format(s.fee) }}{% endif %}
       <br><span class="note">{{ s.price_source }}</span></td>
     <td>£{{ '%.2f' | format(s.cost) }}<br><span class="note">{{ s.kwh }} kWh</span></td></tr>
+  {% if s.alternatives %}
+  <tr class="route-alts"><td></td><td colspan="8"><span class="note">Instead:</span>
+    {% for a in s.alternatives %}{% if not loop.first %} · {% endif %}{{ a.name }}{% if a.operator %} ({{ a.operator }}){% endif %},
+      {{ a.power_kw | round | int }} kW at {{ a.km | round | int }} km, £{{ '%.2f' | format(a.price_per_kwh) }}/kWh{% if a.access %}, {{ a.access }}{% endif %}{% if a.preferred %}, preferred{% endif %}{% if a.use_url %}
+      — <a href="{{ a.use_url }}">use this</a>{% endif %}{% endfor %}</td></tr>
+  {% endif %}
   {% endfor %}
 </table>
+{% if form.avoid_ids or form.use_ids %}
+<p class="chart-note">Your picks for this trip: {{ form.use_ids | length }} charger(s) chosen,
+  {{ form.avoid_ids | length }} avoided. <a href="{{ form.clear_picks_url }}">Clear them</a></p>
+{% endif %}
 <p class="chart-note">Charger data and listed prices: Open Charge Map (community-maintained; check
   availability and the price before relying on a stop).{% if not own_prices %} Set what you actually pay
   per network under <code>routing.prices</code> in <code>config.local.yaml</code> and it is used instead.{% endif %}</p>

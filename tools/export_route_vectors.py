@@ -51,13 +51,14 @@ def _line(km: int, elevation=None) -> list[list]:
     return pts
 
 
-def _charger_at(points, km, name, kw, offset_km=1.0, price=None, fee=0.0):
+def _charger_at(points, km, name, kw, offset_km=1.0, price=None, fee=0.0,
+                operator="", id="", usage_type=None):
     lat, lon = points[km][0], points[km][1]
     km_per_deg_lon = KM_PER_DEG_LAT * math.cos(math.radians(lat))
     return {"name": name, "lat": lat,
             "lon": round(lon + offset_km / km_per_deg_lon, 6),
-            "power_kw": kw, "operator": "", "address": "",
-            "price_per_kwh": price, "fee": fee}
+            "power_kw": kw, "operator": operator, "address": "",
+            "price_per_kwh": price, "fee": fee, "id": id, "usage_type": usage_type}
 
 
 def _hill(k):
@@ -127,6 +128,34 @@ def _cases():
                         _charger_at(_line(200), 120, "Later", 150)]}
     yield {"name": "start below the reserve, nothing near", "points": _line(100),
            "drive_s": 3600, "start_pct": 5, "chargers": []}
+    # Charger choice: networks, access, the driver's picks.
+    nets = []
+    for k in range(40, 400, 40):
+        nets.append(_charger_at(long, k, f"Alpha{k}", 150, price=0.50,
+                                operator="Alpha Charge", id=f"a{k}", usage_type=1))
+        nets.append(_charger_at(long, k + 2, f"Ion{k}", 150, price=0.55,
+                                operator="IONITY GmbH", id=f"i{k}", usage_type=5))
+        nets.append(_charger_at(long, k + 4, f"Club{k}", 150, price=0.35,
+                                operator="Club Volt", id=f"c{k}", usage_type=4))
+    yield {"name": "networks: none set", "points": long, "drive_s": 15000,
+           "start_pct": 90, "chargers": nets}
+    yield {"name": "networks: avoid one", "points": long, "drive_s": 15000,
+           "start_pct": 90, "settings": {"avoid_networks": ["club volt", "alpha"]},
+           "chargers": nets}
+    yield {"name": "networks: prefer one", "points": long, "drive_s": 15000,
+           "start_pct": 90, "settings": {"prefer_networks": ["ionity"],
+                                         "public_only": True},
+           "chargers": nets}
+    yield {"name": "networks: prefer, bigger discount", "points": long,
+           "drive_s": 15000, "start_pct": 90,
+           "settings": {"prefer_networks": ["Alpha"], "prefer_discount": 0.6},
+           "chargers": nets}
+    yield {"name": "access: public only", "points": long, "drive_s": 15000,
+           "start_pct": 90, "settings": {"public_only": True}, "chargers": nets}
+    yield {"name": "picks: avoid one, use another", "points": long, "drive_s": 15000,
+           "start_pct": 90,
+           "settings": {"avoid_chargers": ["c120", "a120"], "use_chargers": ["i200"]},
+           "chargers": nets}
 
 
 def _run(case):
@@ -140,7 +169,8 @@ def _run(case):
     return {k: plan[k] for k in ("status", "distance_km", "arrival_pct",
                                  "unreachable_at_km", "charge_s", "cost")} | {
         "stops": [{k: s[k] for k in ("km", "name", "arrive_pct", "depart_pct",
-                                     "charge_min", "kwh", "cost")}
+                                     "charge_min", "kwh", "cost", "id", "preferred")}
+                  | {"alternatives": [a["id"] for a in s["alternatives"]]}
                   for s in plan["stops"]],
         "profile_points": len(plan["profile"]),
         "profile_last": plan["profile"][-1],

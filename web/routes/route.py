@@ -10,6 +10,7 @@ touches the vehicle.
 from __future__ import annotations
 
 import logging
+import re
 from urllib.parse import urlencode
 
 from fastapi import Request
@@ -35,6 +36,59 @@ def _num(params, name, lo, hi):
 
 def _pick(*values):
     return next(v for v in values if v is not None)
+
+
+def _names(raw) -> list[str]:
+    """Network names from a comma-separated string or a list: trimmed, no
+    repeats, at most 20 of at most 60 characters."""
+    items = raw if isinstance(raw, (list, tuple)) else str(raw or "").split(",")
+    out: list[str] = []
+    for item in items:
+        name = str(item).strip()[:60]
+        if name and name.lower() not in (o.lower() for o in out):
+            out.append(name)
+    return out[:20]
+
+
+_CHARGER_ID = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
+
+
+def _ids(raw) -> list[str]:
+    """Charger IDs from a comma-separated string: only ID-shaped ones, at most
+    30, so a hand-edited URL cannot grow without bound."""
+    out: list[str] = []
+    for item in str(raw or "").split(","):
+        item = item.strip()
+        if _CHARGER_ID.match(item) and item not in out:
+            out.append(item)
+    return out[:30]
+
+
+def _with_picks(params, avoid_ids, use_ids) -> str:
+    """This page's URL with the per-trip charger picks replaced."""
+    kept = [(k, v) for k, v in params.multi_items() if k not in ("avoid_ids", "use_ids")]
+    if avoid_ids:
+        kept.append(("avoid_ids", ",".join(avoid_ids)))
+    if use_ids:
+        kept.append(("use_ids", ",".join(use_ids)))
+    return "/route?" + urlencode(kept)
+
+
+def _add_pick_links(params, plan: dict, avoid_ids, use_ids) -> None:
+    """Each stop: a link that plans again without it. Each alternative: one
+    that plans again with it and without the stop it would replace."""
+    for stop in plan["stops"]:
+        sid = stop.get("id") or ""
+        if sid:
+            stop["avoid_url"] = _with_picks(
+                params, avoid_ids + [sid], [i for i in use_ids if i != sid])
+        for alt in stop.get("alternatives") or []:
+            aid = alt.get("id") or ""
+            if aid:
+                alt["use_url"] = _with_picks(
+                    params,
+                    [i for i in avoid_ids if i != aid] + ([sid] if sid else []),
+                    [i for i in use_ids if i != sid] + [aid])
 
 
 def _cfg_num(cfg, key, default, lo, hi):
@@ -102,7 +156,18 @@ def register(app, ctx) -> None:
                       if p.get("avoid_set")
                       else providers.avoid_list(cfg.get("routing.avoid", []) or [])),
             "way": int(_num(p, "way", 0, 5) or 0),
+            # Networks and access, like the road boxes: the form's once sent.
+            "prefer": _names(p.get("prefer", "") if p.get("net_set")
+                             else cfg.get("routing.prefer_networks", []) or []),
+            "avoid_nets": _names(p.get("avoid_nets", "") if p.get("net_set")
+                                 else cfg.get("routing.avoid_networks", []) or []),
+            "public_only": (bool(p.get("public_only")) if p.get("net_set")
+                            else bool(cfg.get("routing.public_only", False))),
+            # Per-trip picks, from the stop links.
+            "avoid_ids": _ids(p.get("avoid_ids")),
+            "use_ids": _ids(p.get("use_ids")),
         }
+        form["clear_picks_url"] = _with_picks(p, [], [])
         min_kw = float(cfg.get("routing.min_charger_kw", 50))
         own = prices.own_prices(cfg.get("routing.prices", {}) or {})
         default_price = _cfg_num(cfg, "routing.default_price_per_kwh", 0.79, 0.05, 2.0)
@@ -169,7 +234,14 @@ def register(app, ctx) -> None:
                                     charge_to_pct=form["charge_to"],
                                     min_charger_kw=min_kw, mode=form["mode"],
                                     time_value_per_hour=time_value,
-                                    default_price_per_kwh=default_price)
+                                    default_price_per_kwh=default_price,
+                                    avoid_networks=tuple(form["avoid_nets"]),
+                                    prefer_networks=tuple(form["prefer"]),
+                                    prefer_discount=_cfg_num(
+                                        cfg, "routing.prefer_discount", 0.25, 0.0, 0.9),
+                                    public_only=form["public_only"],
+                                    avoid_chargers=tuple(form["avoid_ids"]),
+                                    use_chargers=tuple(form["use_ids"]))
             model = CarModel(
                 usable_kwh=car["usable_kwh"] if car else DEFAULT_USABLE_KWH,
                 consumption_kwh_per_km=form["consumption"] / 100.0)
@@ -183,7 +255,9 @@ def register(app, ctx) -> None:
             line = [[pt[0], pt[1]] for pt in route.points[::step]]
             if line[-1] != list(route.points[-1][:2]):
                 line.append(list(route.points[-1][:2]))
-            context.update(plan=plan.as_dict(), route_line=line)
+            planned = plan.as_dict()
+            _add_pick_links(p, planned, form["avoid_ids"], form["use_ids"])
+            context.update(plan=planned, route_line=line)
         except providers.RoutingError as exc:
             context["error"] = str(exc)
         except Exception as exc:              # a planner bug must not 500
