@@ -378,6 +378,13 @@ class AssistantTools(private val context: Context) : ToolRunner {
         /** Backstop: no VIN-shaped string ever leaves in a tool result. */
         fun redactVin(text: String): String = VIN.replace(text, "[VIN]")
 
+        /**
+         * The tools that act rather than look something up. A turn that ran
+         * one is not handed to a backup AI when it fails (FallbackChatSession):
+         * the backup could plan or start navigation a second time.
+         */
+        val CHANGES_STATE = setOf("plan_trip", "replan_trip", "start_navigation", "reroute")
+
         /** The tools as the AI sees them: names, what they do, JSON-schema arguments. */
         val SPECS: List<ToolSpec> = listOf(
             spec("get_battery", "Latest battery readings: charge (BMS and display), energy now " +

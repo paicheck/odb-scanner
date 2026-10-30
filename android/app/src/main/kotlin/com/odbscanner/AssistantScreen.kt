@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -30,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -153,6 +155,7 @@ fun AssistantSettingsDialog(onDone: () -> Unit) {
     var speak by remember { mutableStateOf(s.speakAlerts) }
     var wake by remember { mutableStateOf(s.wakeWord) }
     var phrase by remember { mutableStateOf(s.wakePhrase) }
+    var backups by remember { mutableStateOf(s.backups) }
     var modelReady by remember { mutableStateOf(WakeModel.installed(context)) }
     var downloading by remember { mutableStateOf<Int?>(null) }
     val wakeStatus by WakeWordService.status.collectAsState()
@@ -170,7 +173,8 @@ fun AssistantSettingsDialog(onDone: () -> Unit) {
             Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         AiPrefs.save(context, s.copy(provider = provider, model = model, baseUrl = baseUrl,
             effort = effort, speakAlerts = speak, wakeWord = on,
-            wakePhrase = WakeMatch.normalise(phrase).ifBlank { "hey scanner" }))
+            wakePhrase = WakeMatch.normalise(phrase).ifBlank { "hey scanner" },
+            backups = backups))
         if (key.isNotBlank()) AiPrefs.setKey(context, provider, key)
         Assistant.newConversation()
         // Restart so a changed phrase takes effect; started here, in front, as
@@ -259,6 +263,32 @@ fun AssistantSettingsDialog(onDone: () -> Unit) {
                     label = { Text(if (provider == "custom") "Service address, e.g. https://example.com/v1"
                         else "Service address (blank: the default)") },
                     singleLine = true, modifier = Modifier.fillMaxWidth())
+                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                // Backups: the other services with a saved key that can run on
+                // their default model, asked in this order if the one above fails.
+                val candidates = remember(provider, hasKey) {
+                    AiPresets.ALL.filter { p ->
+                        p.id != provider && AiPresets.canBackUp(p.id) &&
+                            AiPrefs.key(context, p.id).isNotBlank()
+                    }
+                }
+                Text("Backups: if ${preset.label} fails (rate limit, outage), ask these in turn",
+                    style = MaterialTheme.typography.bodySmall)
+                if (candidates.isEmpty()) {
+                    Text("To add one, choose another service above, enter its key and Save; " +
+                        "then choose this one again and tick it here.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                candidates.forEach { p ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = p.id in backups, onCheckedChange = { on ->
+                            backups = if (on) AiPresets.ALL.map { it.id }
+                                .filter { it in backups || it == p.id }
+                            else backups - p.id
+                        })
+                        Text(p.label)
+                    }
+                }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
                 Row {
                     Text("Speak trip alerts (re-plans, stops ahead)", modifier = Modifier.weight(1f))

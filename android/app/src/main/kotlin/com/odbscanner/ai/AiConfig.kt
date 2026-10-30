@@ -60,6 +60,12 @@ object AiPresets {
     )
 
     fun byId(id: String): AiPreset = ALL.firstOrNull { it.id == id } ?: ALL.first()
+
+    /**
+     * Whether [id] can be a backup: only the chosen service's model can be
+     * set, so a backup runs on its default model and needs one.
+     */
+    fun canBackUp(id: String): Boolean = ALL.any { it.id == id && it.defaultModel.isNotBlank() }
 }
 
 /** The assistant's settings. The API key is held apart, encrypted (KeyVault). */
@@ -71,6 +77,7 @@ data class AiSettings(
     val speakAlerts: Boolean = true,     // say trip events out loud
     val wakeWord: Boolean = false,       // always listening for the wake phrase
     val wakePhrase: String = "hey scanner",
+    val backups: List<String> = emptyList(),   // tried in order when the service fails
 ) {
     val preset: AiPreset get() = AiPresets.byId(provider)
     val effectiveModel: String
@@ -92,8 +99,19 @@ object AiPrefs {
             speakAlerts = p.getBoolean("speak_alerts", true),
             wakeWord = p.getBoolean("wake_word", false),
             wakePhrase = p.getString("wake_phrase", "hey scanner") ?: "hey scanner",
+            backups = cleanBackups(p.getString("backups", "") ?: "",
+                p.getString("provider", "anthropic") ?: "anthropic"),
         )
     }
+
+    /**
+     * The saved backup list, kept to services that can be backups, without
+     * the chosen service itself and without repeats, in the saved order.
+     */
+    fun cleanBackups(raw: String, provider: String): List<String> =
+        raw.split(',').map { it.trim() }
+            .filter { it.isNotEmpty() && it != provider && AiPresets.canBackUp(it) }
+            .distinct()
 
     fun save(context: Context, s: AiSettings) {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
@@ -104,6 +122,8 @@ object AiPrefs {
             .putBoolean("speak_alerts", s.speakAlerts)
             .putBoolean("wake_word", s.wakeWord)
             .putString("wake_phrase", s.wakePhrase.trim().lowercase().ifBlank { "hey scanner" })
+            .putString("backups", cleanBackups(s.backups.joinToString(","), s.provider)
+                .joinToString(","))
             .apply()
     }
 

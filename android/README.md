@@ -189,6 +189,16 @@ daily limits) and **Mistral** (`mistral-small-latest`, a verified phone
 number). Gemini's and Mistral's free tiers may use what is sent to improve
 their models; the others are billed per use.
 
+**Backups.** Under Settings → Backups, tick other services with a saved key
+(Claude, Gemini, Groq or Mistral, which run on their default model): when the
+chosen one fails -- a free tier's daily limit, an outage, a refused key -- the
+same question goes to the next. The rest of that conversation stays with the
+one that answered; a new conversation tries the chosen service first again. The
+transcript says which service answered and why the others did not; the voice
+does not. A question is never handed on after the failing service had already
+acted on it (planned a trip, started or rerouted navigation), so nothing
+happens twice.
+
 What it can do -- all read-only, nothing reaches the car: read the stored
 battery readings, fault codes and any measurement with its history; describe
 the trip being driven (stops ahead, charge, cost, the road each is on); read

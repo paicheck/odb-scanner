@@ -37,7 +37,8 @@ object Assistant {
     fun ready(context: Context): Boolean {
         val s = AiPrefs.load(context)
         return AiPrefs.key(context, s.provider).isNotBlank() ||
-            (s.provider == "custom" && s.effectiveBaseUrl.isNotBlank())
+            (s.provider == "custom" && s.effectiveBaseUrl.isNotBlank()) ||
+            s.backups.any { AiPrefs.key(context, it).isNotBlank() }
     }
 
     /** Ask, and get the answer to say. Failures come back as a sentence to say, too. */
@@ -60,6 +61,8 @@ object Assistant {
         }
         lastUse = System.currentTimeMillis()
         add(Line(false, answer))
+        // Shown, not spoken: which backup answered and why the others did not.
+        (session as? FallbackChatSession)?.takeNote()?.let { add(Line(false, "($it)")) }
         answer
     }
 
@@ -74,33 +77,52 @@ object Assistant {
 
     private fun sessionFor(context: Context): ChatSession {
         val s = AiPrefs.load(context)
-        val key = AiPrefs.key(context, s.provider)
+        val chain = listOf(s.provider) + s.backups
+        val keys = chain.map { AiPrefs.key(context, it) }
         val sig = listOf(s.provider, s.effectiveModel, s.effectiveBaseUrl, s.effort,
-            key.hashCode()).joinToString("|")
+            chain.joinToString(","), keys.hashCode()).joinToString("|")
         val now = System.currentTimeMillis()
         val current = session
         if (current != null && sig == signature && turns < MAX_TURNS && now - lastUse < IDLE_MS) {
             return current
         }
-        if (key.isBlank() && s.provider != "custom") {
-            throw AiException("there is no API key for ${s.preset.label}; add one in Assistant settings")
-        }
-        val model = s.effectiveModel.ifBlank {
-            throw AiException("choose a model for ${s.preset.label} in Assistant settings")
-        }
-        val fresh: ChatSession = if (s.preset.protocol == "anthropic") {
-            ClaudeChatSession(key, model, s.effort, AssistantTools.SYSTEM_PROMPT,
-                AssistantTools.SPECS, baseUrl = s.baseUrl)
+        val fresh: ChatSession = if (chain.size == 1) {
+            build(s, s.provider, keys[0])
         } else {
-            val base = s.effectiveBaseUrl.ifBlank {
-                throw AiException("set the service address in Assistant settings")
-            }
-            OpenAiChatSession(base, key, model, AssistantTools.SYSTEM_PROMPT, AssistantTools.SPECS,
-                reasoningEffort = s.preset.reasoningEffort)
+            FallbackChatSession(chain.mapIndexed { i, id ->
+                AiPresets.byId(id).label to { build(s, id, keys[i]) }
+            }) { name -> name in AssistantTools.CHANGES_STATE }
         }
         session = fresh
         signature = sig
         turns = 0
         return fresh
+    }
+
+    /**
+     * A session with [provider]: the chosen service with its settings, or a
+     * backup with its own defaults (its default model; Claude at low effort,
+     * for a quick spoken answer).
+     */
+    private fun build(s: AiSettings, provider: String, key: String): ChatSession {
+        val chosen = provider == s.provider
+        val preset = AiPresets.byId(provider)
+        if (key.isBlank() && provider != "custom") {
+            throw AiException("there is no API key for ${preset.label}; add one in Assistant settings")
+        }
+        val model = (if (chosen) s.effectiveModel else preset.defaultModel).ifBlank {
+            throw AiException("choose a model for ${preset.label} in Assistant settings")
+        }
+        return if (preset.protocol == "anthropic") {
+            ClaudeChatSession(key, model, if (chosen) s.effort else "low",
+                AssistantTools.SYSTEM_PROMPT, AssistantTools.SPECS,
+                baseUrl = if (chosen) s.baseUrl else "")
+        } else {
+            val base = (if (chosen) s.effectiveBaseUrl else preset.baseUrl.trimEnd('/')).ifBlank {
+                throw AiException("set the service address in Assistant settings")
+            }
+            OpenAiChatSession(base, key, model, AssistantTools.SYSTEM_PROMPT, AssistantTools.SPECS,
+                reasoningEffort = preset.reasoningEffort)
+        }
     }
 }
