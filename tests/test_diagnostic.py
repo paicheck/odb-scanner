@@ -1055,13 +1055,14 @@ def test_parse_elm_lines_no_data():
 
 
 # --- 29-bit (MEB) addressing: functional requests, attribution by header ----
-# Real ID.3 bus capture: several ECUs answer ONE functional request, each
-# frame tagged with its sender's 29-bit id (18DAF1xx).
+# Real ID.3 bus capture (the VIN bytes replaced with the synthetic one):
+# several ECUs answer ONE functional request, each frame tagged with its
+# sender's 29-bit id (18DAF1xx).
 CAR_0902_LINES = [
     "18DAF1011014490201575657",   # FF from ECU 0x01: 49 02 01 "WVW"
     "18DAF10A037F0911",           # NRC from ECU 0x0A: mode 09 unsupported
     "18DAF101215A5A5A45315A4D",   # CF1 from 0x01: "ZZZE1ZM"
-    "18DAF1012250303837303533",   # CF2 from 0x01: "P087053"
+    "18DAF1012253303030303031",   # CF2 from 0x01: "S000001"
 ]
 
 
@@ -1080,7 +1081,7 @@ def test_line_to_frame_29bit_header():
 def test_payloads_by_source_keeps_responders_apart():
     payloads = uds.payloads_by_source(CAR_0902_LINES)
     assert payloads[0x18DAF101] == bytes.fromhex(
-        "4902015756575A5A5A45315A4D50303837303533")
+        "4902015756575A5A5A45315A4D53303030303031")
     assert payloads[0x18DAF10A] == bytes.fromhex("7F0911")
 
 
@@ -1089,7 +1090,7 @@ def test_vin_decode_29bit_multi_responder():
     frame extraction, fell into the indexed-format path and concatenated
     raw frame hex; ISO-TP sequence bytes 0x21/0x22 are printable ASCII and
     leaked into the VIN as '!' and '"', yielding 'WVW!ZZZE1ZM"P0870'."""
-    assert obd2.parse_vin_response(CAR_0902_LINES) == "WVWZZZE1ZMP087053"
+    assert obd2.parse_vin_response(CAR_0902_LINES) == "WVWZZZE1ZMS000001"
 
 
 def test_parse_elm_lines_prefers_positive_responder():
@@ -1109,10 +1110,10 @@ def test_read_did_accepts_any_functional_responder():
 
     vin_frames = ["18DAF10A101462F190575657",
                   "18DAF10A215A5A5A45315A4D",
-                  "18DAF10A2250303837303533"]
+                  "18DAF10A2253303030303031"]
     c = DiagnosticConnection(_RecordingTransport(vin_frames))
     raw = c.read_did(get_ecu("bat_mgmt"), 0xF190)
-    assert raw == b"WVWZZZE1ZMP087053"
+    assert raw == b"WVWZZZE1ZMS000001"
 
     refused = DiagnosticConnection(
         _RecordingTransport(["18DAF10A037F2231"]))  # requestOutOfRange
@@ -1180,19 +1181,19 @@ def test_negative_response():
 def test_vin_decode():
     # header-off ELM format with index prefixes
     vin = obd2.parse_vin_response(["014", "0:4902015756575A5A5A4531",
-                                   "1:5A4D503038373035", "2:33000000000000"])
-    assert vin == "WVWZZZE1ZMP087053"
+                                   "1:5A4D533030303030", "2:31000000000000"])
+    assert vin == "WVWZZZE1ZMS000001"
 
 
 def test_vin_decode_headers_on():
     # headers-on ISO-TP: 10 14 49 02 01 57 56 57 / 21 5A 5A 5A 45 31 5A 4D / 22 ...
-    lines = ["7E8101449020157565 7", "7E8215A5A5A45315A4D", "7E82250303837303533"]
+    lines = ["7E8101449020157565 7", "7E8215A5A5A45315A4D", "7E82253303030303031"]
     vin = obd2.parse_vin_response([ln.replace(" ", "") for ln in lines])
-    assert vin == "WVWZZZE1ZMP087053"
+    assert vin == "WVWZZZE1ZMS000001"
 
 
 def test_vin_year():
-    assert obd2.decode_vin_year("WVWZZZE1ZMP087053") == 2021
+    assert obd2.decode_vin_year("WVWZZZE1ZMS000001") == 2021
 
 
 def test_mode01_voltage():
@@ -1399,7 +1400,7 @@ def test_collector_soh_uses_the_configured_nominal(tmp_path):
     cfg._data["battery"]["nominal_cac_ah"] = 200.0
     repo = Repository(cfg._data["database"]["path"])
     col = Collector(cfg, repo)
-    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053", year=2021)
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001", year=2021)
     ts = utcnow()
     repo.record_measurement(
         col.vehicle_id, ts, "soh_cac", "bat_mgmt", "UDS-0x22", "0x1EFC", "Ah",
@@ -1454,7 +1455,7 @@ from analysis.charging import correlate_dtc_with_sessions  # noqa: E402
 
 def test_repository_roundtrip(repo):
     from datetime import datetime, timedelta, timezone
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053", year=2021)
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001", year=2021)
     ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
     repo.record_battery_snapshot(vid, ts, soc_normal_pct=70, cell_delta_mv=28)
     hist = repo.battery_history(30, vid)
@@ -1474,7 +1475,7 @@ def test_cell_voltages_keep_their_physical_cell_number(repo):
     shift: without the mapping, cell_index 6 meant cell 7 on one sweep and
     cell 8 on the next, and any per-cell trend compared different cells.
     """
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     ts = "2026-09-01T10:00:00+00:00"
     # cells 7, 9 and 10 answered; 8 returned NRC 0x31
     repo.record_cell_voltages(vid, ts, [1.078, 1.090, 1.102], [7, 9, 10])
@@ -1486,7 +1487,7 @@ def test_cell_voltages_keep_their_physical_cell_number(repo):
 
 
 def test_record_cell_voltages_rejects_misaligned_numbers(repo):
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     with pytest.raises(ValueError):
         repo.record_cell_voltages(vid, "2026-09-01T10:00:00+00:00",
                                   [1.0, 1.1], [1])
@@ -1494,7 +1495,7 @@ def test_record_cell_voltages_rejects_misaligned_numbers(repo):
 
 def test_latest_measurements_respects_max_age(repo):
     """A cached value older than max_age_s must not be offered as current."""
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     old = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(
         timespec="seconds")
     recent = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1524,7 +1525,7 @@ def test_latest_measurements_live_only_excludes_imported_rows(repo):
     This exercises all four combinations of (cutoff present/absent) x
     (live_only true/false) so the binding order is pinned, not assumed.
     """
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     recent = datetime.now(timezone.utc).isoformat(timespec="seconds")
     old = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(
         timespec="seconds")
@@ -1567,7 +1568,7 @@ def test_latest_measurements_live_only_excludes_imported_rows(repo):
 
 
 def test_raw_response_preserved(repo):
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     repo.record_measurement(vid, "2026-09-01T10:00:00+00:00", "k", "ecu",
                             "UDS-0x22", "0x0000", "", "reported", "raw-only",
                             "unknown", "1A2B3C", None, None, success=False,
@@ -1639,7 +1640,7 @@ def test_dtc_read_uses_the_configured_status_mask(repo, tmp_path):
 
     col = Collector(cfg, repo)
     col.conn = _Conn()
-    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     out = col.read_and_store_dtcs()
 
     assert seen["cmd"] == "19028F", seen
@@ -1684,7 +1685,7 @@ def test_dtc_read_asks_the_electric_drive_ecu_physically(repo, tmp_path):
 
     col = Collector(cfg, repo)
     col.conn = _Conn()
-    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     out = col.read_and_store_dtcs()
 
     assert ("19028F", None) in calls, calls
@@ -1715,7 +1716,7 @@ def test_dtc_status_mask_falls_back_when_invalid(repo, tmp_path):
 
     col = Collector(cfg, repo)
     col.conn = _Conn()
-    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     col.read_and_store_dtcs()
     assert seen["cmd"] == "19028F"
 
@@ -1824,7 +1825,7 @@ def test_collector_emits_dtc_cleared_when_code_disappears(repo, tmp_path):
 
     col = Collector(cfg, repo)
     col.conn = _Conn()
-    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     col.read_and_store_dtcs()   # baseline: U112300 present, no event
     state["present"] = False
     col.read_and_store_dtcs()   # absent -> dtc-cleared
@@ -1853,7 +1854,7 @@ def test_dtc_description_lookup():
 
 
 def test_cell_delta_trend(repo):
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     from datetime import datetime, timedelta, timezone
     now = datetime.now(timezone.utc)
     for d in range(10):
@@ -1874,7 +1875,7 @@ def test_cell_delta_trend_refuses_tiny_sample_span(repo):
     thousands of mV/day and a confident "decreasing" label.
     """
     from datetime import datetime, timedelta, timezone
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     now = datetime.now(timezone.utc)
     for i, delta in enumerate((20, 22, 21)):
         ts = (now + timedelta(seconds=i)).isoformat(timespec="seconds")
@@ -1904,7 +1905,7 @@ def test_format_span(days, expected):
 def test_cell_delta_trend_min_span_is_configurable(repo):
     """The 1-day floor is a default, and callers can demand more."""
     from datetime import datetime, timedelta, timezone
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     now = datetime.now(timezone.utc)
     for i, delta in enumerate((20, 22, 21)):
         ts = (now + timedelta(hours=i * 3)).isoformat(timespec="seconds")
@@ -1921,7 +1922,7 @@ def test_repository_context_manager_closes_connection():
     """`with Repository(...)` must close the connection on every exit path."""
     with tempfile.TemporaryDirectory() as tmp:
         with Repository(os.path.join(tmp, "ctx.db")) as r:
-            r.ensure_vehicle("WVWZZZE1ZMP087053")
+            r.ensure_vehicle("WVWZZZE1ZMS000001")
         with pytest.raises(sqlite3.ProgrammingError):
             r.conn.execute("SELECT 1")
 
@@ -1969,7 +1970,7 @@ def test_analysis_service_ask_persists_when_vehicle_exists(cfg):
     with tempfile.TemporaryDirectory() as tmp:
         db = os.path.join(tmp, "one_vehicle.db")
         with Repository(db) as r:
-            vid = r.ensure_vehicle("WVWZZZE1ZMP087053")
+            vid = r.ensure_vehicle("WVWZZZE1ZMS000001")
             svc = AnalysisService(cfg, r)
             svc.llm = _FakeOllama()
             result = svc.ask("Are my cells balanced?")
@@ -1998,7 +1999,7 @@ def test_cmd_analyze_persists_results(cfg):
         db = os.path.join(tmp, "analyze.db")
         cfg._data["database"]["path"] = db
         with Repository(db) as r:
-            vid = r.ensure_vehicle("WVWZZZE1ZMP087053")
+            vid = r.ensure_vehicle("WVWZZZE1ZMS000001")
             now = datetime.now(timezone.utc)
             for d in range(10):
                 ts = (now - timedelta(days=10 - d)).isoformat(timespec="seconds")
@@ -2012,7 +2013,7 @@ def test_cmd_analyze_persists_results(cfg):
 
 def test_charging_correlation(repo):
     from datetime import datetime, timedelta, timezone
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     now = datetime.now(timezone.utc)
     sid = repo.open_session(vid, now.isoformat(), "AC")
     repo.close_session(sid, (now + timedelta(hours=1)).isoformat())
@@ -2028,7 +2029,8 @@ from config import load_config, Config, ConfigError  # noqa: E402
 def test_config_defaults():
     cfg = load_config()
     assert cfg.ollama_model  # configurable, not hard-coded in code
-    assert cfg.get("vehicle.vin") == "WVWZZZE1ZMP087053"
+    # The car's own VIN lives in config.local.yaml; the tracked file is public.
+    assert load_config(local_path=os.devnull).get("vehicle.vin") == ""
     assert cfg.get("analysis.trend_window_days") == 30
     assert cfg.get("analysis.charging_window_days") == 90
 
@@ -2095,7 +2097,7 @@ def test_non_battery_anomaly_scan_finds_a_real_outlier(repo):
     reading against a 50 km/h baseline must now be flagged.
     """
     from analysis.anomaly import scan_metric
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     for i in range(40):
         # 39 normal readings and one impossible one.
         value = 50.0 if i < 39 else 900.0
@@ -2116,7 +2118,7 @@ def test_non_battery_anomaly_scan_finds_a_real_outlier(repo):
 def test_anomaly_rescan_does_not_duplicate_rows(repo):
     """Analysis re-reads the whole window every run, so the same anomaly is
     offered again on every dashboard refresh."""
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     ts = "2026-09-01T10:00:00+00:00"
     for _ in range(3):
         repo.add_anomaly(vid, ts, "cell_delta_mv", 42.0, 10.0, 2.0, 16.0,
@@ -2134,7 +2136,7 @@ def test_anomaly_rescan_does_not_duplicate_rows(repo):
 
 def test_dtc_occurrence_count_is_not_a_poll_count(repo):
     """A stored DTC is re-read every cycle; that must not inflate the count."""
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     from datetime import datetime, timedelta, timezone
     t0 = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
     kw = dict(description="test", categories=["powertrain"], status="stored")
@@ -2165,7 +2167,7 @@ def test_a_continuous_dtc_does_not_write_a_row_per_poll(repo):
     reclaimable by prune(), and latest_freeze_frames() scanned the lot on every
     /dtcs page, /charging page and AI question.
     """
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     from datetime import datetime, timedelta, timezone
     t0 = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
     frame = {"speed": 0, "coolant_c": 20.0}
@@ -2233,7 +2235,7 @@ def test_a_failed_prune_deletes_nothing(repo):
     isolation_level is a commit in disguise. The caller got an exception and a
     pruned database, with no way to tell the two apart.
     """
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     old = "2020-01-01T00:00:00+00:00"
     repo.record_measurement(vid, old, "pack_voltage_v", "bat_mgmt", "22", "2AB7",
                             "V", "MEB profile", "u16/100", "assumed",
@@ -2286,7 +2288,7 @@ def test_a_zero_reading_is_not_treated_as_missing(repo):
     """
     from analysis.battery import battery_overview
 
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     old = "2020-01-01T00:00:00+00:00"
     # Normalised genuinely 0, absolute 64 -- the two disagree, so a silent
     # fallback is detectable rather than harmless.
@@ -2335,7 +2337,7 @@ def test_an_llm_report_is_stored_against_the_vehicle_it_was_built_from(tmp_path)
             return "No fault codes recorded.\n\nLIMITATIONS\n- none"
 
     with Repository(cfg._data["database"]["path"]) as r:
-        first = r.ensure_vehicle("WVWZZZE1ZMP087053")
+        first = r.ensure_vehicle("WVWZZZE1ZMS000001")
         svc = AnalysisService(cfg, r)
         svc.llm = _RegisteringOllama(r)
 
@@ -2352,7 +2354,7 @@ def test_an_llm_report_is_stored_against_the_vehicle_it_was_built_from(tmp_path)
             f"from vehicle {first}")
 
         # And the context that went into the model is the same vehicle's.
-        assert result["context"]["vehicle"]["vin"] == "WVWZZZE1ZMP087053", \
+        assert result["context"]["vehicle"]["vin"] == "WVWZZZE1ZMS000001", \
             f"evidence packet described the wrong vehicle: {result['context']}"
 
 
@@ -2371,7 +2373,7 @@ def test_concurrent_writers_do_not_duplicate_an_anomaly(repo):
     """
     import threading
 
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     ts = "2026-09-01T10:00:00+00:00"
     THREADS = 4
     PER_THREAD = 60
@@ -2503,8 +2505,8 @@ def test_a_database_error_does_not_end_collection(tmp_path, monkeypatch):
     cfg._data["collector"]["poll_interval"] = 0.05
     repo = Repository(cfg._data["database"]["path"])
     col = Collector(cfg, repo)
-    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
-    col.vin = "WVWZZZE1ZMP087053"
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
+    col.vin = "WVWZZZE1ZMS000001"
 
     calls = {"n": 0}
 
@@ -2517,7 +2519,7 @@ def test_a_database_error_does_not_end_collection(tmp_path, monkeypatch):
             "2AB7", "V", "MEB", "u16/100", "assumed", "x", value=355.0)
         return {"charging": False, "pack_voltage_v": 355.0}
 
-    monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMP087053")
+    monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMS000001")
     monkeypatch.setattr(col, "discover_ecus", lambda: {})
     monkeypatch.setattr(col, "collect_once", flaky_cycle)
     monkeypatch.setattr(col, "read_and_store_dtcs", lambda: None)
@@ -2565,14 +2567,14 @@ def test_a_failing_cycle_is_logged_and_backed_off_not_spun_on(tmp_path,
     cfg._data["collector"]["read_cell_voltages"] = False
     repo = Repository(cfg._data["database"]["path"])
     col = Collector(cfg, repo)
-    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
-    col.vin = "WVWZZZE1ZMP087053"
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
+    col.vin = "WVWZZZE1ZMS000001"
 
     def always(*args, **kwargs):
         raise sqlite3.OperationalError("disk I/O error")
 
     repo.record_measurement = always
-    monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMP087053")
+    monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMS000001")
     monkeypatch.setattr(col, "discover_ecus", lambda: {})
 
     slept: list[float] = []
@@ -2607,7 +2609,7 @@ def test_close_session_survives_a_naive_timestamp_and_a_missing_id(repo):
     'completed' -- could never see it again. _adopt_open_session exists to
     prevent exactly that orphan but can only adopt one, never close it.
     """
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     # A hand-written or imported start stamp: naive, no offset.
     sid = repo.open_session(vid, "2026-09-01T10:00:00", "AC")
     repo.add_charging_sample(sid, "2026-09-01T10:30:00", voltage_v=230.0,
@@ -2633,7 +2635,7 @@ def test_latest_measurements_means_latest_in_time_not_latest_inserted(repo):
     max_age_s so its age clause hid it, but analysis/battery.py calls this with
     no bound and ships the result to the LLM as latest_raw.
     """
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
 
     def add(ts, value):
         repo.record_measurement(vid, ts, "pack_voltage_v", "bat_mgmt", "22",
@@ -2702,7 +2704,7 @@ def test_dtc_correlation_windows_its_occurrences_too(repo):
 
     from analysis.charging import correlate_dtc_with_sessions
 
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     now = datetime.now(timezone.utc)
 
     # One ancient occurrence, far outside any sensible window.
@@ -2732,7 +2734,7 @@ def test_concurrent_upserts_do_not_collide(repo):
 
     def make_vehicle():
         try:
-            got = repo.ensure_vehicle("WVWZZZE1ZMP087053", year=2021)
+            got = repo.ensure_vehicle("WVWZZZE1ZMS000001", year=2021)
             with lock:
                 ids.append(got)
         except Exception as exc:            # pragma: no cover - diagnostics
@@ -2765,7 +2767,7 @@ def test_concurrent_upserts_do_not_collide(repo):
         "SELECT COUNT(*) FROM dtcs WHERE vehicle_id=?", (vid,)).fetchone()[0] == 1
     assert repo.conn.execute(
         "SELECT COUNT(*) FROM vehicles WHERE vin=?",
-        ("WVWZZZE1ZMP087053",)).fetchone()[0] == 1
+        ("WVWZZZE1ZMS000001",)).fetchone()[0] == 1
 
 
 def test_first_vehicle_prefers_the_most_recent_row(repo):
@@ -2773,9 +2775,9 @@ def test_first_vehicle_prefers_the_most_recent_row(repo):
     the dashboard, the AI context and `analyze`, because they all picked
     ORDER BY id LIMIT 1 -- the oldest row, with none of the data."""
     repo.ensure_vehicle('WVW!ZZZE1ZM"P0870')    # stray artifact, created first
-    repo.ensure_vehicle("WVWZZZE1ZMP087053")    # the real vehicle, later
+    repo.ensure_vehicle("WVWZZZE1ZMS000001")    # the real vehicle, later
     row = repo.first_vehicle()
-    assert row["vin"] == "WVWZZZE1ZMP087053"
+    assert row["vin"] == "WVWZZZE1ZMS000001"
 
 
 def test_collect_once_records_speed_and_12v(repo, tmp_path):
@@ -2806,7 +2808,7 @@ def test_collect_once_records_speed_and_12v(repo, tmp_path):
 
     col = Collector(cfg, repo)
     col.conn = _CarConn()
-    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     col._cells_readable = False
     snap = col.collect_once()
     assert snap.get("speed_kmh") == 38.0
@@ -2828,7 +2830,7 @@ def test_concurrent_threads_do_not_lose_writes(repo):
     per-thread, so every write must land.
     """
     import threading
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     errors = []
 
     def writer(n):
@@ -2901,7 +2903,7 @@ def test_schema_mismatch_refuses_to_write_and_preserves_evidence(tmp_path):
 def test_prune_keeps_values_and_drops_only_stale_raw_bytes(repo):
     """Default pruning must not disturb anything the reports read."""
     from datetime import datetime, timedelta, timezone
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     old = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat(
         timespec="seconds")
     new = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -2921,7 +2923,7 @@ def test_prune_keeps_values_and_drops_only_stale_raw_bytes(repo):
 
 def test_hard_prune_removes_old_rows_but_keeps_identity(repo):
     from datetime import datetime, timedelta, timezone
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     old = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat(
         timespec="seconds")
     new = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -2947,7 +2949,7 @@ def test_prune_never_deletes_the_safety_manifest(repo):
     reports" were protected. Both modes must now leave it alone.
     """
     from datetime import datetime, timedelta, timezone
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     old = (datetime.now(timezone.utc) - timedelta(days=500)).isoformat(
         timespec="seconds")
     repo.log_tx(old, direction="TX", ecu="bat_mgmt", payload="221E3B",
@@ -2970,7 +2972,7 @@ def test_backup_produces_a_readable_consistent_snapshot(tmp_path):
     import sqlite3
     src = tmp_path / "live.db"
     repo = Repository(src)
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     for i in range(25):
         repo.record_measurement(vid, f"2026-10-05T10:{i:02d}:00+00:00",
                                 "pack_voltage", "bat_mgmt", "UDS-0x22", "0x1E3B",
@@ -3165,7 +3167,7 @@ def test_measurements_page_lists_and_charts_series(tmp_path):
     cfg = load_config(tmp_path / "c.yaml", tmp_path / "local.yaml")
 
     repo = Repository(str(tmp_path / "d.db"))
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     base = datetime.now(timezone.utc)
     for i, v in enumerate((355.2, 356.0, 355.8)):
         ts = (base - timedelta(minutes=i)).isoformat(timespec="seconds")
@@ -3218,7 +3220,7 @@ def test_charts_are_local_and_executable_under_the_csp(tmp_path):
     cfg = load_config(tmp_path / "c.yaml", tmp_path / "local.yaml")
 
     repo = Repository(str(tmp_path / "d.db"))
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     base = datetime.now(timezone.utc)
     for i in range(10):
         ts = (base - timedelta(minutes=9 - i)).isoformat(timespec="seconds")
@@ -3573,7 +3575,7 @@ def test_dashboard_windows_come_from_config(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "win.db")
         seed = Repository(db_path)
-        seed.ensure_vehicle("WVWZZZE1ZMP087053", year=2021)
+        seed.ensure_vehicle("WVWZZZE1ZMS000001", year=2021)
         seed.close()          # routes short-circuit on `if vid`, so a row is needed
         cfg = load_config()
         cfg._data["database"]["path"] = db_path
@@ -3612,11 +3614,11 @@ def test_simulator_end_to_end():
 
     # vin=...: the simulator defaults to its own demo VIN (it must not claim the
     # car's identity by default), and this test asserts the VIN read path.
-    with SimServer("127.0.0.1", 35123, vin="WVWZZZE1ZMP087053"):
+    with SimServer("127.0.0.1", 35123, vin="WVWZZZE1ZMS000001"):
         t = Elm327Transport(host="127.0.0.1", tcp_port=35123, timeout=5.0)
         c = DiagnosticConnection(t)
         c.open()
-        assert c.read_vin() == "WVWZZZE1ZMP087053"
+        assert c.read_vin() == "WVWZZZE1ZMS000001"
         bms = get_ecu("bat_mgmt")
         raw = c.read_did(bms, 0x1E3B)
         assert len(raw) == 2
@@ -3649,7 +3651,7 @@ def test_simulator_meb_addressing_end_to_end():
     from decoders.registry import DIDRegistry
 
     # vin=...: see test_simulator_end_to_end; this test asserts the VIN too.
-    with SimServer("127.0.0.1", 35124, vin="WVWZZZE1ZMP087053"):
+    with SimServer("127.0.0.1", 35124, vin="WVWZZZE1ZMS000001"):
         t = Elm327Transport(host="127.0.0.1", tcp_port=35124, timeout=5.0)
         c = DiagnosticConnection(t)
         try:
@@ -3693,7 +3695,7 @@ def test_simulator_meb_addressing_end_to_end():
             assert t._proto == "7", "the 29-bit bus needs protocol 7 back"
 
             # Functional reads must still work after all that module switching.
-            assert c.read_vin() == "WVWZZZE1ZMP087053"
+            assert c.read_vin() == "WVWZZZE1ZMS000001"
             assert c.try_mode01(0x42) is not None
         finally:
             # Always drop the socket: a failed assertion must not leave the
@@ -3734,7 +3736,7 @@ def test_collector_adopts_a_session_left_open_by_a_previous_run(repo, tmp_path):
     cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
                                 "max_value_age_s": 900.0},
                   "database": {"path": str(tmp_path / "c.db")}})
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     ts = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(
         timespec="seconds")
     existing = repo.open_session(vid, ts, "DC", 40.0)
@@ -3758,7 +3760,7 @@ def test_unknown_charge_mode_does_not_close_a_live_session(repo, tmp_path):
     cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
                                 "max_value_age_s": 900.0},
                   "database": {"path": str(tmp_path / "c.db")}})
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     sid = repo.open_session(vid, ts, "DC", 40.0)
     col = Collector(cfg, repo)
@@ -3778,7 +3780,7 @@ def test_stale_charge_mode_is_not_used_to_close_a_session(repo, tmp_path):
     cfg = Config({"collector": {"poll_interval": 5.0, "slow_poll_interval": 60.0,
                                 "max_value_age_s": 900.0},
                   "database": {"path": str(tmp_path / "c.db")}})
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     stale = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(
         timespec="seconds")
     # a charge_mode of 1 from three days ago must not reopen a session
@@ -3825,7 +3827,7 @@ def test_cell_sweep_skipped_when_battery_dids_are_refused(repo, tmp_path):
 
     col = Collector(cfg, repo)
     col.conn = _RefusingConn()
-    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
 
     results = col.discover_ecus()
     assert results["bat_mgmt"] == "nrc-31"
@@ -3884,7 +3886,7 @@ def test_dashboard_pages_render(populate):
         db_path = os.path.join(tmp, "web.db")
         seed = Repository(db_path)
         if populate:
-            seed.ensure_vehicle("WVWZZZE1ZMP087053", year=2021)
+            seed.ensure_vehicle("WVWZZZE1ZMS000001", year=2021)
         seed.close()
 
         cfg = load_config()
@@ -4011,8 +4013,8 @@ def _tcp_collector(tmp_path, port, timeout=0.2):
     # these tests check and dominates their runtime.
     cfg._data["collector"]["read_cell_voltages"] = False
     col = Collector(cfg, Repository(cfg._data["database"]["path"]))
-    col.vehicle_id = col.repo.ensure_vehicle("WVWZZZE1ZMP087053")
-    col.vin = "WVWZZZE1ZMP087053"
+    col.vehicle_id = col.repo.ensure_vehicle("WVWZZZE1ZMS000001")
+    col.vin = "WVWZZZE1ZMS000001"
     return col
 
 
@@ -4069,7 +4071,7 @@ def test_run_backs_off_instead_of_spinning_on_a_dead_adapter(tmp_path,
         raise AdapterNotFoundError("still absent")
 
     monkeypatch.setattr(col.conn, "open", fake_open)
-    monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMP087053")
+    monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMS000001")
 
     import logging
     with caplog.at_level(logging.ERROR):
@@ -4113,7 +4115,7 @@ def test_recovery_resumes_collection_when_the_adapter_returns(tmp_path,
     monkeypatch.setattr("collector.time.sleep", lambda s: None)
     monkeypatch.setattr(col.conn, "close", lambda: None)
     monkeypatch.setattr(col.conn, "open", lambda **_kw: None)
-    monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMP087053")
+    monkeypatch.setattr(col, "open_and_identify", lambda: "WVWZZZE1ZMS000001")
 
     assert col._recover_adapter() is True
     assert col._dead_cycles == 0
@@ -4152,7 +4154,7 @@ def test_session_energy_is_integrated_not_summed(repo):
     times the energy actually delivered.
     """
     from datetime import datetime, timedelta, timezone
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     start = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
     sid = repo.open_session(vid, start.isoformat(), "AC_DC", 20.0)
     # 5 samples 15 min apart spanning 1 h at a constant 6 kW -> 6 kWh
@@ -4174,7 +4176,7 @@ def test_session_energy_handles_uneven_sampling(repo):
     """Trapezoidal over the real timestamps, so uneven sampling still totals
     the area under the power curve."""
     from datetime import datetime, timedelta, timezone
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     start = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
     sid = repo.open_session(vid, start.isoformat(), "AC_DC", 20.0)
     mid = start + timedelta(hours=1)
@@ -4191,7 +4193,7 @@ def test_session_energy_handles_uneven_sampling(repo):
 
 def test_session_clock_correction_does_not_go_negative(repo):
     """An end stamp before the start must not persist negative duration/energy."""
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     sid = repo.open_session(vid, "2026-09-01T12:00:00+00:00", "AC_DC", 20.0)
     repo.add_charging_sample(sid, "2026-09-01T12:00:00+00:00",
                               power_kw=50.0, battery_temp_c=22.0)
@@ -4393,7 +4395,7 @@ def test_dtc_cleared_only_for_an_ecu_that_answered(repo, tmp_path):
 
     col = Collector(cfg, repo)
     col.conn = _Conn()
-    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
 
     def cleared():
         return [r["description"] for r in repo.conn.execute(

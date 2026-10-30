@@ -197,7 +197,7 @@ def _vehicle(repo):
     """
     repo.conn.execute(
         "INSERT INTO vehicles(vin, make, model, variant, year, first_seen)"
-        " VALUES ('WVWZZZE1ZMP087053','Volkswagen','ID.3','58 kWh',2021,"
+        " VALUES ('WVWZZZE1ZMS000001','Volkswagen','ID.3','58 kWh',2021,"
         "'2026-10-20T10:00:00+00:00')")
     repo.conn.commit()
     return 1

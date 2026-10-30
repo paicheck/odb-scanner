@@ -25,7 +25,7 @@ def write_export(tmp_path, body: str) -> str:
 def run(capsys, tmp_path, csv_path, *extra) -> tuple[int, str]:
     from tools.import_carscanner import main
     argv = [csv_path, "--db", str(tmp_path / "import.db"),
-            "--vin", "WVWZZZE1ZMP087053", *extra]
+            "--vin", "WVWZZZE1ZMS000001", *extra]
     rc = main(argv)
     return rc, capsys.readouterr().out
 

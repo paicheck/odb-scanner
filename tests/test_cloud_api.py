@@ -69,7 +69,7 @@ def measurement(**over):
         "id": "b3f1c1e0-6a2b-5d4c-9f01-2b8c7e6d5a44",
         "ts": "2026-10-17T12:00:00Z",
         "key": "hvb_energy_content_kwh",
-        "vin": "WVWZZZE1ZMP087053",
+        "vin": "WVWZZZE1ZMS000001",
         "value": 31.4, "unit": "kWh",
         "provenance": "reported", "decoding_method": "scalar",
         "success": True,
@@ -253,7 +253,7 @@ def test_the_python_clients_payload_validates_against_the_api_model():
     drift a test failure instead.
     """
     row = {
-        "id": 1, "vin": "WVWZZZE1ZMP087053", "ts": "2026-10-17T12:00:00Z",
+        "id": 1, "vin": "WVWZZZE1ZMS000001", "ts": "2026-10-17T12:00:00Z",
         "ecu": "bms", "service": "UDS-0x22", "pid": "0x2AB8",
         "key": "hvb_energy_content_kwh", "value": 31.4, "text_value": None,
         "unit": "kWh", "provenance": "reported", "decoding_method": "scalar",
@@ -271,7 +271,7 @@ def test_the_python_clients_payload_validates_against_the_api_model():
 def _row(key, value, text_value=None):
     """A row shaped exactly like the collector's own SELECT returns it."""
     return {
-        "id": 1, "vin": "WVWZZZE1ZMP087053", "ts": "2026-10-17T12:00:00Z",
+        "id": 1, "vin": "WVWZZZE1ZMS000001", "ts": "2026-10-17T12:00:00Z",
         "ecu": "-", "service": "UDS-0x22", "pid": "0xF190", "key": key,
         "value": value, "text_value": text_value, "unit": "",
         "provenance": "reported", "decoding_method": "scalar",
@@ -295,7 +295,7 @@ def test_a_text_reading_validates_against_the_api_model():
     `value: float | None`, and because a batch is all-or-nothing the upload
     never lands -- 27 batches of them had landed when the first sync stopped.
     """
-    for key, value in (("gear", "P"), ("vin", "WVWZZZE1ZMP087053"),
+    for key, value in (("gear", "P"), ("vin", "WVWZZZE1ZMS000001"),
                        ("gear", "B")):
         parsed = _validate(build_payload("python:host", [_row(key, value)]))
         measurement = parsed.measurements[0]

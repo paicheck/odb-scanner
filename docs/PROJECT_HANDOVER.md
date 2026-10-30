@@ -11,7 +11,7 @@ where the unresolved questions and safety boundaries are.
 ## 1. What this is
 
 A **local, strictly read-only** diagnostic and analysis system for a
-**2021 Volkswagen ID.3 58 kWh** (VIN `WVWZZZE1ZMP087053`).
+**2021 Volkswagen ID.3 58 kWh**.
 
 ```text
 VW ID.3 → OBD-II port → ELM327/OBDLink (USB/Bluetooth) → Windows PC

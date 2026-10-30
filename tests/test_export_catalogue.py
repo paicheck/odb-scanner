@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from database.repository import Repository  # noqa: E402
 from tools import export_catalogue as export  # noqa: E402
 
-CAR_VIN = "WVWZZZE1ZMP087053"
+CAR_VIN = "WVWZZZE1ZMS000001"
 
 
 def _measurement(repo, vid, ts, key, ecu, provenance, value=1.0):

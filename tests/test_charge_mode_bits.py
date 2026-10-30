@@ -36,7 +36,7 @@ def test_an_unknown_value_does_not_close_a_live_session(tmp_path):
                                 "max_value_age_s": 900.0},
                   "database": {"path": str(tmp_path / "c.db")}})
     col = Collector(cfg, repo)
-    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     col._charging_tracking("2026-10-27T10:00:00+00:00", {"charge_mode": 2})
     assert col._active_session_id is not None
     mode = CHARGE_MODE.decode_value(bytes([0x0E]))

@@ -214,7 +214,7 @@ Content-Type: application/json
   "measurements": [
     {
       "id": "b3f1c1e0-6a2b-5d4c-9f01-2b8c7e6d5a44",
-      "vin": "WVWZZZE1ZMP087053",
+      "vin": "WVWZZZE1ZMS000001",
       "ts": "2026-10-17T12:00:00Z",
       "ecu": "bms", "service": "UDS-0x22", "pid": "0x2AB8",
       "key": "hvb_energy_content_kwh",

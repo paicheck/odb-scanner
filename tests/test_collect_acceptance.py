@@ -81,7 +81,7 @@ def test_acceptance_flags_the_observed_october_outcome(sim_env):
 
 def test_unsupported_did_round_trip(repo):
     """mark_did_unsupported upserts per (ecu, did); keys are read back cleanly."""
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     ts = utcnow()
     repo.mark_did_unsupported(vid, "energy", 0x2AB8, ts)
     repo.mark_did_unsupported(vid, "energy", 0x2AB8, ts)  # bump, not duplicate
@@ -134,7 +134,7 @@ def test_collector_marks_and_skips_unsupported_dids(sim_env):
 def test_ever_succeeded_keys(repo):
     """ever_succeeded_keys lists UDS DIDs that have ever answered; failures and
     non-UDS rows are excluded."""
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     ts = utcnow()
     repo.record_measurement(vid, ts, "k1", "energy", "UDS-0x22", "0x2AB2",
                             "Wh", "reported", "builtin", "experimental",
@@ -169,7 +169,7 @@ def _silent_collector(tmp_path, threshold=2):
                                 "silent_retire_threshold": threshold},
                   "database": {"path": str(tmp_path / "c.db")}})
     col = Collector(cfg, repo)
-    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
 
     def boom(ecu, did):
         raise CommunicationError(f"No/undecodable response to DID 0x{did:04X}")

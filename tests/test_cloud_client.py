@@ -24,7 +24,7 @@ from cloud.client import (  # noqa: E402
 from cloud.config import ClientSettings  # noqa: E402
 from database.repository import Repository  # noqa: E402
 
-VIN = "WVWZZZE1ZMP087053"
+VIN = "WVWZZZE1ZMS000001"
 
 
 def settings(batch_size=500):
@@ -184,7 +184,7 @@ def test_split_value_moves_only_what_is_not_a_number():
     assert split_value(None, '{"value": 1}') == (None, '{"value": 1}')
     assert split_value("12.5", None) == (12.5, None)      # a numeric string
     assert split_value(" P ", None) == (None, " P ")      # preserved exactly
-    assert split_value("WVWZZZE1ZMP087053", None) == (None, "WVWZZZE1ZMP087053")
+    assert split_value("WVWZZZE1ZMS000001", None) == (None, "WVWZZZE1ZMS000001")
     assert split_value(True, None) == (1.0, None)
 
 

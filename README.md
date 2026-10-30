@@ -1,7 +1,7 @@
 # VW ID.3 Local Diagnostic System
 
 Locally hosted, **strictly read-only** diagnostic and analysis system for a
-2021 Volkswagen ID.3 58 kWh (VIN `WVWZZZE1ZMP087053`).
+2021 Volkswagen ID.3 58 kWh.
 
 OBD adapter -> Python collector -> SQLite -> Python statistics -> local LLM
 (Ollama) -> web dashboard. The LLM never talks to the vehicle; it only

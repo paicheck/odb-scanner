@@ -21,7 +21,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-CAR_VIN = "WVWZZZE1ZMP087053"
+# A synthetic stand-in for the car, deliberately not the simulator's demo
+# VIN: these tests prove the two identities never mix. Never the real one.
+CAR_VIN = "WVWZZZE1ZMS000002"
 DEMO_VIN = "WVWZZZE1ZMS000001"
 
 
@@ -64,8 +66,8 @@ def test_set_vin_accepts_a_string_or_bytes():
 
     original = vehicle.VIN
     try:
-        vehicle.set_vin("WVWZZZE1ZMP087053")
-        assert vehicle.VIN == b"WVWZZZE1ZMP087053"
+        vehicle.set_vin(CAR_VIN)
+        assert vehicle.VIN == CAR_VIN.encode()
         vehicle.set_vin(b"OTHER")
         assert vehicle.VIN == b"OTHER"
         # None means "leave it alone": SimServer(vin=None) is the default path,

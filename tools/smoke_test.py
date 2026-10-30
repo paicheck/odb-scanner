@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from config import DEFAULT_PATH, Config  # noqa: E402
 from database.repository import Repository  # noqa: E402
 
-VIN = "WVWZZZE1ZMP087053"
+VIN = "WVWZZZE1ZMS000001"
 
 # the ONLY first-bytes allowed on the wire (see README "Safety - READ ONLY")
 ALLOWED_TX = {0x01, 0x03, 0x09, 0x10, 0x19, 0x22, 0x3E}

@@ -420,7 +420,7 @@ def test_collector_records_unsuccessful_gateway_read():
     with tempfile.TemporaryDirectory() as tmp:
         repo = Repository(str(Path(tmp) / "gw.db"))
         c = collector.Collector(_StubConfig(), repo)
-        c.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+        c.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
         spec = c.registry.get("hv_energy_content")
         _, conn = conn_with({})
         c.conn = conn

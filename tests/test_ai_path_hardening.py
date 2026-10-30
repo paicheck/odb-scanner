@@ -107,7 +107,7 @@ def test_truncated_output_is_marked_and_flagged(monkeypatch):
 def test_naive_and_aware_timestamps_do_not_raise(repo):
     from analysis.charging import correlate_dtc_with_sessions
     from datetime import datetime, timedelta, timezone
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     now = datetime.now(timezone.utc)
     sid = repo.open_session(vid, (now - timedelta(hours=3)).isoformat(), "AC", 40.0)
     # An importer-style naive end time next to aware DTC timestamps.

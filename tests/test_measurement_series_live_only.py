@@ -15,7 +15,7 @@ from database.repository import Repository  # noqa: E402
 
 def test_live_only_drops_imported_and_simulated(tmp_path):
     repo = Repository(str(tmp_path / "t.db"))
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for prov, value in (("reported", -5.0), ("imported: Car Scanner CSV", 1.98),
                         ("simulated", 42.0), ("calculated", -4.0)):

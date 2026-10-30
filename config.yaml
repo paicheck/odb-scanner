@@ -5,7 +5,9 @@
 # ---------------------------------------------------------------------------
 
 vehicle:
-  vin: "WVWZZZE1ZMP087053"
+  # The car's own VIN goes in config.local.yaml (gitignored), not here: this
+  # file is public. Tests use the synthetic WVWZZZE1ZMS000001.
+  vin: ""
   make: "Volkswagen"
   model: "ID.3"
   variant: "58 kWh (Pro)"

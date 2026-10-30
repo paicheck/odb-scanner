@@ -96,6 +96,12 @@ CELL_GROUPS = (
 )
 
 
+def _masked_vin(vin) -> str:
+    """The manufacturer code and the last four characters, e.g. WVW…0001."""
+    vin = str(vin or "")
+    return f"{vin[:3]}…{vin[-4:]}" if len(vin) == 17 else vin
+
+
 def _cell_group(key: str) -> tuple[str, str] | tuple[None, None]:
     for prefix, group, name in CELL_GROUPS:
         if key.startswith(prefix):
@@ -161,7 +167,8 @@ def build_report(repo: Repository, profile: str) -> str:
         year = vehicle["year"] or ""
         out.append(f"# Collected data - {vehicle['make']} {vehicle['model']} "
                    f"{vehicle['variant']} {year}".rstrip())
-        out.append(f"VIN {vehicle['vin']} | profile={profile} | "
+        # Masked: this file is tracked and the repository is public.
+        out.append(f"VIN {_masked_vin(vehicle['vin'])} | profile={profile} | "
                    f"first seen {vehicle['first_seen']}")
     else:
         out.append("# Collected data")

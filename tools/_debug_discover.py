@@ -32,8 +32,8 @@ try:
             col.conn.t._dev = None
             col.conn.t._opened = False
             col.conn.open()
-            col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMP087053")
-            col.vin = "WVWZZZE1ZMP087053"
+            col.vehicle_id = repo.ensure_vehicle("WVWZZZE1ZMS000001")
+            col.vin = "WVWZZZE1ZMS000001"
             print("discover_ecus:", col.discover_ecus())
             rows = repo.conn.execute("SELECT key, status FROM ecus").fetchall()
             print("db:", [(r["key"], r["status"]) for r in rows])

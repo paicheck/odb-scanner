@@ -66,7 +66,7 @@ def test_connections_of_finished_threads_are_released(tmp_path):
 
 def test_hard_prune_keeps_samples_of_an_open_session(tmp_path):
     repo = Repository(str(tmp_path / "p.db"))
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     old = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat(
         timespec="seconds")
     open_sid = repo.open_session(vid, old, "AC", 20.0)

@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-CAR_VIN = "WVWZZZE1ZMP087053"
+CAR_VIN = "WVWZZZE1ZMS000001"
 
 
 # --- recognising the simulator ----------------------------------------------

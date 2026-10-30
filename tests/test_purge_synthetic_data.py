@@ -41,7 +41,7 @@ def _event(repo, vid, ts, kind, description="x"):
 def build(path) -> tuple[Repository, int]:
     """A database holding one of everything, old and new. Returns (repo, vid)."""
     repo = Repository(path)
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
     repo.conn.execute("UPDATE vehicles SET first_seen = ? WHERE id = ?",
                       (OLD, vid))
 

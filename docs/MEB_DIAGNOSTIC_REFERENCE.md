@@ -1,7 +1,7 @@
 # MEB Diagnostic Reference — consolidated findings
 
 Objective: make `odb_scanner` obtain the same live MEB battery/vehicle data Car
-Scanner obtains from this 2021 ID.3 (VIN `WVWZZZE1ZMP087053`, 58 kWh, RHD).
+Scanner obtains from this 2021 ID.3 (58 kWh, RHD).
 
 Premise, restated because it governs everything below: Car Scanner reads this
 vehicle's BMS through the OBD connector. Our `NO DATA` therefore describes *our
@@ -20,7 +20,7 @@ Opened serial adapter COM3 @ 38400 baud
 MEB physical addressing available (ATCP + 6-digit ATSH)
 Adapter initialized: ATI ELM327 v1.5
 CAN bus alive after warm-up: 18DAF10506410098180001 18DAF10A037F0111 18DAF10106410080080011
-Identified vehicle VIN=WVWZZZE1ZMP087053 year=2021
+Identified vehicle VIN=WVW…7053 year=2021
 functional UDS responders (session probe): 0x0A
 Cell sweep disabled: battery DIDs answer 'no-response'
 ECU discovery: bat_mgmt=no-response, dcdc=no-response, energy=no-response,

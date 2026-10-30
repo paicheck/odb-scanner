@@ -1,5 +1,5 @@
 # Collected data - Volkswagen ID.3 58 kWh (Pro) 2021
-VIN WVWZZZE1ZMP087053 | profile=meb | first seen 2026-10-05T18:03:02+00:00
+VIN WVW…7053 | profile=meb | first seen 2026-10-05T18:03:02+00:00
 
 Measurements 2026-10-05T18:03:02+00:00 -> 2026-10-19T19:32:25+00:00 (UTC)
 18426 measurement rows across 318 distinct keys, by source:

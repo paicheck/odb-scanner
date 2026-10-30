@@ -32,7 +32,7 @@ def test_format_value_does_not_crash_on_text():
     from web.dashboard import _format_value
 
     assert _format_value("P") == "P"
-    assert _format_value("WVWZZZE1ZMP087053") == "WVWZZZE1ZMP087053"
+    assert _format_value("WVWZZZE1ZMS000001") == "WVWZZZE1ZMS000001"
 
 
 def test_format_value_shows_missing_as_dash_not_zero():
@@ -61,13 +61,13 @@ def dashboard(tmp_path):
         "web": {"host": "127.0.0.1"},
     })
     repo = Repository(str(db_file))
-    vid = repo.ensure_vehicle("WVWZZZE1ZMP087053", make="VW", model="ID.3")
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001", make="VW", model="ID.3")
     ts = "2026-10-18T14:00:48+00:00"
     common = dict(ecu="veh_info", service="22", pid="F1A1",
                   provenance="reported", decoding_method="identity",
                   doc_status="experimentally determined", raw_response="")
     repo.record_measurement(vid, ts, "gear", value="P", unit="", **common)
-    repo.record_measurement(vid, ts, "vin", value="WVWZZZE1ZMP087053",
+    repo.record_measurement(vid, ts, "vin", value="WVWZZZE1ZMS000001",
                             unit="", **common)
     repo.record_measurement(vid, ts, "pack_voltage", value=436.375,
                             unit="V", **common)
@@ -85,7 +85,7 @@ def test_page_renders_with_a_text_valued_reading(dashboard, path):
     assert response.status_code == 200, response.text[:500]
     # The text readings are shown as themselves, and the numeric one still
     # gets its usual treatment.
-    assert "WVWZZZE1ZMP087053" in response.text
+    assert "WVWZZZE1ZMS000001" in response.text
     assert "436.4" in response.text
 
 

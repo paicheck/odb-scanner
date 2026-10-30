@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from database.repository import Repository  # noqa: E402
 from tools import build_observations_db as obs  # noqa: E402
 
-VIN = "WVWZZZE1ZMP087053"
+VIN = "WVWZZZE1ZMS000001"
 
 
 def _sha(path: Path) -> str:
