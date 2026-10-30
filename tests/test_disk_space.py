@@ -49,6 +49,20 @@ def test_every_page_warns_when_the_drive_is_low(tmp_path, monkeypatch):
     assert "GB free" not in _client(path).get("/").text
 
 
+def test_a_dashboard_on_a_freshly_booted_host_still_warns(tmp_path, monkeypatch):
+    """time.monotonic() counts from boot. The cache started at "checked at
+    0.0", so for the first minute after boot -- a dashboard started by
+    systemd, or a fresh CI runner, where this test failed at random -- no
+    page checked the drive at all."""
+    import web.dashboard as dashboard_mod
+    path = str(tmp_path / "w.db")
+    Repository(path).close()
+    monkeypatch.setattr(repository.shutil, "disk_usage",
+                        lambda _: Usage(100, 99, 300 * 1024 ** 2))
+    monkeypatch.setattr(dashboard_mod.time, "monotonic", lambda: 5.0)
+    assert "almost full" in _client(path).get("/").text
+
+
 def test_the_collector_logs_a_low_drive_every_ten_minutes(tmp_path, monkeypatch,
                                                          caplog):
     import collector as collector_mod

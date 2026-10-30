@@ -525,7 +525,11 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
 
         return table_groups, chart_groups, counts
 
-    disk_seen: list = [0.0, None]           # (monotonic time, disk_space())
+    # (monotonic time, disk_space()). Never checked yet, not "checked at 0.0":
+    # time.monotonic() counts from boot, so on a host up less than a minute --
+    # a dashboard started at boot, a fresh CI runner -- 0.0 made the first
+    # minute of pages skip the check and show no warning.
+    disk_seen: list = [float("-inf"), None]
 
     def disk_warning() -> dict | None:
         """disk_space() when the drive is low, checked at most once a minute."""
