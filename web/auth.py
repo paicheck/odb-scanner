@@ -100,6 +100,14 @@ def _generate_and_persist(cfg, bind_host: str) -> str:
     If the file cannot be written the token is still returned -- the dashboard
     stays closed, and the operator gets a working token for this run rather
     than an open dashboard.
+
+    That file holds every key this machine has, with comments explaining them.
+    So the token goes in as one inserted line, not a re-dump of the file
+    (which dropped every comment), the result is re-read and must equal the
+    old settings plus the token (otherwise nothing is written), and it
+    replaces the file only once fully written, owner-readable only -- a crash
+    mid-write used to leave the file truncated, every key gone. The token is
+    never logged: the log says where it is.
     """
     from config import LOCAL_PATH
 
@@ -109,26 +117,21 @@ def _generate_and_persist(cfg, bind_host: str) -> str:
     try:
         import yaml
 
-        data: dict = {}
-        if target.exists():
-            loaded = yaml.safe_load(target.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                data = loaded
-        web = data.get("web")
-        if not isinstance(web, dict):
-            web = {}
-            data["web"] = web
+        text = target.read_text(encoding="utf-8") if target.exists() else ""
+        loaded = yaml.safe_load(text) if text.strip() else None
+        data: dict = loaded if isinstance(loaded, dict) else {}
+        web = data.get("web") if isinstance(data.get("web"), dict) else {}
 
         existing = web.get("auth_token")
         if isinstance(existing, str) and existing.strip():
             return existing.strip()
 
         token = secrets.token_urlsafe(_TOKEN_BYTES)
-        web["auth_token"] = token
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
-            encoding="utf-8")
+        updated = _with_token_line(text, token)
+        if yaml.safe_load(updated) != {**data, "web": {**web, "auth_token": token}}:
+            raise ValueError("adding web.auth_token as a line would change "
+                             "other settings in this file")
+        _replace_owner_only(target, updated)
     except Exception:
         log.exception("Could not persist a generated dashboard token to %s. "
                       "Set web.auth_token there by hand, or export ODB_TOKEN, "
@@ -137,10 +140,47 @@ def _generate_and_persist(cfg, bind_host: str) -> str:
 
     log.warning(
         "Dashboard is bound to %s, which is reachable from the network, so it "
-        "now requires a token. Generated one and saved it to %s -- it is not "
-        "in version control. Open the dashboard with: http://<this-machine>:%s"
-        "/?%s=%s", bind_host, target, cfg.get("web.port", 8000), QUERY, token)
+        "now requires a token. Generated one (%s) and saved it to %s as "
+        "web.auth_token -- not in version control, and not in this log. Open "
+        "the dashboard once with http://<this-machine>:%s/?%s=<that token>.",
+        bind_host, masked(token), target, cfg.get("web.port", 8000), QUERY)
     return token
+
+
+def _with_token_line(text: str, token: str) -> str:
+    """`text` with web.auth_token added as one line; everything else as it was.
+
+    Inserted directly under an existing `web:` line at its children's
+    indentation, or appended as a new `web:` section. token_urlsafe yields
+    only [A-Za-z0-9_-], so quoting it needs no escaping.
+    """
+    m = re.search(r"^web:[ \t]*(#.*)?\n", text, flags=re.M)
+    if m is None:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        return f'{text}web:\n  auth_token: "{token}"\n'
+    child = re.match(r"([ \t]+)\S", text[m.end():])
+    indent = child.group(1) if child else "  "
+    return f'{text[:m.end()]}{indent}auth_token: "{token}"\n{text[m.end():]}'
+
+
+def _replace_owner_only(path, text: str) -> None:
+    """Write `text` to a temporary file (mode 0600), then rename it to `path`."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 _TOKEN_IN_URL = re.compile(rf"([?&]{QUERY}=)[^&\s\"]+")
