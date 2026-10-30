@@ -152,9 +152,21 @@ class AnalysisService:
             context = redact(context, vehicle.get("vin"))
             question = redact(question, vehicle.get("vin"))
         prompt = prompts.interpret_prompt(context, question)
-        report = self.llm.generate(prompt, system=prompts.SYSTEM_PROMPT,
-                                   temperature=self.cfg.get("ollama.temperature", 0.2))
+        temperature = self.cfg.get("ollama.temperature", 0.2)
+        model, fell_back = self.llm.model, []
+        if hasattr(self.llm, "generate_with_source"):
+            # A FallbackChain: record the model that actually wrote the report.
+            report, answered_by, fell_back = self.llm.generate_with_source(
+                prompt, system=prompts.SYSTEM_PROMPT, temperature=temperature)
+            model = answered_by.model
+        else:
+            report = self.llm.generate(prompt, system=prompts.SYSTEM_PROMPT,
+                                       temperature=temperature)
         report, warnings = reports.validate_report(report)
+        if fell_back:
+            warnings = [f"Written by the backup {answered_by.where} ({model}): "
+                        + "; ".join(f"{where} failed ({why})"
+                                    for where, why in fell_back)] + list(warnings)
         if vehicle_id is None:
             # llm_reports.vehicle_id is NOT NULL REFERENCES vehicles(id), and an
             # empty database is reachable (fresh install, or a wiped DB). There
@@ -168,8 +180,8 @@ class AnalysisService:
                 "report could not be stored."]
         else:
             self.repo.add_llm_report(vehicle_id, question,
-                                     self.llm.model, report, context,
+                                     model, report, context,
                                      warnings)
         return {"question": question, "report": report,
                 "warnings": warnings, "context": context,
-                "model": self.llm.model}
+                "model": model}

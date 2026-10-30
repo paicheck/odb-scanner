@@ -276,19 +276,114 @@ class OpenAICompatibleClient(_Cloud):
         return text
 
 
-def llm_from_config(cfg):
-    """The configured AI client: the local Ollama unless ai.provider names a
-    cloud service."""
-    provider = str(cfg.get("ai.provider", "ollama") or "ollama").strip().lower()
+class FallbackChain:
+    """The configured AI, then each of ai.fallbacks in turn when one fails.
+
+    A free tier's rate limit, an outage, a refused key or a local Ollama that
+    is not running all surface as AIError; the same question then goes to the
+    next service. Same interface as the clients, so AnalysisService holds it
+    like any other. Two things follow from being several services at once:
+
+    * sends_offsite is true if ANY member sends off the machine -- a chain
+      that starts with the local Ollama can still fall back to a cloud
+      service, so the VIN is removed before anything is asked.
+    * Which member answered is returned with the answer (generate_with_source)
+      rather than kept as state, so a report records the model that wrote it.
+    """
+
+    def __init__(self, members: list):
+        if not members:
+            raise CloudAIError("No AI service configured.")
+        self.members = members
+
+    @property
+    def model(self) -> str:
+        return self.members[0].model
+
+    @property
+    def where(self) -> str:
+        names = [m.where for m in self.members]
+        return names[0] + "".join(f", then {n}" for n in names[1:]) + \
+            (" if it fails" if len(names) == 2 else " as each fails")
+
+    @property
+    def sends_offsite(self) -> bool:
+        return any(getattr(m, "sends_offsite", False) for m in self.members)
+
+    def available(self) -> bool:
+        for m in self.members:
+            try:
+                if m.available():
+                    return True
+            except AIError:
+                continue
+        return False
+
+    def list_models(self) -> list[str]:
+        return self.members[0].list_models()
+
+    def generate(self, prompt: str, system: str | None = None,
+                 temperature: float | None = None) -> str:
+        return self.generate_with_source(prompt, system, temperature)[0]
+
+    def generate_with_source(self, prompt: str, system: str | None = None,
+                             temperature: float | None = None):
+        """(text, the member that wrote it, [(where, why) for each that failed])."""
+        failed: list[tuple[str, str]] = []
+        for member in self.members:
+            try:
+                text = member.generate(prompt, system=system, temperature=temperature)
+            except AIError as exc:
+                log.warning("AI %s failed (%s); trying the next", member.where, exc)
+                failed.append((member.where, str(exc)))
+                continue
+            return text, member, failed
+        raise CloudAIError("Every AI service failed: " + "; ".join(
+            f"{where}: {why}" for where, why in failed))
+
+
+def _client(provider: str, key: str, model: str, base_url: str, effort: str,
+            timeout: float, cfg):
+    provider = (provider or "ollama").strip().lower()
     if provider == "ollama":
         return ollama_client(cfg)
     if provider not in PRESETS:
         raise CloudAIError(f"Unknown ai.provider '{provider}'. Use ollama or one of: "
                            + ", ".join(PRESETS))
-    key = str(cfg.get("ai.api_key", "") or os.environ.get("ODB_AI_KEY", "")).strip()
-    model = str(cfg.get("ai.model", "") or "").strip() or PRESETS[provider].default_model
-    timeout = float(cfg.get("ai.timeout", 300) or 300)
+    model = model.strip() or PRESETS[provider].default_model
     if PRESETS[provider].protocol == "anthropic":
-        return AnthropicClient(key, model, str(cfg.get("ai.effort", "medium")), timeout)
-    return OpenAICompatibleClient(provider, key, model,
-                                  str(cfg.get("ai.base_url", "") or ""), timeout)
+        return AnthropicClient(key.strip(), model, effort, timeout)
+    return OpenAICompatibleClient(provider, key.strip(), model, base_url, timeout)
+
+
+def llm_from_config(cfg):
+    """The configured AI client: the local Ollama unless ai.provider names a
+    cloud service -- with ai.fallbacks behind it, a FallbackChain.
+
+    Each fallback is a provider name, or a mapping with its own api_key (and
+    optionally model, base_url, effort); its key comes from config.local.yaml
+    like ai.api_key. A fallback that cannot be built is logged and left out,
+    so a mistake in a backup never takes the main service down with it.
+    """
+    timeout = float(cfg.get("ai.timeout", 300) or 300)
+    primary = _client(
+        str(cfg.get("ai.provider", "ollama") or "ollama"),
+        str(cfg.get("ai.api_key", "") or os.environ.get("ODB_AI_KEY", "")),
+        str(cfg.get("ai.model", "") or ""), str(cfg.get("ai.base_url", "") or ""),
+        str(cfg.get("ai.effort", "medium")), timeout, cfg)
+    backups = []
+    for entry in cfg.get("ai.fallbacks") or []:
+        spec = {"provider": entry} if isinstance(entry, str) else entry
+        if not isinstance(spec, dict) or not spec.get("provider"):
+            log.warning("ai.fallbacks: %r is not a provider name or a mapping "
+                        "with one; left out", entry)
+            continue
+        try:
+            backups.append(_client(
+                str(spec["provider"]), str(spec.get("api_key", "") or ""),
+                str(spec.get("model", "") or ""), str(spec.get("base_url", "") or ""),
+                str(spec.get("effort", "medium")),
+                float(spec.get("timeout", timeout) or timeout), cfg))
+        except AIError as exc:
+            log.warning("ai.fallbacks: %s left out: %s", spec.get("provider"), exc)
+    return FallbackChain([primary] + backups) if backups else primary

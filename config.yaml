@@ -195,6 +195,14 @@ ai:
   base_url: ""          # provider custom only, e.g. https://example.com/v1
   effort: medium        # Claude only: low | medium | high | xhigh | max
   timeout: 300
+  # Backups, tried in order when the service above fails (a free tier's rate
+  # limit, an outage, a refused key, Ollama not running). Each is a provider
+  # name, or a mapping with its own api_key (and optionally model, base_url,
+  # effort) -- keys in config.local.yaml, like api_key. A report written by a
+  # backup says so, and which service failed. If ANY of them is a cloud
+  # service, the VIN is removed before asking, even when the first is Ollama.
+  # e.g. fallbacks: [{provider: groq, api_key: "..."}, ollama]
+  fallbacks: []
 
 web:
   # 0.0.0.0 makes the dashboard reachable from the network so a tablet can
