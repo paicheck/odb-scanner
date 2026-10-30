@@ -81,21 +81,21 @@ ksp {
 }
 
 dependencies {
-    implementation(platform("androidx.compose:compose-bom:2024.05.00"))
+    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.activity:activity-compose:1.9.0")
-    implementation("androidx.core:core-ktx:1.13.0")
+    implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    implementation("androidx.room:room-runtime:2.8.5")
+    implementation("androidx.room:room-ktx:2.8.5")
+    ksp("androidx.room:room-compiler:2.8.5")
     // Android Auto screens (car/): driver-safe templates only.
     implementation("androidx.car.app:app:1.4.0")
     // Assistant: Claude through Anthropic's official SDK (the other AI services
     // share the OpenAI-style request, sent with HttpURLConnection like the rest).
-    implementation("com.anthropic:anthropic-java:3.2.0")
+    implementation("com.anthropic:anthropic-java:3.3.0")
     // Wake word: Vosk keyword spotting, offline -- nothing leaves the phone
     // until the phrase is heard.
     implementation("com.alphacephei:vosk-android:0.3.75")
@@ -106,7 +106,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     // android.jar's org.json is a stub on the JVM; PlannerTest parses the
     // shared route vectors with the real one.
-    testImplementation("org.json:json:20240303")
+    testImplementation("org.json:json:20260814")
 
     // Instrumented tests (connectedDebugAndroidTest, on an emulator): the wake
     // word against recorded speech, through the real Vosk engine.
@@ -114,7 +114,7 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     // MeasurementDaoDeviceTest: each Room migration run against the committed
     // schema JSON, so a broken one fails here and not at the user's first start.
-    androidTestImplementation("androidx.room:room-testing:2.6.1")
+    androidTestImplementation("androidx.room:room-testing:2.8.5")
 }
 
 // This project lives inside a OneDrive-synced folder, and OneDrive's sync agent
