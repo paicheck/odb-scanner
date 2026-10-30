@@ -1,8 +1,8 @@
 # odb_scanner — working context
 
-Read this first. It is the state of the project as of **2026-10-29**, the rules
-that are not negotiable, the everyday commands, and the checklist for moving
-the PC from Windows to Linux (in progress on that date).
+Read this first. It is the state of the project as of **2026-10-30**, the rules
+that are not negotiable, the everyday commands, and how the Linux PC is set
+up.
 
 ## What this is
 
@@ -48,13 +48,13 @@ Deeper reading: `README.md` (PC), `android/README.md` (phone), `cloud/README.md`
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-lock.txt
-.venv/bin/python -m pytest -q          # ~1,320 tests, ~3.5 min, all must pass
+.venv/bin/python -m pytest -q          # ~1,350 tests, ~3 min, all must pass
 .venv/bin/python -m ruff check .       # must be clean
 .venv/bin/python main.py doctor        # adapter checks (owner only: talks to the adapter)
 .venv/bin/python main.py serve         # dashboard on :8000 (0.0.0.0 needs web.auth_token)
 .venv/bin/python main.py collect       # collector (owner only: talks to the car)
 .venv/bin/python tools/smoke_test.py --db /tmp/smoke.db   # whole pipeline against the simulator
-.venv/bin/python main.py backup        # consistent snapshot into database.backup_dir
+.venv/bin/python main.py backup        # checked snapshot into database.backup_dir, mirrored, newest kept
 
 cd android && ./gradlew testDebugUnitTest assembleDebug   # 119 JVM tests; APK in
 # ~/odb-scanner-build/app/outputs/apk/debug/app-debug.apk (build dir is outside the repo)
@@ -62,75 +62,53 @@ cd android && ./gradlew testDebugUnitTest assembleDebug   # 119 JVM tests; APK i
 
 The `*.bat` launchers in the repo root and `tools/start_scanner.py` are the
 Windows way to run things; on Linux use the `main.py` commands above, under
-systemd (below).
+systemd (`deploy/linux/`).
 
 ## Configuration and keys
 
 `config.yaml` is shared and tracked; personal settings go in
 `config.local.yaml` (gitignored, deep-merged over it). Keys it holds — names
 only: `web.auth_token`, `database.path`, `database.backup_dir`,
+`database.backup_keep`, `database.backup_mirror_dir`, `adapter.port`,
 `cloud.enabled/api_url/token`, `routing.ors_api_key`, `routing.ocm_api_key`,
 `routing.countries`, optionally `routing.mapbox_token`, `ai.provider/api_key`.
 The phones hold their own keys (Route → Settings: OpenRouteService,
 OpenChargeMap, Mapbox; Assistant → Settings: the AI service), encrypted.
 
-## Moving the PC to Linux — checklist
+## The Linux PC (Arch)
 
-**Before wiping Windows** — none of these are in Git; copy them to a USB stick
-or cloud storage:
+The PC moved from Windows to Arch on 2026-10-29; the Windows disk is gone. What
+was carried over is also on the external drive in
+`/run/media/steven/4TB/odb_scanner_backup_2026-10-29` (database,
+`config.local.yaml`, `data/`, the signing key, research captures) — keep it.
 
-1. The car's database: `C:\Users\kings\odb_data\odb_scanner.db` (~11 MB; the
-   only copy of the car's real history). Stop the collector first, or run
-   `python main.py backup`.
-2. `config.local.yaml` from the project folder (every key and token).
-3. `data\` from the project folder (~420 MB: `real_car.db` — the evidence file
-   the docs cite — `observations.db`, `backups\`, `logs\`).
-4. **The app signing key: `C:\Users\kings\.android\debug.keystore`.** Both
-   phones' app is signed with it; without it, APKs built on Linux will not
-   install over the existing app, and the only way round is uninstalling —
-   which deletes the phone's readings.
-5. Optional: `C:\Users\kings\Documents\CarScanner_Investigation`,
-   `CarScanner_Capture`, `OBDeleven_Investigation_*` (research captures).
+| What | Where |
+|---|---|
+| Repository | `~/odb_scanner` |
+| Car database | `~/odb_data/odb_scanner.db`; daily snapshots in `~/odb_data/backups`, mirrored to `/run/media/steven/4TB/odb_scanner_backups` while the drive is mounted |
+| App signing key | `~/.android/debug.keystore`, the Windows one (SHA-256 `d6967d0e…37feee`) |
+| Services | `deploy/linux/`: user units for the collector, dashboard and daily backup, a system unit binding the adapter to `/dev/rfcomm0`. How-to: `deploy/linux/README.md` |
 
-**After installing Linux:**
+**Done:** packages `bluez bluez-utils bluez-deprecated-tools android-tools
+android-udev jdk17-openjdk tk`; the user is in `uucp` (Arch gives
+`/dev/rfcomm*` to it; there is no `dialout`) and `adbusers` (USB to the phones;
+not `plugdev`); lingering is on; the user units are installed but **not
+enabled**. On Debian/Ubuntu the names are `python3-venv bluez adb
+openjdk-17-jdk` and the groups `dialout`/`plugdev`.
 
-1. Packages (Debian/Ubuntu names): `git python3 python3-venv bluez
-   bluez-deprecated-tools` (for `rfcomm`; on some distros it is in `bluez`),
-   `adb` (or the Android SDK platform-tools), `openjdk-17-jdk`.
-2. `git clone https://github.com/paicheck/odb-scanner.git ~/odb_scanner`, make
-   the venv, restore `config.local.yaml` and `data/` into it, and the database
-   to e.g. `~/odb_data/odb_scanner.db`.
-3. Edit `config.local.yaml` for Linux paths: `database.path:
-   /home/<user>/odb_data/odb_scanner.db` (and `backup_dir`), and add
-   `adapter: {port: /dev/rfcomm0}` (config.yaml says `COM3`).
-4. Adapter: `bluetoothctl` → `scan on`, `pair <MAC>`, `trust <MAC>`; then
-   `sudo rfcomm bind 0 <MAC> 1` gives `/dev/rfcomm0` (make it persistent with a
-   small systemd unit or `/etc/bluetooth/rfcomm.conf`). Add the user to
-   `dialout`: `sudo usermod -aG dialout $USER`. Then `main.py doctor`.
-5. Run `pytest` and `ruff` — both should pass unchanged on Linux.
-6. Start at boot with user services (`loginctl enable-linger $USER` so they run
-   without a login), e.g. `~/.config/systemd/user/odb-dashboard.service`:
+**The owner still has to:**
 
-   ```ini
-   [Unit]
-   Description=odb_scanner dashboard
-   [Service]
-   WorkingDirectory=%h/odb_scanner
-   ExecStart=%h/odb_scanner/.venv/bin/python main.py serve
-   Restart=on-failure
-   [Install]
-   WantedBy=default.target
-   ```
-
-   and the same with `main.py collect` (`After=bluetooth.target`) for the
-   collector. `systemctl --user enable --now odb-dashboard odb-collector`.
-7. Put the saved `debug.keystore` at `~/.android/debug.keystore` **before the
-   first Android build** (a build creates a new one if it is missing).
-8. Android builds: Android Studio (or the command-line SDK) with
-   `ANDROID_HOME` set; `android/local.properties` gets `sdk.dir=`. Use JDK 17:
-   AGP 8.5's lint cannot read Java 25 (Android Studio's bundled JBR), which is
-   why lint never ran on Windows. Phones over USB need USB debugging and, on
-   Linux, the user in `plugdev` (or the distro's android-udev rules).
+1. Pair the adapter and bind it: `bluetoothctl` (`pair`, `trust`), then
+   `odb-rfcomm@<MAC>.service`; `main.py doctor`. Check `ATRV` once with the
+   car asleep and once awake against `collector.wake_voltage` (13.5 V).
+2. `systemctl --user enable --now odb-backup.timer odb-dashboard.service
+   odb-collector.service`.
+3. Let the tablet in: `sudo ufw allow from <home subnet> to any port 8000
+   proto tcp`.
+4. Android SDK (the licences are the owner's to accept): command-line tools in
+   `~/Android/Sdk`, then `platform-tools`, `platforms;android-34`,
+   `build-tools;34.0.0`; set `ANDROID_HOME` and `sdk.dir=` in
+   `android/local.properties`. Keep JDK 17: AGP 8.5's lint cannot read Java 25.
 
 ## State on 2026-10-29
 
