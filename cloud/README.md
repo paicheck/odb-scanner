@@ -117,6 +117,39 @@ python tools/local_cloud.py sql "SELECT source_id, COUNT(*) FROM measurements GR
 Every default in the compose file is a development value. Override any of them
 (including the passwords) by creating `cloud/.env`, which is gitignored.
 
+## On this PC (SQLite, no MySQL)
+
+`main.py ingest` serves the same API (`cloud/api.py`) on an SQLite archive
+(`cloud/sqlite_store.py`), so the Linux PC can be the archive without MySQL or
+Docker. Same contract: the client's UUID is the key, a retried batch changes
+nothing. On Linux it runs as `odb-ingest.service` (`deploy/linux/`).
+
+```yaml
+# config.local.yaml
+cloud:
+  enabled: true
+  api_url: "http://127.0.0.1:8080"     # this PC's own collector
+  token: "<at least 32 characters>"    # python -c "import secrets; print(secrets.token_urlsafe(32))"
+ingest:
+  db_path: /home/<you>/odb_data/archive.db   # never database.path
+  host: "127.0.0.1"
+  port: 8080
+```
+
+`main.py backup` snapshots the archive with the car's database (checked,
+mirrored, pruned the same way).
+
+**The phones need HTTPS.** Android refuses plain HTTP unless the app opts in,
+and this one does not, so a phone cannot upload to `http://<pc>:8080`. Put
+HTTPS in front of the loopback service and give the phones that address and
+the same token (app → Cloud settings). The least work is Tailscale on the PC
+and the phones: `tailscale serve --bg 8080` publishes the service as
+`https://<pc>.<tailnet>.ts.net` with a real certificate, reachable only from
+your own devices, at home or away, with no port opened in `ufw`. A reverse
+proxy with a certificate for a domain you own (Caddy, see `Caddyfile`) works
+too. Keep `ingest.host` at `127.0.0.1` either way; a network-reachable host
+refuses a token shorter than 32 characters.
+
 ## Deploying the API
 
 > **One-command VPS deploy:** `cloud/docker-compose.prod.yml` + `cloud/Caddyfile`

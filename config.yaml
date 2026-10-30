@@ -127,6 +127,18 @@ cloud:
   # or export ODB_CLOUD_TOKEN; do not commit it here.
   # token: "..."
 
+# `main.py ingest`: the same ingest API on this PC, archiving into SQLite, so
+# the PC can be the archive without MySQL (odb-ingest.service runs it). Its
+# token is cloud.token. Loopback by default: this PC's own collector uploads to
+# it at cloud.api_url http://127.0.0.1:8080. For the phones, which only upload
+# over HTTPS, put HTTPS in front of it (e.g. `tailscale serve`); a
+# network-reachable host refuses a cloud.token shorter than 32 characters.
+# `main.py backup` snapshots the archive alongside the car's database.
+ingest:
+  db_path: null            # e.g. ~/odb_data/archive.db -- never database.path
+  host: "127.0.0.1"
+  port: 8080
+
 ollama:
   host: "http://localhost:11434"
   model: "qwen2.5:7b"       # change freely: ollama pull <model>, set here

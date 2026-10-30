@@ -31,10 +31,12 @@ fi
 unit_dir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 mkdir -p "$unit_dir"
 install -m 644 "$here/odb-dashboard.service" "$here/odb-collector.service" \
-    "$here/odb-backup.service" "$here/odb-backup.timer" "$unit_dir/"
+    "$here/odb-ingest.service" "$here/odb-backup.service" "$here/odb-backup.timer" \
+    "$unit_dir/"
 systemctl --user daemon-reload
 echo "Installed into $unit_dir:"
-echo "  odb-dashboard.service  odb-collector.service  odb-backup.service  odb-backup.timer"
+echo "  odb-dashboard.service  odb-collector.service  odb-ingest.service"
+echo "  odb-backup.service  odb-backup.timer"
 
 lingering=$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || echo no)
 in_uucp=no
@@ -46,6 +48,7 @@ Nothing is enabled yet. To switch each part on:
 
   systemctl --user enable --now odb-backup.timer        # daily checked backup
   systemctl --user enable --now odb-dashboard.service   # dashboard on port 8000
+  systemctl --user enable --now odb-ingest.service      # archive the uploads (port 8080)
   systemctl --user enable --now odb-collector.service   # reads the car
 
 Status and logs:  systemctl --user status 'odb-*'   journalctl --user -u odb-collector -f

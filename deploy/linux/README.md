@@ -10,7 +10,8 @@ the script.
 |---|---|
 | `odb-collector.service` | User unit: `main.py collect`. Waits for a missing adapter, parks while the car sleeps, never hits the restart limit, stops with SIGINT so the adapter is closed cleanly |
 | `odb-dashboard.service` | User unit: `main.py serve` on `web.host:web.port` |
-| `odb-backup.service`, `odb-backup.timer` | Daily `main.py backup`: integrity-checked snapshot, copied to `database.backup_mirror_dir` when that drive is plugged in, newest `database.backup_keep` kept. Catches up after the laptop was off |
+| `odb-ingest.service` | User unit: `main.py ingest`, the ingest API on SQLite (`ingest.db_path`) -- the archive this PC's collector uploads to, and the phones once HTTPS is in front of it (`cloud/README.md`, "On this PC") |
+| `odb-backup.service`, `odb-backup.timer` | Daily `main.py backup`: integrity-checked snapshot of the car's database and the ingest archive, copied to `database.backup_mirror_dir` when that drive is plugged in, newest `database.backup_keep` kept. Catches up after the laptop was off |
 | `odb-rfcomm@.service` | **System** unit: `rfcomm bind 0 <MAC> 1` at boot, so `/dev/rfcomm0` exists |
 | `install.sh` | Copies the user units to `~/.config/systemd/user` and reloads systemd |
 
@@ -61,6 +62,7 @@ the script.
    deploy/linux/install.sh
    systemctl --user enable --now odb-backup.timer
    systemctl --user enable --now odb-dashboard.service
+   systemctl --user enable --now odb-ingest.service
    systemctl --user enable --now odb-collector.service
    ```
 

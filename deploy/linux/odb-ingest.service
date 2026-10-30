@@ -1,0 +1,20 @@
+# odb_scanner ingest API on this PC (`main.py ingest`), as a systemd *user*
+# service. Installed by install.sh. Archives uploads into ingest.db_path
+# (SQLite): this PC's own collector sends to it at cloud.api_url, and the
+# phones can too once HTTPS is in front of it (cloud/README.md, "On this PC").
+# Logs: journalctl --user -u odb-ingest
+[Unit]
+Description=odb_scanner ingest API (the archive the collectors upload to)
+Documentation=file://%h/odb_scanner/deploy/linux/README.md
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/odb_scanner
+ExecStart=%h/odb_scanner/.venv/bin/python main.py ingest
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

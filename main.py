@@ -19,6 +19,8 @@ Commands:
                                          again; --ecu KEY to scope it)
     python main.py sync-cloud            upload pending measurements to the
                                          cloud ingest API (see cloud/README.md)
+    python main.py ingest                run that ingest API on this PC, into
+                                         an SQLite archive (ingest.db_path)
 """
 from __future__ import annotations
 
@@ -183,6 +185,59 @@ def cmd_report(cfg, question: str | None) -> int:
         print("\nValidator warnings:")
         for w in result["warnings"]:
             print(f"  - {w}")
+    return 0
+
+
+# Shortest token cmd_ingest accepts on a network-reachable bind: anything that
+# can reach the port could otherwise guess its way into the car's archive. The
+# compose file's development token is 15 characters; secrets.token_urlsafe(32)
+# is 43.
+INGEST_MIN_TOKEN_CHARS = 32
+
+
+def cmd_ingest(cfg) -> int:
+    """Run the ingest API on this PC, archiving into SQLite (ingest.db_path).
+
+    The same API the MySQL deployment serves (cloud/api.py), on
+    cloud.sqlite_store, so this PC can be the archive the collectors upload
+    to without MySQL or Docker. Its token is cloud.token -- the one this PC's
+    own collector already sends. Loopback by default; a network-reachable
+    bind (for the phones, behind HTTPS) refuses a short token.
+    """
+    import uvicorn
+
+    from cloud.api import create_app
+    from cloud.sqlite_store import SqliteStore
+    from web.auth import is_loopback
+
+    path = cfg.get("ingest.db_path")
+    if not path:
+        print("ingest: set ingest.db_path in config.local.yaml to the archive "
+              "file, e.g. ~/odb_data/archive.db")
+        return 2
+    archive = Path(str(path)).expanduser()
+    if archive.resolve() == Path(cfg.db_path).expanduser().resolve():
+        print(f"ingest: {archive} is the collector's own database; the archive "
+              "must be a separate file")
+        return 2
+    token = str(cfg.get("cloud.token") or "").strip()
+    host = str(cfg.get("ingest.host", "127.0.0.1"))
+    port = int(cfg.get("ingest.port", 8080))
+    if not token:
+        print("ingest: cloud.token is empty; the ingest API never runs without "
+              "a token")
+        return 2
+    if not is_loopback(host) and len(token) < INGEST_MIN_TOKEN_CHARS:
+        print(f"ingest: {host} is reachable from the network, and a "
+              f"{len(token)}-character cloud.token is guessable. Use at least "
+              f"{INGEST_MIN_TOKEN_CHARS} (python -c \"import secrets; "
+              "print(secrets.token_urlsafe(32))\") and the same on every "
+              "uploader.")
+        return 2
+    print(f"Ingest API: http://{host}:{port}  archive {archive}  "
+          f"(token {masked(token)}: cloud.token in config.local.yaml)")
+    uvicorn.run(create_app(store=SqliteStore(archive), token=token),
+                host=host, port=port, log_level="info")
     return 0
 
 
@@ -560,23 +615,66 @@ def cmd_backup(cfg, out: str | None = None, keep: int | None = None,
     print(f"Backup written: {dest}")
     print(f"  {rows} measurements, {tx} tx_log (safety manifest) rows included")
     print(f"  size {before:.1f} MB -> {after:.1f} MB")
-    problem = _snapshot_problem(dest)
-    if problem:
-        print(f"\nBACKUP FAILED ITS INTEGRITY CHECK: {problem}")
-        print("Nothing was pruned or mirrored. Keep the previous snapshots.")
-        return 1
-    print("  integrity check: ok")
-    pattern = _snapshot_name_re(cfg)
-    if mirror:
-        copied = _mirror_snapshot(dest, Path(mirror))
-        if copied and keep and not out:
-            _prune_snapshots(Path(mirror), pattern, int(keep))
-    if keep and not out:
-        _prune_snapshots(dest.parent, pattern, int(keep))
-    if not mirror:
+    rc = _check_mirror_prune(dest, _snapshot_name_re(cfg), keep, mirror,
+                             prune=not out)
+    if rc == 0 and not out:
+        rc = _backup_ingest_archive(cfg, dest.parent, keep, mirror)
+    if rc == 0 and not mirror:
         print("\nKeep this file somewhere off this machine -- it is the only copy "
               "of\nthe vehicle's measured history (database.backup_mirror_dir "
               "does that for you).")
+    return rc
+
+
+# The ingest archive's snapshots get their own fixed name, so neither set can
+# match the other's pruning pattern whatever the two files are called.
+INGEST_SNAPSHOT_PREFIX = "ingest-archive"
+
+
+def _backup_ingest_archive(cfg, folder: Path, keep, mirror) -> int:
+    """Snapshot the ingest archive (ingest.db_path) beside the car's, if any.
+
+    It holds what the phones uploaded -- readings with no other copy off the
+    phones -- so it gets the same checked, mirrored, pruned snapshot.
+    """
+    path = cfg.get("ingest.db_path")
+    if not path:
+        return 0
+    archive = Path(str(path)).expanduser()
+    if not archive.is_file():
+        print(f"  ingest archive {archive} does not exist yet -- nothing to back up")
+        return 0
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dest = folder / f"{INGEST_SNAPSHOT_PREFIX}-{stamp}.db"
+    src = sqlite3.connect(Path(archive).resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        target = sqlite3.connect(str(dest))
+        try:
+            src.backup(target)
+        finally:
+            target.close()
+    finally:
+        src.close()
+    print(f"Ingest archive backup written: {dest}")
+    pattern = re.compile(rf"^{INGEST_SNAPSHOT_PREFIX}-\d{{8}}T\d{{6}}Z\.db$")
+    return _check_mirror_prune(dest, pattern, keep, mirror, prune=True)
+
+
+def _check_mirror_prune(dest: Path, pattern: re.Pattern, keep, mirror,
+                        prune: bool) -> int:
+    """Integrity-check `dest`; only if it passes, mirror it and prune."""
+    problem = _snapshot_problem(dest)
+    if problem:
+        print(f"\nBACKUP FAILED ITS INTEGRITY CHECK: {dest}: {problem}")
+        print("Nothing was pruned or mirrored. Keep the previous snapshots.")
+        return 1
+    print("  integrity check: ok")
+    if mirror:
+        copied = _mirror_snapshot(dest, Path(mirror))
+        if copied and keep and prune:
+            _prune_snapshots(Path(mirror), pattern, int(keep))
+    if keep and prune:
+        _prune_snapshots(dest.parent, pattern, int(keep))
     return 0
 
 
@@ -764,6 +862,7 @@ def build_parser() -> argparse.ArgumentParser:
                         choices=["discover", "collect", "analyze", "report",
                                  "serve", "simulate", "seed", "guard-test",
                                  "prune", "backup", "doctor", "sync-cloud",
+                                 "ingest",
                                  "unsupported-dids", "quality", "status"])
     parser.add_argument("--days", type=float, default=90.0,
                         help="prune: age in days to keep (default 90)")
@@ -823,6 +922,7 @@ LOG_COMPONENT = {
     "seed": "maintenance",
     "unsupported-dids": "maintenance",
     "sync-cloud": "cloud",
+    "ingest": "ingest",
     "quality": "maintenance",
     "status": "maintenance",
 }
@@ -912,6 +1012,8 @@ def main() -> int:
         return cmd_unsupported_dids(cfg, args.clear, args.ecu)
     if args.command == "sync-cloud":
         return cmd_sync_cloud(cfg)
+    if args.command == "ingest":
+        return cmd_ingest(cfg)
     if args.command == "quality":
         return cmd_quality(cfg, args.persist)
     if args.command == "status":

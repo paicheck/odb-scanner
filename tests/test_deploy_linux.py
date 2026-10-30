@@ -16,7 +16,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "deploy" / "linux"
 USER_UNITS = ["odb-dashboard.service", "odb-collector.service",
-              "odb-backup.service"]
+              "odb-ingest.service", "odb-backup.service"]
 
 
 def _unit(name: str) -> configparser.ConfigParser:
