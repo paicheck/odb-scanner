@@ -25,6 +25,7 @@ from decoders.bms import (
 from decoders.registry import Provenance, build_default_registry
 from diagnostic import obd2, uds
 from diagnostic.connection import DiagnosticConnection
+from diagnostic.discovery import AmbiguousAdapterError, UnsupportedAdapterError
 from diagnostic.ecus import ECUS
 from diagnostic.elm327 import Elm327Transport
 from diagnostic.interface import CommunicationError
@@ -176,8 +177,10 @@ class Collector:
         self._resume_hold = self.parked_probe_interval
         self._resume_not_before = 0.0
         # False until discover_ecus() has run: a collector that starts while
-        # the car is asleep discovers when the car first wakes.
+        # the car is asleep, or the adapter is away, discovers when both answer.
         self._discovered = False
+        # True while the adapter has never answered since start-up (see _start).
+        self._waiting = False
         # Nominal pack capacity, only ever used for the ESTIMATED SOH figure.
         # Overridable for a different pack; the constant stays the single
         # source of truth in decoders/bms.py.
@@ -1025,13 +1028,20 @@ class Collector:
         self._dead_cycles += 1
         delay = min(RECONNECT_MAX_BACKOFF_S,
                     RECONNECT_BACKOFF_S * (2 ** min(self._dead_cycles - 1, 5)))
-        log.error(
-            "Adapter answered nothing for %d consecutive cycles (%d/%d reads "
-            "failed, no data at all). Treating the adapter as gone rather than "
-            "the vehicle being asleep. Reconnecting in %.0f s. This also "
-            "happens if the phone running the Bluetooth link drops the car.",
-            self._dead_cycles, self._cycle_failures, self._cycle_attempts,
-            delay)
+        if self._waiting:
+            # Never connected since start-up: at boot with the car away this is
+            # the normal state, not a fault.
+            log.warning("Adapter not reachable yet (attempt %d); trying again "
+                        "in %.0f s.", self._dead_cycles, delay)
+        else:
+            log.error(
+                "Adapter answered nothing for %d consecutive cycles (%d/%d "
+                "reads failed, no data at all). Treating the adapter as gone "
+                "rather than the vehicle being asleep. Reconnecting in %.0f s. "
+                "This also happens if the phone running the Bluetooth link "
+                "drops the car.",
+                self._dead_cycles, self._cycle_failures, self._cycle_attempts,
+                delay)
         try:
             self.conn.close()
         except Exception:
@@ -1051,6 +1061,10 @@ class Collector:
                 self._enter_parked(volts)
                 return False
             self.open_and_identify()
+            if not self._discovered:
+                # The adapter was not there when the collector started.
+                self.discover_ecus()
+                self._discovered = True
             self._after_blind_period()
             log.info("Adapter recovered after %d dead cycle(s)", dead)
             return True
@@ -1188,21 +1202,35 @@ class Collector:
                         space["db"] / 1024 ** 2)
 
     def _start(self) -> None:
-        """Identify the car and discover its ECUs, or start parked.
+        """Identify the car and discover its ECUs; else park, or wait.
 
-        A car asleep at start-up used to end the run: the VIN read on a silent
-        bus raises ProtocolError and nothing caught it, so a collector started
-        at night exited at once. An adapter that is not there still raises.
+        Neither a sleeping car nor a missing adapter ends the run any more.
+        The VIN read on a silent bus raises ProtocolError, and an adapter that
+        is out of range, unplugged or not yet bound (/dev/rfcomm0 at boot)
+        raises AdapterNotFoundError; either used to escape run() and stop the
+        collector, which under systemd's start limit could stop it for good.
+        A sleeping car parks; anything else waits for the adapter on the same
+        back-off as a lost one. Errors that are not about reaching the car --
+        configuration (an unsupported or ambiguous adapter, which waiting
+        cannot fix), the simulator guard, the read-only guard -- still raise.
         """
         try:
             self.open_and_identify()
+        except (UnsupportedAdapterError, AmbiguousAdapterError):
+            raise
         except CommunicationError as exc:
             volts = self._adapter_voltage()
-            if volts is None or volts >= self.wake_voltage:
-                raise
-            log.info("The car did not answer at start-up (%s: %s).",
-                     type(exc).__name__, exc)
-            self._enter_parked(volts)
+            if volts is not None and volts < self.wake_voltage:
+                log.info("The car did not answer at start-up (%s: %s).",
+                         type(exc).__name__, exc)
+                self._enter_parked(volts)
+                return
+            log.warning("No answer at start-up (%s: %s). Waiting for the adapter "
+                      "and the car, retrying on a back-off from %.0f s to %.0f "
+                      "s; collection starts when they answer.",
+                      type(exc).__name__, exc, RECONNECT_BACKOFF_S,
+                      RECONNECT_MAX_BACKOFF_S)
+            self._waiting = True
             return
         self.discover_ecus()
         self._discovered = True
@@ -1216,6 +1244,13 @@ class Collector:
         # form ran every ~6.1 s against a 5 s setting.
         next_due = time.monotonic()
         while max_cycles is None or cycles < max_cycles:
+            if self._waiting:
+                # Not identified yet: retry the adapter, counted as a cycle.
+                cycles += 1
+                if self._recover_adapter() or self._parked:
+                    self._waiting = False
+                next_due = time.monotonic()
+                continue
             if self._parked:
                 # One probe per pass, counted as a cycle so a bounded run ends.
                 cycles += 1

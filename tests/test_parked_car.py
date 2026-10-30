@@ -8,6 +8,10 @@ collector reads only ATRV -- the adapter's own measurement of the 12 V rail,
 which puts nothing on the bus -- and resumes when the voltage shows the DC-DC
 converter running.
 
+Neither a sleeping car nor a missing adapter ends the run at start-up any more:
+under systemd, a collector started at boot with the car away used to exit, and
+a few fast exits tripped the start limit and stopped it for good.
+
 The adapter here is the real Elm327Transport command logic over a scripted
 device that records every line sent, so "sent the car nothing" is checked
 against the lines themselves: anything not starting with AT is a request the
@@ -75,19 +79,22 @@ def clock(monkeypatch):
 
 @pytest.fixture()
 def make(tmp_path):
-    """A Collector on a temp database whose adapter is `transport`."""
+    """A Collector on a temp database whose adapter is `transport` --
+    identified and discovered already, or freshly constructed."""
     from collector import Collector
     made = []
 
-    def _make(transport):
+    def _make(transport, identified: bool = True):
         cfg = load_config()
         cfg._data["database"]["path"] = str(tmp_path / "parked.db")
         cfg._data["adapter"]["type"] = "elm327_tcp"
         cfg._data["collector"]["read_cell_voltages"] = False
         col = Collector(cfg, Repository(cfg._data["database"]["path"]))
         col.conn.t = transport
-        col.vehicle_id = col.repo.ensure_vehicle(SYNTHETIC_VIN)
-        col.vin = SYNTHETIC_VIN
+        if identified:
+            col.vehicle_id = col.repo.ensure_vehicle(SYNTHETIC_VIN)
+            col.vin = SYNTHETIC_VIN
+            col._discovered = True
         made.append(col)
         return col
 
@@ -188,8 +195,7 @@ def test_a_sleeping_car_parks_the_collector_and_is_sent_nothing(make, clock,
 def test_a_car_asleep_at_start_up_starts_parked_instead_of_exiting(make, clock,
                                                                    monkeypatch):
     t = ScriptedAdapter("12.4V")
-    col = make(t)
-    col.vehicle_id = col.vin = None
+    col = make(t, identified=False)
     monkeypatch.setattr(col, "discover_ecus",
                         lambda: pytest.fail("discovery run on a sleeping car"))
     col._start()                   # the VIN read gets NO DATA and raises inside
@@ -203,6 +209,7 @@ def test_the_parked_collector_resumes_when_the_voltage_rises(make, clock,
                                                              monkeypatch):
     t = ScriptedAdapter("12.4V", "12.3V", "14.1V")
     col = make(t)
+    col._discovered = False        # it started parked, so never discovered
     t.open()
     col._enter_parked(12.4)
     calls = []
@@ -277,6 +284,81 @@ def test_an_unreachable_adapter_keeps_the_collector_parked(make, clock):
     assert col._parked_probe() is False
     assert col._parked
     assert t.to_car(mark) == []
+
+
+# --- start-up without an adapter ----------------------------------------------
+
+def test_an_adapter_missing_at_start_up_is_waited_for(make, clock, monkeypatch):
+    """/dev/rfcomm0 not bound yet, or the car out of range: keep trying on the
+    reconnect back-off, then identify and discover once the adapter answers."""
+    from collector import RECONNECT_BACKOFF_S
+    t = ScriptedAdapter("14.1V")
+    col = make(t, identified=False)
+    failed = _missing_for(t, monkeypatch, attempts=3)
+    calls = []
+
+    def identify():
+        col.conn.open()            # what the real one starts with
+        calls.append("identify")
+
+    monkeypatch.setattr(col, "open_and_identify", identify)
+    monkeypatch.setattr(col, "discover_ecus", lambda: calls.append("discover"))
+    monkeypatch.setattr(col, "collect_once", lambda: {"pack_voltage": 350.0})
+    monkeypatch.setattr(col, "read_and_store_dtcs", lambda: None)
+    start = clock[0]
+
+    col.run(max_cycles=5)          # must not raise
+
+    assert failed["n"] == 3, "start-up and two retries fail, the third answers"
+    assert calls == ["identify", "discover"]
+    assert not col._waiting and col._discovered
+    assert clock[0] - start >= RECONNECT_BACKOFF_S * (1 + 2 + 4), "no back-off"
+
+
+def test_an_adapter_missing_at_start_up_with_the_car_asleep_parks(make, clock,
+                                                                  monkeypatch):
+    t = ScriptedAdapter("12.4V")
+    col = make(t, identified=False)
+    _missing_for(t, monkeypatch, attempts=1)
+
+    def identify():
+        col.conn.open()            # what the real one starts with
+        pytest.fail("woke a sleeping car")
+
+    monkeypatch.setattr(col, "open_and_identify", identify)
+    col.run(max_cycles=1)          # start-up fails to open; the retry parks
+    assert col._parked and not col._waiting
+    assert t.to_car() == []
+
+
+def _missing_for(t, monkeypatch, attempts: int) -> dict:
+    """Make `t` refuse its first `attempts` opens, like an unbound rfcomm."""
+    failed = {"n": 0}
+    real_open = t.open
+
+    def flaky_open():
+        if failed["n"] < attempts:
+            failed["n"] += 1
+            raise AdapterNotFoundError("Cannot open /dev/rfcomm0: no such file")
+        real_open()
+
+    monkeypatch.setattr(t, "open", flaky_open)
+    return failed
+
+
+@pytest.mark.parametrize("error", ["UnsupportedAdapterError", "AmbiguousAdapterError"])
+def test_adapter_configuration_errors_still_stop_the_start(make, clock,
+                                                           monkeypatch, error):
+    import diagnostic.discovery as discovery
+    col = make(ScriptedAdapter())
+
+    def boom():
+        cls = getattr(discovery, error)
+        raise cls([]) if error == "AmbiguousAdapterError" else cls("no ELM327")
+
+    monkeypatch.setattr(col, "open_and_identify", boom)
+    with pytest.raises(getattr(discovery, error)):
+        col._start()
 
 
 # --- reconnecting -------------------------------------------------------------
