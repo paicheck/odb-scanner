@@ -4,6 +4,6 @@
 # is already in the main requirements.txt, and never imports a database driver.
 # Keeping the service's dependencies separate means the database driver and the
 # server are not installed on the machine doing the collecting.
-fastapi>=0.110
+fastapi>=0.162.0
 uvicorn>=0.29
-PyMySQL>=1.1
+PyMySQL>=1.2.3
