@@ -189,8 +189,13 @@ for the phones (e.g. `tailscale serve`) and their Cloud settings; a
 release APK, checking its certificate, and copying it to both phones;
 whether to rewrite history to remove the VIN from the public repository.
 
+**Found on the way:** CI failed "Unit tests (fast)" on two of the four Python
+jobs, a different two each run. With failed tests annotated (`e0e0fee`) it was
+`test_every_page_warns_when_the_drive_is_low`: the dashboard's disk check
+started from "checked at monotonic 0.0", and monotonic time counts from boot,
+so on a runner (or a PC) up less than a minute no page checked the drive.
+Fixed in the dashboard, with a test that pretends the host just booted.
+
 **Not resolved:** `tests/test_trips.py::test_trip_log_totals_and_what_the_cold_costs`
 failed once locally and could not be reproduced in four shuffled full runs,
-three clean-clone runs or a clock-shift test; CI failed "Unit tests (fast)" on
-3.11 and 3.13 once on `ab2cef2` without a readable reason, which `e0e0fee`
-makes visible next time.
+three clean-clone runs or a clock-shift test.
