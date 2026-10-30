@@ -1,0 +1,25 @@
+# odb_scanner collector, as a systemd *user* service. Installed by install.sh.
+# Talks to the car through /dev/rfcomm0 (odb-rfcomm@.service binds it). It
+# waits for a missing adapter and parks while the car sleeps, so it is meant
+# to run all the time. Logs: journalctl --user -u odb-collector
+[Unit]
+Description=odb_scanner collector (reads the car over the Bluetooth adapter)
+Documentation=file://%h/odb_scanner/deploy/linux/README.md
+# Never give up restarting: with the default limit, a few fast failures in a
+# row would leave the collector stopped until someone noticed.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/odb_scanner
+ExecStart=%h/odb_scanner/.venv/bin/python main.py collect
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=30
+# SIGINT is the KeyboardInterrupt cmd_collect handles: it closes the adapter
+# and stops the cloud uploader before the database closes.
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

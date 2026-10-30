@@ -1,0 +1,15 @@
+# One checked backup of the car's database, run by odb-backup.timer.
+# `main.py backup` integrity-checks the snapshot, copies it to
+# database.backup_mirror_dir when that drive is plugged in, and keeps the
+# newest database.backup_keep. A failed check makes this unit fail:
+#   systemctl --user status odb-backup    journalctl --user -u odb-backup
+[Unit]
+Description=odb_scanner backup (checked snapshot, mirrored, newest kept)
+Documentation=file://%h/odb_scanner/deploy/linux/README.md
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/odb_scanner
+ExecStart=%h/odb_scanner/.venv/bin/python main.py backup
+Nice=10
+IOSchedulingClass=idle

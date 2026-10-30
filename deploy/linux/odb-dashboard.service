@@ -1,0 +1,17 @@
+# odb_scanner dashboard, as a systemd *user* service. Installed by install.sh.
+# Reads the car's database; binds web.host:web.port from config (0.0.0.0 needs
+# web.auth_token, which it has). Logs: journalctl --user -u odb-dashboard
+[Unit]
+Description=odb_scanner dashboard (port 8000)
+Documentation=file://%h/odb_scanner/deploy/linux/README.md
+
+[Service]
+Type=simple
+WorkingDirectory=%h/odb_scanner
+ExecStart=%h/odb_scanner/.venv/bin/python main.py serve
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

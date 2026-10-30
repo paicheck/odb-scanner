@@ -1,0 +1,21 @@
+# Binds the OBD adapter to /dev/rfcomm0 at boot -- a *system* unit, because
+# `rfcomm bind` needs root. The instance is the adapter's Bluetooth address:
+#   sudo install -m 644 odb-rfcomm@.service /etc/systemd/system/
+#   sudo systemctl enable --now odb-rfcomm@AA:BB:CC:DD:EE:FF.service
+# Binding only reserves the device: the Bluetooth link opens when the
+# collector opens /dev/rfcomm0, and udev gives the node to group uucp.
+# Pair and trust the adapter first (bluetoothctl). Channel 1 is SPP.
+[Unit]
+Description=Bind the OBD adapter %I to /dev/rfcomm0
+# Documentation: deploy/linux/README.md in the odb_scanner repository.
+After=bluetooth.service
+Requires=bluetooth.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/rfcomm bind 0 %I 1
+ExecStop=/usr/bin/rfcomm release 0
+
+[Install]
+WantedBy=bluetooth.target

@@ -1,0 +1,13 @@
+# Daily backup. Persistent: a laptop that was off at the time catches up at
+# the next start.
+[Unit]
+Description=Daily odb_scanner backup
+Documentation=file://%h/odb_scanner/deploy/linux/README.md
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
