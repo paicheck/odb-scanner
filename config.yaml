@@ -88,6 +88,13 @@ database:
   # snapshots into. Point this at a different drive if this machine is not the
   # only place a copy of the car's history should live.
   backup_dir: "backups"
+  # Newest snapshots `main.py backup` keeps in backup_dir and in the mirror;
+  # null keeps every one. Only its own timestamped files are ever pruned.
+  backup_keep: null
+  # An existing folder, usually on an external drive, that each checked
+  # snapshot is copied into. Skipped (never created) while it is missing, so a
+  # drive that is not plugged in cannot turn into a folder on this disk.
+  backup_mirror_dir: null
 
 cloud:
   # Optional cloud logging. When enabled, decoded measurements are mirrored to

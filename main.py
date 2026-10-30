@@ -10,7 +10,9 @@ Commands:
     python main.py seed                  load the example diagnostic dataset
     python main.py guard-test            verify the read-only guard blocks writes
     python main.py backup [--out FILE]   snapshot the database (safe while
-                                         a collector is running)
+                                         a collector is running), check it,
+                                         copy it to --mirror DIR and keep the
+                                         newest --keep N
     python main.py prune [--days N]      trim old history (never automatic)
     python main.py unsupported-dids      list DIDs the collector has retired
                                          from polling (--clear to poll them
@@ -21,9 +23,13 @@ Commands:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import logging.handlers
 import os
+import re
+import shutil
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -523,13 +529,28 @@ def _default_backup_path(cfg) -> Path:
     return folder / f"{db.stem}-{stamp}{db.suffix}"
 
 
-def cmd_backup(cfg, out: str | None = None) -> int:
-    """Snapshot the database while it is safe to do so.
+def cmd_backup(cfg, out: str | None = None, keep: int | None = None,
+               mirror: str | None = None) -> int:
+    """Snapshot the database while it is safe to do so, and check the copy.
 
     Uses SQLite's online backup API, so this is safe to run while a collector
     is writing: the snapshot is a single consistent point in time rather than
     a file copy that could miss everything still sitting in the WAL.
+
+    Every snapshot is integrity-checked before anything else happens, because
+    it is unattended (a systemd timer) and a backup nobody checked is a hope,
+    not a backup. A failed check returns 1 so the timer's run is marked
+    failed, and nothing is pruned or mirrored. Then the snapshot is copied to
+    `mirror` (database.backup_mirror_dir, e.g. an external drive) when that
+    folder exists, and the newest `keep` (database.backup_keep) timestamped
+    snapshots are kept in each place. Pruning touches only files named the way
+    this command names them, and never with --out.
     """
+    keep = keep if keep is not None else cfg.get("database.backup_keep")
+    if keep is not None and int(keep) < 1:
+        print(f"backup: --keep must be at least 1, got {keep}")
+        return 2
+    mirror = mirror or cfg.get("database.backup_mirror_dir")
     before = _db_size_mb(cfg.db_path)
     with Repository(cfg.db_path) as repo:
         dest = repo.backup(out or _default_backup_path(cfg))
@@ -539,9 +560,98 @@ def cmd_backup(cfg, out: str | None = None) -> int:
     print(f"Backup written: {dest}")
     print(f"  {rows} measurements, {tx} tx_log (safety manifest) rows included")
     print(f"  size {before:.1f} MB -> {after:.1f} MB")
-    print("\nKeep this file somewhere off this machine -- it is the only copy of")
-    print("the vehicle's measured history.")
+    problem = _snapshot_problem(dest)
+    if problem:
+        print(f"\nBACKUP FAILED ITS INTEGRITY CHECK: {problem}")
+        print("Nothing was pruned or mirrored. Keep the previous snapshots.")
+        return 1
+    print("  integrity check: ok")
+    pattern = _snapshot_name_re(cfg)
+    if mirror:
+        copied = _mirror_snapshot(dest, Path(mirror))
+        if copied and keep and not out:
+            _prune_snapshots(Path(mirror), pattern, int(keep))
+    if keep and not out:
+        _prune_snapshots(dest.parent, pattern, int(keep))
+    if not mirror:
+        print("\nKeep this file somewhere off this machine -- it is the only copy "
+              "of\nthe vehicle's measured history (database.backup_mirror_dir "
+              "does that for you).")
     return 0
+
+
+def _snapshot_problem(path: Path) -> str | None:
+    """None when `path` passes PRAGMA integrity_check, else what failed.
+
+    Opened read-only and immutable: the snapshot is closed and nobody writes
+    it, and this way checking it leaves no -wal/-shm files beside it.
+    """
+    try:
+        con = sqlite3.connect(Path(path).resolve().as_uri()
+                              + "?mode=ro&immutable=1", uri=True)
+        try:
+            rows = [r[0] for r in con.execute("PRAGMA integrity_check")]
+        finally:
+            con.close()
+    except sqlite3.Error as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return None if rows == ["ok"] else "; ".join(rows[:5])
+
+
+def _snapshot_name_re(cfg) -> re.Pattern:
+    """Names _default_backup_path gives: <db stem>-YYYYmmddTHHMMSSZ<suffix>."""
+    db = Path(cfg.db_path)
+    return re.compile(rf"^{re.escape(db.stem)}-\d{{8}}T\d{{6}}Z{re.escape(db.suffix)}$")
+
+
+def _mirror_snapshot(src: Path, folder: Path) -> bool:
+    """Copy `src` into `folder`; False (and say why) when that is not possible.
+
+    The folder must already exist. It is usually on a removable drive, and
+    creating it while the drive is not mounted would quietly put the "off
+    machine" copy on this machine's own disk -- or fail on a root-owned mount
+    point. The copy goes to a temporary name, is compared byte-for-byte by
+    SHA-256, and only then takes the final name.
+    """
+    if not folder.is_dir():
+        print(f"  mirror: {folder} is not there (drive not connected?) -- "
+              "skipped; the snapshot is only on this machine")
+        return False
+    final = folder / src.name
+    partial = folder / (src.name + ".partial")
+    try:
+        shutil.copyfile(src, partial)
+        with open(partial, "rb+") as fh:
+            os.fsync(fh.fileno())
+        if _sha256(partial) != _sha256(src):
+            partial.unlink(missing_ok=True)
+            print(f"  mirror: the copy in {folder} did not match -- removed")
+            return False
+        os.replace(partial, final)
+    except OSError as exc:
+        partial.unlink(missing_ok=True)
+        print(f"  mirror: could not copy to {folder}: {exc}")
+        return False
+    print(f"  mirror: copied to {final}")
+    return True
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _prune_snapshots(folder: Path, pattern: re.Pattern, keep: int) -> None:
+    """Delete all but the newest `keep` snapshots in `folder` named by
+    `pattern`. The timestamp in the name sorts in time order."""
+    snapshots = sorted(p for p in folder.iterdir()
+                       if p.is_file() and pattern.match(p.name))
+    for old in snapshots[:-keep]:
+        old.unlink()
+        print(f"  pruned {old}")
 
 
 def cmd_prune(cfg, days: float, hard: bool) -> int:
@@ -663,6 +773,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=str, default=None,
                         help="backup: destination file (default: a timestamped "
                              "file beside the database)")
+    parser.add_argument("--keep", type=int, default=None,
+                        help="backup: keep the newest N snapshots here and in "
+                             "the mirror (default database.backup_keep; all)")
+    parser.add_argument("--mirror", type=str, default=None,
+                        help="backup: also copy the snapshot into this existing "
+                             "folder (default database.backup_mirror_dir)")
     parser.add_argument("--clear", action="store_true",
                         help="unsupported-dids: clear the retired list so those "
                              "DIDs are polled again")
@@ -789,7 +905,7 @@ def main() -> int:
             doctor_argv += ["--only-config"]
         return doctor_main(doctor_argv)
     if args.command == "backup":
-        return cmd_backup(cfg, args.out)
+        return cmd_backup(cfg, args.out, keep=args.keep, mirror=args.mirror)
     if args.command == "prune":
         return cmd_prune(cfg, args.days, args.hard)
     if args.command == "unsupported-dids":
