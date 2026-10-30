@@ -100,9 +100,13 @@ def register(app, ctx) -> None:
             {"latest": latest, "axis": latest_axis} if latest else None)
         soh = ctx["series"].get("soh_pct") or chart_series(["soh_pct"], days)["soh_pct"]
         from analysis.health import capacity_trend
+        # The 12 V battery while parked: the collector's ATRV readings, taken
+        # without waking the car (see collector._note_parked_voltage). Last 7
+        # days whatever the page window, since it is about the recent nights.
+        parked_12v = chart_series(["adapter_12v_voltage"], 7)["adapter_12v_voltage"]
         return render(
             "battery.html", request, trend=trend, days=days,
-            windows=_windows(days),
+            windows=_windows(days), parked_12v=parked_12v,
             sweeps=sweeps, soh=soh, bms_refusal=bms_refusal(),
             health=capacity_trend(repo, vid) if vid else None, **ctx,
         )

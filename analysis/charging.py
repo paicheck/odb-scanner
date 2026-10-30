@@ -96,3 +96,24 @@ def session_comparison(repo, vehicle_id: int, days: int = 90) -> dict:
             "avg_battery_temp_c": s["avg_battery_temp_c"],
         })
     return {"count": len(sessions), "by_type": by_type}
+
+
+def session_cost(session, cfg) -> dict | None:
+    """The estimated cost of a home (AC) charging session, or None.
+
+    None when no tariff is configured (charging.home_tariff_per_kwh), the
+    session was not AC (public DC prices vary), or it has no energy estimate.
+    energy_estimate_kwh is measured on the car's side; the meter sees more,
+    so the billed energy is that divided by charging.home_charging_efficiency.
+    """
+    tariff = cfg.get("charging.home_tariff_per_kwh")
+    energy = session["energy_estimate_kwh"]
+    if tariff is None or energy is None or session["charge_type"] != "AC":
+        return None
+    efficiency = float(cfg.get("charging.home_charging_efficiency", 0.9) or 0.9)
+    if not 0 < efficiency <= 1:
+        efficiency = 0.9
+    wall_kwh = float(energy) / efficiency
+    return {"cost": wall_kwh * float(tariff), "wall_kwh": wall_kwh,
+            "tariff": float(tariff), "efficiency": efficiency,
+            "currency": str(cfg.get("charging.currency", "£"))}

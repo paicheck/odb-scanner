@@ -4,13 +4,14 @@
 {% if sessions %}
 <table>
 <tr><th>Started</th><th>Type</th><th>Duration</th><th>Start SoC</th><th>End SoC</th>
-    <th>Energy (estimated)</th><th>Max power (sampled)</th><th>Avg battery temp</th><th></th></tr>
+    <th>Energy (estimated)</th>{% if tariff_set %}<th>Home cost (estimated)</th>{% endif %}<th>Max power (sampled)</th><th>Avg battery temp</th><th></th></tr>
 {% for s in sessions %}
 <tr><td>{{ s.started_at | fmtts }}</td><td>{{ s.charge_type or '—' }}</td>
   <td>{% if s.duration_s is not none %}{{ "%.0f" | format(s.duration_s / 60) }} min{% else %}—{% endif %}</td>
   <td>{% if s.start_soc is not none %}{{ s.start_soc | fmtnum(1) }} %{% else %}—{% endif %}</td>
   <td>{% if s.end_soc is not none %}{{ s.end_soc | fmtnum(1) }} %{% else %}—{% endif %}</td>
   <td>{% if s.energy_estimate_kwh is not none %}{{ s.energy_estimate_kwh | fmtnum(2) }} kWh{% else %}—{% endif %}</td>
+  {% if tariff_set %}{% set c = costs.get(s.id) %}<td>{% if c %}{{ c.currency }}{{ c.cost | fmtnum(2) }}{% else %}—{% endif %}</td>{% endif %}
   <td>{% if s.max_power_kw is not none %}{{ s.max_power_kw | fmtnum(1) }} kW{% else %}—{% endif %}</td>
   <td>{% if s.avg_battery_temp_c is not none %}{{ s.avg_battery_temp_c | fmtnum(1) }} °C{% else %}—{% endif %}</td>
   <td><a href="/charging/{{ s.id }}">details</a></td></tr>

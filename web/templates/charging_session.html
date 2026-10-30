@@ -15,6 +15,11 @@
     <div class="note">Session total, not a sample: trapezoidal integration of sampled
       vehicle-side power. Not a charger meter, so it cannot be used for charging
       efficiency.</div></div>
+  {% if cost %}<div class="card"><h3>Home cost (ESTIMATED)</h3>
+    <div class="big">{{ cost.currency }}{{ cost.cost | fmtnum(2) }}</div>
+    <div class="note">{{ cost.wall_kwh | fmtnum(1) }} kWh at the meter: the battery-side
+      estimate ÷ {{ cost.efficiency | fmtnum(2) }} charging efficiency, at
+      {{ cost.currency }}{{ cost.tariff | fmtnum(3) }}/kWh (charging.* in config).</div></div>{% endif %}
   <div class="card"><h3>Max power (sampled)</h3>
     <div class="big">{% if s.max_power_kw is not none %}{{ s.max_power_kw | fmtnum(1) }} kW{% else %}Unavailable{% endif %}</div>
     <div class="note">highest single instantaneous sample, not an average</div></div>

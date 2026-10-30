@@ -8,6 +8,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from analysis import charging as charging_analysis
+from analysis.charging import session_cost
 
 
 def register(app, ctx) -> None:
@@ -33,6 +34,8 @@ def register(app, ctx) -> None:
             "charging.html",
             request,
             sessions=[dict(s) for s in sessions],
+            costs={s["id"]: session_cost(s, ctx.cfg) for s in sessions},
+            tariff_set=ctx.cfg.get("charging.home_tariff_per_kwh") is not None,
             comparison=comparison,
             correlation=corr,
         )
@@ -82,6 +85,7 @@ def register(app, ctx) -> None:
         cov = coverage([r["ts"] for r in samples], chart_gap_s)
         return render(
             "charging_session.html", request, s=dict(sess), samples=samples,
+            cost=session_cost(sess, ctx.cfg),
             sample_coverage=cov, panels=panels, series=series,
             panel_data={"series": series, "visible": dict.fromkeys(series, True),
                         "x_range": shared_x_range(series), "gap_s": chart_gap_s},

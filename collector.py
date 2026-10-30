@@ -16,6 +16,7 @@ import logging
 import time
 
 from analysis import dtc as dtc_analysis
+from analysis.charging import session_cost
 from database.repository import Repository, utcnow
 from decoders.bms import (
     NOMINAL_CAC_AH_58KWH,
@@ -30,6 +31,7 @@ from diagnostic.ecus import ECUS
 from diagnostic.elm327 import Elm327Transport
 from diagnostic.interface import CommunicationError
 from diagnostic.uds import NegativeResponseError, ProtocolError
+from notify import Notifier
 
 DISK_CHECK_S = 600.0       # how often the collector looks at free space
 
@@ -90,6 +92,9 @@ WAKE_VOLTAGE_V = 13.5
 # A high voltage with the car still silent (the car topping up its own 12 V
 # battery, say) doubles the wait before the next attempt to resume, up to this.
 PARKED_RESUME_MAX_HOLD_S = 3600.0
+# Default collector.low_12v_voltage: a resting 12 V battery about a quarter
+# charged. Below it while parked, one alert per parked spell.
+LOW_12V_VOLTAGE_V = 12.0
 
 # Pacing when a cycle raises rather than merely finds no data. Short, because
 # the commonest cause is transient -- SQLite's busy timeout expiring while the
@@ -181,6 +186,15 @@ class Collector:
         self._discovered = False
         # True while the adapter has never answered since start-up (see _start).
         self._waiting = False
+        # Alerts (notify.py): new fault codes, the 12 V battery low while
+        # parked (once per parked spell), a filling disk, a finished charge.
+        self.notifier = Notifier(cfg)
+        self.low_12v_voltage = float(
+            self.cfg.get("collector.low_12v_voltage", LOW_12V_VOLTAGE_V))
+        self._low_12v_alerted = False
+        # (ecu, code) pairs already stored for this vehicle, so a restart
+        # does not announce every old code again. Loaded at identification.
+        self._known_dtcs: set[tuple[str, str]] = set()
         # Nominal pack capacity, only ever used for the ESTIMATED SOH figure.
         # Overridable for a different pack; the constant stays the single
         # source of truth in decoders/bms.py.
@@ -310,6 +324,7 @@ class Collector:
         self._adopt_open_session()
         self._unsupported = self.repo.unsupported_did_keys(self.vehicle_id)
         self._ever_succeeded = self.repo.ever_succeeded_keys(self.vehicle_id)
+        self._known_dtcs = self._stored_dtcs()
         if self.simulated:
             log.warning(
                 "Adapter identifies as the simulator (%s): writing to the "
@@ -816,6 +831,7 @@ class Collector:
                                     snap.get("soc_normal"))
             self.repo.add_event(self.vehicle_id, ts, "charge-end",
                                 "Charging ended")
+            self._alert_charge_end(self._active_session_id)
             self._active_session_id = None
         elif charging and self._active_session_id:
             # `or` here would drop a genuine 0 A reading -- which is exactly
@@ -1117,6 +1133,7 @@ class Collector:
 
     def _enter_parked(self, volts: float) -> None:
         self._parked = True
+        self._low_12v_alerted = False
         self._parked_since = time.monotonic()
         self._resume_hold = self.parked_probe_interval
         self._resume_not_before = 0.0
@@ -1125,6 +1142,7 @@ class Collector:
             f"nothing. Sending the car nothing; reading the adapter's voltage "
             f"every {self.parked_probe_interval:.0f} s, resuming at "
             f"{self.wake_voltage:.1f} V.")
+        self._note_parked_voltage(volts)
 
     def _parked_probe(self) -> bool:
         """One step of the parked watch. True when collection resumes.
@@ -1148,6 +1166,7 @@ class Collector:
             if volts is None:
                 return False
         log.debug("parked: adapter reads %.2f V", volts)
+        self._note_parked_voltage(volts)
         if volts < self.wake_voltage:
             self._resume_hold = self.parked_probe_interval
             self._resume_not_before = 0.0
@@ -1176,6 +1195,73 @@ class Collector:
             f"after {parked_min:.0f} min parked.")
         return True
 
+    def _note_parked_voltage(self, volts: float) -> None:
+        """Keep a parked 12 V reading and alert, once per spell, when low.
+
+        Stored as adapter_12v_voltage: the overnight trend of the 12 V battery,
+        taken without waking the car (ATRV puts nothing on the bus). The
+        aux_12v_* DIDs only answer while the car is awake.
+        """
+        if self.vehicle_id is not None:
+            try:
+                self.repo.record_measurement(
+                    self.vehicle_id, utcnow(), "adapter_12v_voltage", "adapter",
+                    "ATRV", None, "V", "reported",
+                    "ELM327 ATRV: the adapter's reading at OBD pin 16",
+                    "documented (ELM327 datasheet)", f"{volts:.2f}V",
+                    value=volts)
+            except Exception:
+                log.debug("could not store the parked voltage", exc_info=True)
+        if volts < self.low_12v_voltage and not self._low_12v_alerted:
+            self._low_12v_alerted = True
+            self.notifier.send(
+                "12 V battery low",
+                f"The adapter reads {volts:.1f} V with the car parked (alert "
+                f"below {self.low_12v_voltage:.1f} V). The car normally tops its "
+                "12 V battery up itself; if this persists, have it checked.",
+                priority="high")
+
+    def _stored_dtcs(self) -> set[tuple[str, str]]:
+        """(ecu, code) of every fault code already stored for this vehicle."""
+        return {(r["ecu"], r["code"]) for r in self.repo.dtc_list(self.vehicle_id)}
+
+    def _alert_new_dtcs(self, dtcs: list[dict]) -> None:
+        """Alert once for each fault code this vehicle has never had stored."""
+        for entry in dtcs or []:
+            pair = (entry.get("ecu"), entry.get("code"))
+            if not pair[1] or pair in self._known_dtcs:
+                continue
+            self._known_dtcs.add(pair)
+            desc, _ = dtc_analysis.describe(pair[1])
+            self.notifier.send(
+                f"New fault code {pair[1]}",
+                f"{pair[1]} from {pair[0]}: {desc}. Details on the dashboard's "
+                "Faults page.",
+                priority="high", key=f"dtc:{pair[0]}:{pair[1]}")
+
+    def _alert_charge_end(self, session_id: int) -> None:
+        """Alert that a charge finished, with the energy and the home cost."""
+        try:
+            sess = self.repo.charging_session(session_id)
+        except Exception:
+            log.debug("could not read the finished session", exc_info=True)
+            return
+        if sess is None:
+            return
+        parts = []
+        if sess["start_soc"] is not None and sess["end_soc"] is not None:
+            parts.append(f"{sess['start_soc']:.0f} % -> {sess['end_soc']:.0f} %")
+        if sess["energy_estimate_kwh"] is not None:
+            parts.append(f"about {sess['energy_estimate_kwh']:.1f} kWh into "
+                         "the battery")
+        cost = session_cost(sess, self.cfg)
+        if cost:
+            parts.append(f"about {cost['currency']}{cost['cost']:.2f} at home "
+                         "rates")
+        self.notifier.send(f"{sess['charge_type'] or ''} charging finished".strip(),
+                           ("; ".join(parts) or "No energy estimate.") + ".",
+                           key=f"charge:{session_id}")
+
     def _record_event(self, text: str) -> None:
         """Log `text` and, once the vehicle is known, keep it as an event."""
         log.info(text)
@@ -1200,6 +1286,12 @@ class Collector:
                         "(%s, %.0f MB). When it fills, readings stop being "
                         "recorded.", space["free"] / 1024 ** 3, space["dir"],
                         space["db"] / 1024 ** 2)
+            self.notifier.send(
+                "Disk nearly full",
+                f"Only {space['free'] / 1024 ** 3:.1f} GB free on the drive "
+                f"holding the car's database ({space['dir']}). When it fills, "
+                "readings stop being recorded.",
+                priority="high", key="disk", cooldown_s=24 * 3600)
 
     def _start(self) -> None:
         """Identify the car and discover its ECUs; else park, or wait.
@@ -1314,7 +1406,7 @@ class Collector:
             if self._dead_cycles:
                 log.info("Vehicle answering again after %d dead cycle(s)",
                          self._dead_cycles)
-            self.read_and_store_dtcs()
+            self._alert_new_dtcs(self.read_and_store_dtcs())
             log.info("cycle %d: %s", cycles,
                      {k: v for k, v in snap.items() if k != "cell_v"})
             if max_cycles is None or cycles < max_cycles:

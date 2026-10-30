@@ -15,6 +15,15 @@ requires a CAN-EV tap (e.g. the preheat-harness hardware) — see events log.
 
 {{ window_form('/battery', days, windows) }}
 
+{% if parked_12v and parked_12v.stats.n %}
+<div class="cards">
+  <div class="card"><h3>12 V battery while parked</h3>
+    <div class="big">{{ parked_12v.stats.latest | fmtnum(2) }} V</div>
+    <div class="note">read by the adapter (ATRV) {{ parked_12v.coverage.last_ts | fmtts }},
+      without waking the car; lowest in 7 days {{ parked_12v.stats.min | fmtnum(2) }} V.
+      <a href="/explore?key=adapter_12v_voltage&amp;days=30">Overnight trend</a></div></div>
+</div>
+{% endif %}
 {% set soc = series.get('soc_abs') %}
 {% set energy = series.get('hv_energy_content') %}
 {% set spread = series.get('cell_sweep_spread_mv') %}

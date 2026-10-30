@@ -60,6 +60,11 @@ collector:
   # (car awake, driving or charging). A resting 12 V battery reads 12.4-13.2 V.
   parked_probe_interval: 600.0
   wake_voltage: 13.5
+  # While parked, each of those readings is kept (key adapter_12v_voltage, so
+  # the overnight trend shows in Explore) and an alert goes out, once per
+  # parked spell, if one falls below this. A resting 12 V battery reads about
+  # 12.6 V full and 12.0 V a quarter charged; the car tops it up itself.
+  low_12v_voltage: 12.0
   # UDS DTC status mask for the single functional 0x19 0x02 read each cycle.
   # 0x8F asks for DTCs that are lighting the warning lamp (0x80), or that are
   # confirmed (0x08), pending (0x04), failed-this-cycle (0x02) or testFailed
@@ -140,6 +145,26 @@ ingest:
   db_path: null            # e.g. ~/odb_data/archive.db -- never database.path
   host: "127.0.0.1"
   port: 8080
+
+# Alerts: a new fault code, the 12 V battery low while parked, a backup that
+# failed its integrity check, a filling disk, a finished charge. Always logged
+# (WARNING, "ALERT ..."). ntfy_url also pushes them to the ntfy app (ntfy.sh or
+# your own server) -- set it in config.local.yaml, because anyone who knows a
+# topic can read it; use a long random topic name. desktop shows them with
+# notify-send in a logged-in desktop session.
+notify:
+  ntfy_url: null          # e.g. https://ntfy.sh/<long random topic>
+  ntfy_token: null        # only for an access-controlled topic
+  desktop: false
+
+# Home charging cost on the charging pages and in the "charging finished"
+# alert. Applies to AC sessions only (public DC prices vary). The session
+# energy is measured on the car's side; the meter sees more, so the cost
+# divides by home_charging_efficiency. Leave the tariff null for no cost.
+charging:
+  home_tariff_per_kwh: null   # e.g. 0.245
+  currency: "£"
+  home_charging_efficiency: 0.9
 
 ollama:
   host: "http://localhost:11434"

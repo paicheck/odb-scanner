@@ -623,6 +623,13 @@ def cmd_backup(cfg, out: str | None = None, keep: int | None = None,
         print("\nKeep this file somewhere off this machine -- it is the only copy "
               "of\nthe vehicle's measured history (database.backup_mirror_dir "
               "does that for you).")
+    if rc == 1:
+        from notify import Notifier
+        Notifier(cfg).send(
+            "Backup failed its integrity check",
+            f"Today's snapshot in {dest.parent} did not pass PRAGMA "
+            "integrity_check; nothing was pruned or mirrored. Keep the earlier "
+            "snapshots and run `main.py backup` again.", priority="high")
     return rc
 
 

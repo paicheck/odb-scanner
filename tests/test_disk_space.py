@@ -61,6 +61,8 @@ def test_the_collector_logs_a_low_drive_every_ten_minutes(tmp_path, monkeypatch,
         c = collector_mod.Collector.__new__(collector_mod.Collector)
         c.repo = r
         c._disk_checked = -collector_mod.DISK_CHECK_S
+        # The alert itself is tested in tests/test_alerts.py.
+        c.notifier = type("Quiet", (), {"send": lambda *a, **k: None})()
         with caplog.at_level(logging.WARNING, logger="collector"):
             c._check_disk()
             clock[0] += 60
