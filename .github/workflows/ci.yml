@@ -146,3 +146,9 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon :app:testDebugUnitTest
+
+      # The phones get the release build (not debuggable). Building it here
+      # also runs lintVitalRelease, which the debug build never does.
+      - name: Release build
+        working-directory: android
+        run: ./gradlew --no-daemon :app:assembleRelease

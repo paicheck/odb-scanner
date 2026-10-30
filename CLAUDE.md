@@ -39,8 +39,9 @@ Deeper reading: `README.md` (PC), `android/README.md` (phone), `cloud/README.md`
 - **Never run instrumented (device) tests on the owner's phones**: they can
   uninstall the app and wipe its data. Use an emulator, created for the run and
   deleted afterwards (disk space is tight).
-- Delivering a phone update = build the APK and copy it to the phone's
-  Download folder (`adb push … /sdcard/Download/`); the owner taps Update.
+- Delivering a phone update = build the **release** APK (signed with the
+  same key, not debuggable) and copy it to the phone's Download folder
+  (`adb push … /sdcard/Download/`); the owner taps Update.
   Before updating, check the installed app's signing certificate matches
   (`apksigner verify --print-certs`) — a mismatch would force an uninstall.
 
@@ -56,8 +57,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-lock.txt
 .venv/bin/python tools/smoke_test.py --db /tmp/smoke.db   # whole pipeline against the simulator
 .venv/bin/python main.py backup        # checked snapshot into database.backup_dir, mirrored, newest kept
 
-cd android && ./gradlew testDebugUnitTest assembleDebug   # 119 JVM tests; APK in
-# ~/odb-scanner-build/app/outputs/apk/debug/app-debug.apk (build dir is outside the repo)
+cd android && ./gradlew testDebugUnitTest assembleRelease   # 119 JVM tests; APK in
+# ~/odb-scanner-build/app/outputs/apk/release/app-release.apk (build dir is outside the repo)
 ```
 
 The `*.bat` launchers in the repo root and `tools/start_scanner.py` are the

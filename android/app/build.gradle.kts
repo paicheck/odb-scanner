@@ -65,6 +65,14 @@ android {
 
     buildTypes {
         release {
+            // Signed with the same key as the debug builds the phones already
+            // run (~/.android/debug.keystore, SHA-256 d6967d0e...37feee), so a
+            // release APK installs over them as an update and keeps their
+            // readings; a different key would force an uninstall. What
+            // changes is that the app is no longer debuggable: Android Auto
+            // binds only to its known hosts (OdbCarAppService) and `run-as`
+            // cannot read the app's data over USB.
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
