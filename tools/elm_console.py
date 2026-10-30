@@ -40,7 +40,6 @@ Useful commands:
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
@@ -94,26 +93,21 @@ commands:
 #   (monitor modes; CSM0 makes the adapter acknowledge bus traffic); PP, SD
 #   and @3 (write the adapter's EEPROM); R0 (stop waiting for responses);
 #   baud-rate changes. Anything not listed is refused by default.
-SAFE_ADAPTER_COMMANDS = re.compile(
-    r"^AT(?:"
-    r"Z|WS|D|I|@1|DP|DPN|RV|CS|PC|AR|CAF1|R1|D[01]|"
-    r"[ELSH][01]|AT[0-2]|ST[0-9A-F]{2}|"
-    r"[ST]PA?[0-9A-C]|"
-    r"SH(?:[0-9A-F]{3}|[0-9A-F]{6}|[0-9A-F]{8})|"
-    r"CRA(?:[0-9A-FX]{3}|[0-9A-FX]{8})?|"
-    r"CP[0-9A-F]{2}|"
-    r"C[FM](?:[0-9A-F]{3}|[0-9A-F]{8})"
-    r")$")
-
-
-def is_adapter_command(cmd: str) -> bool:
-    """AT (ELM327) and ST (OBDLink) lines address the adapter, not the car."""
-    return cmd.strip()[:2].upper() in ("AT", "ST")
-
-
-def normalise_adapter_command(cmd: str) -> str:
-    """Upper case, internal spaces removed: 'at sh 7e0' -> 'ATSH7E0'."""
-    return "".join(cmd.split()).upper()
+#
+# The list itself is INTERACTIVE_ADAPTER_COMMANDS in
+# diagnostic/adapter_commands.py, beside the transport's own list, which the
+# transport enforces on every line it sends -- this console's stricter list
+# comes on top. --raw-unsafe opens the transport `unrestricted`, the one way
+# round both.
+from diagnostic.adapter_commands import (  # noqa: E402
+    INTERACTIVE_ADAPTER_COMMANDS as SAFE_ADAPTER_COMMANDS,
+)
+from diagnostic.adapter_commands import (  # noqa: E402
+    is_adapter_command,
+)
+from diagnostic.adapter_commands import (  # noqa: E402
+    normalise as normalise_adapter_command,
+)
 
 
 def refusal(cmd: str, raw_unsafe: bool) -> str | None:
@@ -168,12 +162,14 @@ def main() -> int:
     if args.tcp:
         transport = Elm327Transport(
             port="auto", host=args.tcp[0], tcp_port=int(args.tcp[1]),
-            timeout=float(cfg.get("adapter.timeout", 5.0)))
+            timeout=float(cfg.get("adapter.timeout", 5.0)),
+            unrestricted=args.raw_unsafe)
     else:
         transport = Elm327Transport(
             port=args.port or cfg.get("adapter.port", "auto"),
             baudrate=int(cfg.get("adapter.baudrate", 38400)),
-            timeout=float(cfg.get("adapter.timeout", 5.0)))
+            timeout=float(cfg.get("adapter.timeout", 5.0)),
+            unrestricted=args.raw_unsafe)
 
     try:
         transport.open()

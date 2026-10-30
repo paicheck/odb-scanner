@@ -25,6 +25,7 @@ class _RecordingTransport:
 
     def __init__(self, reply):
         self.written: list[str] = []
+        self.approvals: list[str | None] = []
         self.reply = list(reply)
         self.module = None
 
@@ -32,8 +33,11 @@ class _RecordingTransport:
         self.module = (tx, rx)
         return True
 
-    def send_command(self, command):
+    def send_command(self, command, approval=None):
+        # The real transport checks every line itself, so the approved
+        # request must arrive with its token (Elm327Transport.send_command).
         self.written.append(command)
+        self.approvals.append(approval)
         return list(self.reply)
 
 

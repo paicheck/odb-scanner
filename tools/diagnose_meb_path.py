@@ -686,11 +686,13 @@ def test_canfd_check(t: Elm327Transport) -> None:
     """EXP-13: Check if adapter reports CAN-FD capability"""
     begin("EXP-13")
     log("=== EXP-13: CAN-FD capability check ===")
-    send_raw(t, "AT@", "adapter description")
+    send_raw(t, "AT@1", "adapter description")
     send_raw(t, "ATRV", "voltage")
     send_raw(t, "ATDP", "protocol detection")
-    # Some adapters support ATFD for CAN-FD
-    send_raw(t, "ATFD", "CAN-FD query (may be unsupported)")
+    # This used to send "AT@" (not a command; AT@1 is the description) and
+    # "ATFD" (no such ELM327 command). The transport refuses adapter commands
+    # that are not on its allow-list, and an unknown one is exactly what an
+    # allow-list exists to refuse; ATDP above already names the protocol.
 
 
 def run_all_experiments(tcp=None):

@@ -28,6 +28,7 @@ import re
 import socket
 import time
 
+from . import adapter_commands, uds
 from .interface import (
     AdapterNotFoundError,
     CommunicationError,
@@ -61,6 +62,7 @@ class Elm327Transport(OBDInterface):
         tcp_port: int | None = None,
         vid_hint: int | None = None,
         pid_hint: int | None = None,
+        unrestricted: bool = False,
     ) -> None:
         self.port = port
         self.baudrate = baudrate
@@ -90,6 +92,20 @@ class Elm327Transport(OBDInterface):
         # Set when the link may be holding an unanswered request, so the next
         # send_command drains before writing. See _drain_input.
         self._needs_drain = False
+        # The read-only check every line passes in send_command (see
+        # diagnostic/adapter_commands.py). `unrestricted` switches it off, and
+        # exists for one caller: tools/elm_console.py --raw-unsafe, the
+        # owner's explicit "send anything" mode.
+        self.unrestricted = unrestricted
+        if unrestricted:
+            log.warning("Elm327Transport is UNRESTRICTED: no read-only check on "
+                        "what is sent to the adapter or the vehicle.")
+        # How the adapter frames the next vehicle line, as far as the check is
+        # concerned: False auto-formatted requests, True raw frames (ATCAF0),
+        # None unknown -- after open() and whenever a framing command was not
+        # answered. Separate from _caf, which caches state for set_module and
+        # is cleared on every protocol switch.
+        self._raw_framing: bool | None = None
 
     # -- lifecycle ----------------------------------------------------------
     @property
@@ -238,9 +254,23 @@ class Elm327Transport(OBDInterface):
         self._proto = None
         self._meb_module = None
         self._atcra = None
+        self._raw_framing = None
 
     # -- raw line I/O -------------------------------------------------------
-    def send_command(self, command: str) -> list[str]:
+    def send_command(self, command: str, *,
+                     approval: str | None = None) -> list[str]:
+        """Send one line and return the adapter's answer lines.
+
+        Every line passes the read-only check first, here, where nothing can
+        go around it: adapter commands must be on TRANSPORT_ADAPTER_COMMANDS,
+        and a vehicle line is validated as what the ECU will receive -- a
+        request under auto-formatting, the payload of a single ISO-TP frame
+        under ATCAF0. Callers validate too (DiagnosticConnection._transmit,
+        the diagnostic tools); this is the layer that does not depend on them.
+
+        `approval` is the ABS reader's token: with it, the one approved 0x10
+        0x03 passes (uds.validate_approved_extended_session) and nothing else.
+        """
         if self._dev is None:
             raise CommunicationError("Adapter not open")
         # The adapter ends a command at CR, so an embedded CR/LF would turn one
@@ -252,6 +282,8 @@ class Elm327Transport(OBDInterface):
             raise ReadOnlyViolationError(
                 f"Refusing to send {command!r}: a command must be a single "
                 "line. This system is strictly READ-ONLY.")
+        framing = (None if self.unrestricted
+                   else self._check_line(command, approval))
         # Discard anything already in the buffer before asking a new question.
         # Only when something might be there: a desync can only begin with a
         # read that did not complete, and _read_until_prompt already drains on
@@ -264,7 +296,48 @@ class Elm327Transport(OBDInterface):
         self._write(command + "\r")
         raw = self._read_until_prompt(self.timeout)
         lines = raw.replace(">", "\n").splitlines()
-        return [ln.strip() for ln in lines if ln.strip()]
+        lines = [ln.strip() for ln in lines if ln.strip()]
+        if framing is not None and not any("?" in ln for ln in lines):
+            # Only an answered framing command changes what the check assumes;
+            # a refused or lost one leaves it unknown (set in _check_line).
+            self._raw_framing = framing
+        return lines
+
+    def _check_line(self, command: str,
+                    approval: str | None = None) -> bool | None:
+        """Refuse a line the read-only rules do not allow.
+
+        Returns the framing an adapter command will set (see
+        adapter_commands.FRAMING) once it is answered, else None. Framing is
+        unknown from that moment until the answer, so a vehicle line can never
+        be checked against a framing the adapter has not confirmed. Believing
+        "formatted" while the adapter is in ATCAF0 is how a validated 0104
+        becomes mode 04, clear DTCs; when unknown, ATCAF1 is asserted first.
+        """
+        if adapter_commands.is_adapter_command(command):
+            norm = adapter_commands.validate_adapter_command(command)
+            framing = adapter_commands.FRAMING.get(norm)
+            if framing is not None:
+                self._raw_framing = None
+            return framing
+        if self._raw_framing is None:
+            self.send_command("ATCAF1")
+            if self._raw_framing is not False:
+                raise CommunicationError(
+                    "The adapter did not confirm ATCAF1, so how this request "
+                    "would be framed is unknown; not sending it.")
+            self._caf = 1
+        if approval is not None:
+            if self._raw_framing:
+                raise uds.ReadOnlyViolationError(
+                    "Refusing the approved session request under ATCAF0: it "
+                    "is approved as a formatted request only.")
+            uds.validate_approved_extended_session(command, approval)
+        elif self._raw_framing:
+            adapter_commands.validate_raw_frame(command)
+        else:
+            uds.validate_request(command)
+        return None
 
     def _drain_input(self, max_bytes: int = 4096) -> int:
         """Throw away unread input. Returns how many bytes were discarded.

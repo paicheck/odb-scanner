@@ -46,7 +46,8 @@ class DiagnosticConnection:
     # -- core transmit -------------------------------------------------------
     def _transmit(self, hexcmd: str, ecu: ECUSpec | None, purpose: str,
                   *, validator=uds.validate_request,
-                  require_module: bool = False) -> list[str]:
+                  require_module: bool = False,
+                  approval: str | None = None) -> list[str]:
         # The single choke point for every request that reaches the vehicle.
         # validate_request raises ReadOnlyViolationError for anything off the
         # read-only allow-list, so no caller -- including the ones that build
@@ -101,7 +102,10 @@ class DiagnosticConnection:
         # can never drift apart.
         self.tx_logger(direction="TX", ecu=ecu.key if ecu else None,
                        payload=wire, purpose=purpose)
-        lines = self.t.send_command(wire)
+        # The transport checks the line again itself; the one approved
+        # request needs its token there too, or that check refuses it.
+        lines = (self.t.send_command(wire) if approval is None
+                 else self.t.send_command(wire, approval=approval))
         payload = uds.parse_elm_lines(lines)
         self.tx_logger(direction="RX", ecu=ecu.key if ecu else None,
                        payload=payload.hex().upper() if payload else
@@ -144,6 +148,7 @@ class DiagnosticConnection:
                 command, approval
             ),
             require_module=True,
+            approval=approval,
         )
         expected = getattr(ecu, "rx29", None)
         for src, payload in uds.payloads_by_source(lines).items():

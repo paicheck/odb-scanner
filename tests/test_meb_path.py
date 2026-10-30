@@ -277,18 +277,28 @@ def test_functional_read_does_not_reach_the_bms(sim_port):
     This is what the collector's discovery relies on: if functional addressing
     reached the BMS there would be no addressing problem to solve at all.
     """
+    from diagnostic import uds
     t = transport(sim_port)
     try:
         t.send_command("ATCP 18")
         t.send_command("ATSH DB33F1")
         t.send_command("ATCAF1")
-        payloads = read(t, "22028C")
+        # Under ATCAF1 the adapter frames the request itself, so a functional
+        # read is the bare request. This used to send the hand-built frame
+        # "0322028C55555555" here, which under auto-formatting reaches the ECU
+        # as service 0x03 with the frame as its operands -- the transport's
+        # read-only check now refuses it, and a real clone answers it '?'.
+        payloads = uds.payloads_by_source(t.send_command("22028C"))
     finally:
         t.close()
 
-    did_echo = [p for p in payloads.values()
-                if p and p[0] == 0x62 and p[1:3] == b"\x02\x8C"]
-    assert not did_echo, f"functional addressing reached the BMS: {did_echo}"
+    # Who answered, not what: the simulator's stand-in engine module (7E8)
+    # holds DID 028C too, so "no 62 02 8C anywhere" would fail for the wrong
+    # reason -- and the old malformed frame only passed because nothing
+    # recognised it as a DID read at all.
+    assert 0x7E8 in payloads, f"the functional read reached nothing: {payloads}"
+    assert 0x17FE007B not in payloads, (
+        f"functional addressing reached the BMS: {payloads[0x17FE007B]!r}")
 
 
 def test_experiment_matrix_runs_end_to_end(sim_port, capsys):

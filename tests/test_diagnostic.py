@@ -411,6 +411,7 @@ def test_a_late_reply_cannot_be_mistaken_for_the_next_request():
     t = Elm327Transport(port="TEST")
     t._dev = adapter
     t._opened = True
+    t._raw_framing = False      # an initialised adapter: auto-formatting on
     t.timeout = 0.3
 
     assert t.send_command("010C") == ["OK"]
