@@ -12,7 +12,7 @@ allow-list:
     0x10  DiagnosticSessionControl (default session ONLY, sub-function 0x01)
     0x22  ReadDataByIdentifier
     0x19  ReadDTCInformation (read sub-functions 0x01-0x09 ONLY)
-    0x3E  TesterPresent
+    0x3E  TesterPresent (sub-function 0x00 ONLY)
     0x01/0x03/0x09  read-only OBD-II modes
 
 The allow-list is enforced on the WHOLE request, not just the service byte:
@@ -91,9 +91,14 @@ BLOCKED_SERVICES = {
 #     0x0A stopResponseOnEvent is a CONTROL operation that changes when the
 #     ECU transmits event data, so the list stops at 0x09 rather than being a
 #     blanket "allow 0x19".
+#
+#   0x3E sub-functions: 0x00 zeroSubFunction is the only one ISO 14229 defines
+#     (0x80 is the same with the reply suppressed, which the bit-7 mask
+#     allows). It used to have no entry here, so any byte passed.
 READ_SUBFUNCTIONS: dict[int, set[int]] = {
     0x10: {0x01},
     0x19: {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09},
+    0x3E: {0x00},
 }
 
 # Sub-function-bearing services whose request must carry the sub-function byte
