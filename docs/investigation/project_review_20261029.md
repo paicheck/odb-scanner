@@ -150,3 +150,47 @@ the phones' data.
 Hardening 1 (decide with the owner) → bug 1 with extension 1 → extension 2 →
 hardening 3 → the rest. One branch per item, one commit per change, nothing
 pushed without the owner's OK.
+
+## Status on 2026-10-30
+
+Everything above was done on 2026-10-29/30 with the owner's go-ahead ("action
+the complete plan"), each item tested (1,488 tests on Linux, ruff clean, the
+simulator smoke test) and pushed to `main`:
+
+| Item | Commit | What was done |
+|---|---|---|
+| Hardening 1, parked car | `2a8c01e` | Owner chose the voltage watch. A sleeping car is sent nothing; `ATRV` every 10 min, resume above 13.5 V; start-up and reconnects follow the same rule; the doubled warm-up on reconnect is gone |
+| Bug 1, start-up | `f065de0` | A missing adapter at start-up is waited for on the reconnect back-off |
+| Hardening 5, backups | `56c074c` | Every snapshot integrity-checked, mirrored to an existing folder only, newest N kept |
+| Extension 1, Linux kit | `0b6d9b4` | `deploy/linux/`: collector, dashboard, ingest and backup units, `rfcomm` unit, `install.sh` (enables nothing) |
+| Bug 4, CLAUDE.md | `ce696e2` | The Linux section describes the Arch PC as it is |
+| Extension 2, PC archive | `7b7ef6f` | The ingest API on SQLite (`main.py ingest`, `odb-ingest.service`); backups include it |
+| Bug 3, token | `ad9c7f3` | One inserted line, re-read check, atomic 0600 write, masked in the log |
+| Hardening 2, transport | `e039e83`, `cea3f0f` | `0x3E` sub-function `0x00` only; `Elm327Transport.send_command` checks every line (adapter allow-list, frame-aware, confirmed framing), the ABS token carried through, `--raw-unsafe` the one way round |
+| Bug 2, Android CI | `db70a73` | The job uses the runner's SDK; it builds again |
+| Hardening 6, supply chain | `6a6b540`, `e0e0fee` | Actions pinned to commits, `pip-audit`, Dependabot; failed tests annotated |
+| Hardening 7, VIN | `ab2cef2` | Out of tests, config, README and living docs; a test keeps it to the evidence files |
+| Hardening 3, release build | `48ad98f` | Release build signed with the same key; CI builds it |
+| Extensions 3-5 | `bd1b2ca` | Alerts (log, ntfy, desktop), parked 12 V readings with a low alert and a Battery-page card, home charging cost |
+| Hardening 4, firewall | -- | Documented (`deploy/linux/README.md`): allow port 8000 from the home subnet only; needs root |
+
+**A correction to "On the Linux PC" above.** The phones cannot have been
+uploading to the Windows PC's Docker stack: Android refuses plain HTTP and the
+app does not opt in, so they only ever upload to an HTTPS address. Whether
+they had one configured is in their Cloud settings. Either way, the PC's own
+archive (extension 2) needs HTTPS in front of it before a phone can use it
+(`cloud/README.md`, "On this PC").
+
+**Left to the owner** (all need the car, root, the phones or an account):
+pair and bind the adapter and check `ATRV` asleep and awake against 13.5 V;
+enable the services; the `ufw` rule; the Android SDK and its licences; HTTPS
+for the phones (e.g. `tailscale serve`) and their Cloud settings; a
+`notify.ntfy_url` and a `charging.home_tariff_per_kwh` if wanted; building the
+release APK, checking its certificate, and copying it to both phones;
+whether to rewrite history to remove the VIN from the public repository.
+
+**Not resolved:** `tests/test_trips.py::test_trip_log_totals_and_what_the_cold_costs`
+failed once locally and could not be reproduced in four shuffled full runs,
+three clean-clone runs or a clock-shift test; CI failed "Unit tests (fast)" on
+3.11 and 3.13 once on `ab2cef2` without a readable reason, which `e0e0fee`
+makes visible next time.

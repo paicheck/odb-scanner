@@ -71,8 +71,11 @@ systemd (`deploy/linux/`).
 `config.local.yaml` (gitignored, deep-merged over it). Keys it holds — names
 only: `web.auth_token`, `database.path`, `database.backup_dir`,
 `database.backup_keep`, `database.backup_mirror_dir`, `adapter.port`,
-`cloud.enabled/api_url/token`, `routing.ors_api_key`, `routing.ocm_api_key`,
-`routing.countries`, optionally `routing.mapbox_token`, `ai.provider/api_key`.
+`cloud.enabled/api_url/token`, `ingest.db_path/host/port`, `vehicle.vin` (the
+car's own; config.yaml's is empty because the repository is public),
+`routing.ors_api_key`, `routing.ocm_api_key`, `routing.countries`, optionally
+`routing.mapbox_token`, `ai.provider/api_key`, `notify.ntfy_url/ntfy_token/
+desktop`, `charging.home_tariff_per_kwh`.
 The phones hold their own keys (Route → Settings: OpenRouteService,
 OpenChargeMap, Mapbox; Assistant → Settings: the AI service), encrypted.
 
@@ -103,19 +106,43 @@ openjdk-17-jdk` and the groups `dialout`/`plugdev`.
    `odb-rfcomm@<MAC>.service`; `main.py doctor`. Check `ATRV` once with the
    car asleep and once awake against `collector.wake_voltage` (13.5 V).
 2. `systemctl --user enable --now odb-backup.timer odb-dashboard.service
-   odb-collector.service`.
+   odb-ingest.service odb-collector.service`.
 3. Let the tablet in: `sudo ufw allow from <home subnet> to any port 8000
    proto tcp`.
 4. Android SDK (the licences are the owner's to accept): command-line tools in
    `~/Android/Sdk`, then `platform-tools`, `platforms;android-34`,
    `build-tools;34.0.0`; set `ANDROID_HOME` and `sdk.dir=` in
    `android/local.properties`. Keep JDK 17: AGP 8.5's lint cannot read Java 25.
+5. For the phones to upload to this PC's archive: HTTPS in front of
+   `odb-ingest` (e.g. `tailscale serve --bg 8080`) and the phones' Cloud
+   settings pointed at it with `cloud.token`. Optionally `notify.ntfy_url`
+   (alerts on the phone) and `charging.home_tariff_per_kwh`.
 
-## State on 2026-10-29
+## State on 2026-10-30
 
-`main` on GitHub is at `b2a4b5d`; everything below is pushed. The 14-commit
-`deep-review` work (merged into main) found and fixed, measured on a 2.6M-row
-month of synthetic readings:
+`main` on GitHub is at the commit after `e0e0fee`; everything below is
+pushed. The 2026-10-29 project review
+(`docs/investigation/project_review_20261029.md`, status table at the end)
+was carried out in full:
+
+- Collector: a sleeping car is sent nothing (only `ATRV`, the adapter's own
+  12 V reading, every 10 min; resumes above `collector.wake_voltage`); a
+  missing adapter at start-up is waited for; parked 12 V readings are kept as
+  `adapter_12v_voltage` with a low alert; alerts (`notify.py`) for new fault
+  codes, low 12 V, a filling disk, a finished charge, a failed backup.
+- Read-only guard: `Elm327Transport.send_command` checks every line itself
+  (`diagnostic/adapter_commands.py`: adapter allow-list, frame-aware under
+  ATCAF0, framing only from confirmed answers); `0x3E` sends sub-function
+  `0x00` only. `tools/elm_console.py --raw-unsafe` is the one way round.
+- Linux: `deploy/linux/` (systemd units, `install.sh`), checked and mirrored
+  backups, `main.py ingest` (the ingest API on SQLite) as this PC's archive.
+- Phones: deliver the release APK, signed with the same key, not debuggable.
+- Repository: the VIN out of tests/config/living docs (a test keeps it to
+  eight evidence files); CI green again (Android uses the runner's SDK),
+  actions pinned to commits, `pip-audit`, Dependabot, failed tests annotated.
+
+Before that, on 2026-10-29, the 14-commit `deep-review` work found and fixed,
+measured on a 2.6M-row month of synthetic readings:
 
 - Dashboard speed: hourly summary tables (`measurement_hours`,
   `measurement_minutes`; a cache rebuilt by trigger after any delete), one
@@ -137,17 +164,21 @@ month of synthetic readings:
 
 ## Open items
 
-- **Project review, 2026-10-29:**
-  `docs/investigation/project_review_20261029.md` lists the bugs, hardening
-  and extensions found after the move to Linux, in the order to tackle them.
-  Start there.
-- **HONOR X8a** still has the 20261029c APK, which has the wake-word crash —
-  copy the current APK to it next time it is connected.
+- **Project review, 2026-10-29:** done; what is left needs the car, root,
+  the phones or an account -- the "owner still has to" list above, and the
+  status table at the end of `docs/investigation/project_review_20261029.md`.
+- Not yet checked at the car: `ATRV` with the car asleep and awake against
+  `collector.wake_voltage` (13.5 V), and that the Veepeak answers `ATRV` at all.
+- **Both phones** need the current release APK (the HONOR X8a still has
+  20261029c, with the wake-word crash). Built on Linux, check its
+  certificate is `d6967d0e…37feee` before copying it over.
 - Not yet tried for real: the speed-limit sign and arrival charge on the road
   with a Mapbox token; the Trips page and capacity trend on the car's own data
   (the trend needs 60 days of history).
-- The car's VIN is in `config.yaml` and ~30 tracked docs/tests on GitHub;
-  removing it means rewriting history — the owner's decision.
-- Phones: HONOR X8a (the car phone) and a Pixel 7 (Android beta), both running
-  builds signed with the Windows PC's debug key (SHA-256 `d6967d0e…37feee`).
-  Check a Linux build carries the same certificate before copying it over.
+- The car's VIN is still in eight dated evidence files and in the history of
+  the public repository; removing it there means rewriting history — the
+  owner's decision. `tests/test_vin_stays_out.py` stops it spreading.
+- Phones: HONOR X8a (the car phone) and a Pixel 7 (Android beta), signed with
+  the Windows PC's debug key, now `~/.android/debug.keystore` here.
+- `tests/test_trips.py::test_trip_log_totals_and_what_the_cold_costs` failed
+  once and could not be reproduced; watch for it.

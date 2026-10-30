@@ -98,5 +98,10 @@ The application also keeps its own rotating logs in `data/logs/`.
   boot with no login, the mirror is skipped and the backup stays on this
   machine. To mount the drive at boot regardless, give it an `/etc/fstab`
   entry with `nofail` and point `database.backup_mirror_dir` at that mount.
+- **Alerts.** New fault codes, the 12 V battery low while parked, a failed
+  backup, a filling disk and finished charges are logged as `ALERT ...` in the
+  journal. To get them on the phone, install the ntfy app, subscribe to a long
+  random topic, and put `notify: {ntfy_url: https://ntfy.sh/<topic>}` in
+  `config.local.yaml` (the topic is a secret: anyone who knows it can read it).
 - **Nothing here touches the phones.** Delivering an app update is still
   "build the APK, `adb push` it to the phone's Download folder" (CLAUDE.md).
