@@ -757,6 +757,7 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         overview,
         route,
         trips,
+        twin,
     )
 
     ctx = SimpleNamespace(
@@ -786,7 +787,7 @@ def create_app(cfg: Config, bind_host: str | None = None) -> FastAPI:
         vehicle_and_id=vehicle_and_id,
     )
     for routes in (overview, battery, faults, charging, ai, explore, investigations,
-                   route, trips):
+                   route, trips, twin):
         routes.register(app, ctx)
 
     return app

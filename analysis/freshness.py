@@ -213,6 +213,14 @@ def _classify_rows(rows: list[dict], key: str, now: datetime,
                        reason="")
 
 
+def classify(rows: list[dict], key: str, *, now: datetime,
+             fresh_after_s: float = DEFAULT_FRESH_AFTER_S) -> Observation:
+    """The verdict for rows of one key the caller already holds, newest
+    first, judged at `now` -- for a caller reconstructing an earlier moment,
+    which must pass only rows stamped at or before it (analysis/twin.py)."""
+    return _classify_rows(rows, key, now, fresh_after_s)
+
+
 def _as_bool(v) -> bool:
     if isinstance(v, str):
         return v not in ("0", "", "false", "False")
