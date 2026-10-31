@@ -74,10 +74,15 @@ fun AssistantDialog(onDismiss: () -> Unit) {
     ) { granted -> if (granted) VoiceAssistant.start(context, VoiceSource.PHONE) }
     var question by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(!Assistant.ready(context)) }
+    var showSetup by remember { mutableStateOf(false) }
     val settings = remember(showSettings) { AiPrefs.load(context) }
 
     if (showSettings) {
         AssistantSettingsDialog(onDone = { showSettings = false })
+        return
+    }
+    if (showSetup) {
+        AiVoiceSetupDialog(onDone = { showSetup = false })
         return
     }
 
@@ -158,6 +163,7 @@ fun AssistantDialog(onDismiss: () -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { Assistant.newConversation() }) { Text("New chat") }
                     TextButton(onClick = { showSettings = true }) { Text("Settings") }
+                    TextButton(onClick = { showSetup = true }) { Text("Setup & tests") }
                 }
             }
         },
