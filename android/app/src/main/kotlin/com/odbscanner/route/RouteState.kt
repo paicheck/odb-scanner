@@ -197,9 +197,16 @@ object RouteRevisions {
         return state.copy(proposal = null, declined = state.declined + signature(p.keys))
     }
 
-    fun markSent(state: RouteState, nowMs: Long): RouteState = state.copy(sync = state.sync.copy(
-        sentRevision = state.revision, sentKeys = state.current.keys, atMs = nowMs,
-        status = SyncStatus.CURRENT, message = "Google Maps has revision ${state.revision}"))
+    /**
+     * Google Maps was handed [revision] (null: the current one). A hand-off
+     * of a revision a newer plan has replaced records nothing: it must not
+     * mark the current plan as sent.
+     */
+    fun markSent(state: RouteState, nowMs: Long, revision: Int? = null): RouteState =
+        if (revision != null && revision != state.revision) state
+        else state.copy(sync = state.sync.copy(
+            sentRevision = state.revision, sentKeys = state.current.keys, atMs = nowMs,
+            status = SyncStatus.CURRENT, message = "Google Maps has revision ${state.revision}"))
 
     fun markFailed(state: RouteState, nowMs: Long, why: String): RouteState =
         state.copy(sync = state.sync.copy(atMs = nowMs, status = SyncStatus.FAILED, message = why))

@@ -172,5 +172,18 @@ class RouteStateTest {
         assertEquals(emptySet<String>(), p.insteadOf("", "101").avoidChargers)
         assertEquals(setOf("101"), p.insteadOf("", "101").useChargers)
     }
-}
 
+    @Test
+    fun aHandOffOfARevisionANewerPlanReplacedRecordsNothing() {
+        val first = started()
+        val second = (RouteRevisions.revise(first, 1, planB, "cheaper", 2_000L)
+            as RouteRevisions.Outcome.Revised).state
+        // Google Maps opened with revision 1 after revision 2 was planned.
+        val late = RouteRevisions.markSent(second, 3_000L, revision = 1)
+        assertEquals(SyncStatus.NOT_SENT, late.sync.status)
+        assertTrue(late.needsHandoff)
+        val now = RouteRevisions.markSent(second, 3_000L, revision = 2)
+        assertEquals(SyncStatus.CURRENT, now.sync.status)
+        assertEquals(2, now.sync.sentRevision)
+    }
+}

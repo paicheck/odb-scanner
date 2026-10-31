@@ -29,6 +29,7 @@ import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.util.UUID
 import java.util.Locale
+import kotlin.math.max
 
 /** A trip being driven: its destination, current plan and what the monitor last saw. */
 data class ActiveTrip(
@@ -167,8 +168,9 @@ object TripMonitor {
         }
         if (!took) return null
         val maps = route.needsHandoff
-        notify(app, "Trip restored", "Watching your trip to ${saved.destination.label} again." +
-            (if (maps) " Google Maps has an older plan: tap to send this one." else ""),
+        val ageMs = max(0L, now - here.time)
+        notify(app, "Trip restored", TripStore.restoreNote(saved.destination.label,
+            saved.route.current, route.current, ageMs, maps),
             if (maps) MapsHandoff.pendingIntent(app) else null)
         return "Trip to ${saved.destination.label} restored."
     }
@@ -418,8 +420,7 @@ object TripMonitor {
 
     /** Google Maps was handed the trip (revision [revision], or the current one). */
     fun markHandedOff(revision: Int? = null) = update { t ->
-        if (revision != null && revision != t.route.revision) t
-        else t.copy(route = RouteRevisions.markSent(t.route, System.currentTimeMillis()))
+        t.copy(route = RouteRevisions.markSent(t.route, System.currentTimeMillis(), revision))
     }
 
     fun markHandoffFailed(why: String) = update { t ->

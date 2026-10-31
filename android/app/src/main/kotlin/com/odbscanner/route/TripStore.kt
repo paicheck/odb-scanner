@@ -60,6 +60,29 @@ object TripStore {
     fun load(context: Context): SavedTrip? =
         decode(context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString(KEY, null))
 
+    /**
+     * What to tell the driver after a restore: the trip is watched again;
+     * how old the position it was planned from is, when not fresh (a
+     * remembered position is not where the car is now); and what changed if
+     * the plan made from here differs from the one saved -- a restore must
+     * never change the stops without saying so. Pure, so it is unit-tested.
+     */
+    fun restoreNote(destination: String, before: Revision, after: Revision,
+                    positionAgeMs: Long, googleMapsOlder: Boolean): String {
+        val parts = mutableListOf("Watching your trip to $destination again")
+        if (positionAgeMs > FRESH_POSITION_MS) {
+            parts[0] += ", planned from where the phone was ${positionAgeMs / 60_000L} min ago"
+        }
+        parts[0] += "."
+        if (before.keys != after.keys) {
+            parts += "The plan has changed since: " + RouteRevisions.describe(before, after)
+        }
+        if (googleMapsOlder) parts += "Google Maps has an older plan: tap to send this one."
+        return parts.joinToString(" ")
+    }
+
+    const val FRESH_POSITION_MS = 2 * 60_000L
+
     fun clear(context: Context) {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().remove(KEY).apply()
     }

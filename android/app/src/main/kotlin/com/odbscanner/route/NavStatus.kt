@@ -4,6 +4,7 @@ import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.asin
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.sin
 
 /**
@@ -50,4 +51,69 @@ object NavStatus {
     /** (km driven, km to go) on a trip of [tripKm] with [toGoKm] left. */
     fun progress(tripKm: Double, toGoKm: Double): Pair<Double, Double> =
         (tripKm - toGoKm).coerceAtLeast(0.0) to toGoKm.coerceAtLeast(0.0)
+}
+
+/**
+ * Which GPS fixes may move the guidance. A phone in a car gets fixes that
+ * are late (cached, batched, replayed after a pause), vague (urban canyons,
+ * tunnels' edges) or plainly wrong (a multipath jump to the next road). One
+ * such fix used as if it were good can skip spoken cues, declare a re-route
+ * or even an arrival. So each is judged by when it was *measured* (not when
+ * it arrived), how accurate it says it is, and whether getting there from
+ * the last good fix was possible:
+ *
+ *  * STALE   measured more than MAX_AGE_MS before it arrived: ignored, and
+ *            the "GPS lost" note keeps counting from the last good one;
+ *  * VAGUE   accuracy worse than VAGUE_M: shown, but the guidance waits;
+ *  * ROUGH   worse than ROUGH_M: moves the guidance, but cannot count
+ *            towards "off the route" (it may be the road, roughly);
+ *  * JUMP    faster than MAX_KMH from the last good fix: held, until the
+ *            next fix agrees with it (then the car really is there);
+ *  * GOOD    the rest.
+ *
+ * Pure (times are passed in), so every case is a unit test.
+ */
+class GpsGate(
+    private val maxAgeMs: Long = MAX_AGE_MS,
+    private val vagueM: Float = VAGUE_M,
+    private val roughM: Float = ROUGH_M,
+    private val maxKmh: Double = MAX_KMH,
+) {
+    enum class Verdict { GOOD, ROUGH, VAGUE, JUMP, STALE }
+
+    private data class Fix(val lat: Double, val lon: Double, val atMs: Long)
+
+    private var last: Fix? = null
+    private var held: Fix? = null
+
+    /** Judge a fix measured at [measuredAtMs], arriving at [nowMs]. */
+    fun judge(lat: Double, lon: Double, measuredAtMs: Long, accuracyM: Float?,
+              nowMs: Long): Verdict {
+        if (nowMs - measuredAtMs > maxAgeMs) return Verdict.STALE
+        if (accuracyM != null && accuracyM > vagueM) return Verdict.VAGUE
+        val fix = Fix(lat, lon, measuredAtMs)
+        val prev = last
+        if (prev != null && measuredAtMs <= prev.atMs) return Verdict.STALE   // out of order
+        if (prev != null && !possible(prev, fix)) {
+            val h = held
+            held = fix
+            // A second fix that agrees with the held one: the car is there.
+            if (h == null || !possible(h, fix)) return Verdict.JUMP
+        }
+        held = null
+        last = fix
+        return if (accuracyM != null && accuracyM > roughM) Verdict.ROUGH else Verdict.GOOD
+    }
+
+    private fun possible(a: Fix, b: Fix): Boolean {
+        val hours = max(1.0, (b.atMs - a.atMs).toDouble()) / 3_600_000.0
+        return Planner.haversineKm(a.lat, a.lon, b.lat, b.lon) / hours <= maxKmh
+    }
+
+    companion object {
+        const val MAX_AGE_MS = 10_000L
+        const val VAGUE_M = 100f
+        const val ROUGH_M = 60f             // Guidance.OFF_ROUTE_KM is 60 m
+        const val MAX_KMH = 250.0
+    }
 }

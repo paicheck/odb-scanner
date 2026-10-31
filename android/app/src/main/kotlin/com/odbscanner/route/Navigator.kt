@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.location.Location
 import android.location.LocationManager
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationListenerCompat
 import androidx.core.location.LocationManagerCompat
@@ -109,6 +110,7 @@ object Navigator {
     private var checker: Job? = null
     private var routedAtMs = 0L
     private var lastFix: Location? = null
+    private var gate = GpsGate()                                // which fixes move the guidance
     private val warned = mutableListOf<Pair<Double, Double>>()   // where announced jams start
     private var overFixes = 0                                   // fixes running over the limit
     private var limitSaid: SpeedLimit? = null                   // said once per stretch
@@ -169,6 +171,7 @@ object Navigator {
         checker = null
         guidance = null
         lastFix = null
+        gate = GpsGate()
         warned.clear()
         overFixes = 0
         limitSaid = null
@@ -377,11 +380,18 @@ object Navigator {
     }
 
     private fun onFix(loc: Location) {
-        lastFix = loc
         val now = System.currentTimeMillis()
-        val s = (_state.value ?: return).copy(fixAtMs = now,
-            accuracyM = if (loc.hasAccuracy()) loc.accuracy else null)
+        // When the fix was measured, from the monotonic clock: a cached or
+        // replayed fix arrives late, and its wall-clock time can be wrong.
+        val ageMs = (SystemClock.elapsedRealtimeNanos() - loc.elapsedRealtimeNanos) / 1_000_000L
+        val measuredAt = now - max(0L, ageMs)
+        val accuracy = if (loc.hasAccuracy()) loc.accuracy else null
+        val verdict = gate.judge(loc.latitude, loc.longitude, measuredAt, accuracy, now)
+        if (verdict == GpsGate.Verdict.STALE) return
+        lastFix = loc
+        val s = (_state.value ?: return).copy(fixAtMs = measuredAt, accuracyM = accuracy)
         _state.value = s
+        if (verdict == GpsGate.Verdict.VAGUE || verdict == GpsGate.Verdict.JUMP) return
         val speed = if (loc.hasSpeed()) loc.speed * 3.6 else s.speedKmh
         val fix = loc.latitude to loc.longitude
         when (s.phase) {
@@ -404,7 +414,8 @@ object Navigator {
             if (routing?.isActive != true && now - routedAtMs > RETRY_MS) route(s.note)
             return
         }
-        val gs = g.update(loc.latitude, loc.longitude)
+        val gs = g.update(loc.latitude, loc.longitude,
+            countOffRoute = verdict == GpsGate.Verdict.GOOD)
         var words = gs.say
         // Heavy traffic coming up: once for each jam, even after a fresher route.
         g.route.trafficAhead(gs.kmAlong, TRAFFIC_WARN_KM)?.let { run ->

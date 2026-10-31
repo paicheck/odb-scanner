@@ -45,4 +45,20 @@ class TripStoreTest {
         assertNull(TripStore.decode("not json"))
         assertNull(TripStore.decode("{\"to\": {}}"))
     }
+
+    @Test
+    fun aRestoreSaysHowOldItsPositionIsAndWhatChanged() {
+        val before = route.current
+        val same = TripStore.restoreNote("Leeds", before, before.copy(number = 4), 30_000L, false)
+        assertEquals("Watching your trip to Leeds again.", same)
+        val moved = before.copy(number = 4, waypoints = listOf(
+            Waypoint("ocm:303", "Hub C", 53.0, -1.4, true), before.waypoints.last()),
+            arrivalPct = 11.0)
+        val note = TripStore.restoreNote("Leeds", before, moved, 7 * 60_000L, true)
+        assertTrue(note, note.startsWith("Watching your trip to Leeds again, planned from " +
+            "where the phone was 7 min ago."))
+        assertTrue(note, note.contains("The plan has changed since: "))
+        assertTrue(note, note.contains("Hub C"))
+        assertTrue(note, note.endsWith("Google Maps has an older plan: tap to send this one."))
+    }
 }

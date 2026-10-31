@@ -522,9 +522,18 @@ class Guidance(val route: NavRoute, quietUntilKm: Double = -1.0) {
         }
     }
 
-    fun update(lat: Double, lon: Double): GuidanceState {
+    /**
+     * Where the car is on the route now, and what to say. [countOffRoute]
+     * false (a rough fix, GpsGate.Verdict.ROUGH): this fix may move the car
+     * along but cannot count towards "off the route" -- it could be the road.
+     */
+    fun update(lat: Double, lon: Double, countOffRoute: Boolean = true): GuidanceState {
         val (km, off) = snap(lat, lon)
-        offCount = if (off > OFF_ROUTE_KM) offCount + 1 else 0
+        offCount = when {
+            off <= OFF_ROUTE_KM -> 0
+            countOffRoute -> offCount + 1
+            else -> offCount
+        }
         val total = route.distanceKm
         val nextIdx = route.maneuvers.indexOfFirst { it.atKm > km + 0.015 }
         val next = route.maneuvers.getOrNull(nextIdx)
