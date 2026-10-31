@@ -80,6 +80,9 @@ def register(app, ctx) -> None:
             charging_analysis.session_comparison(repo, vid, charging_days) if vid else {}
         )
         anomalies = [dict(a) for a in repo.anomalies(vid, days)] if vid else []
+        from analysis.health_summary import health_summary as _health_summary
+        health = _health_summary(repo, vid) if vid else {}
+
         # Per-key series with their own observation timestamps. The chart used
         # to read the battery snapshot table, which carries values forward and
         # merged normalised and absolute SoC into one line.
@@ -116,6 +119,7 @@ def register(app, ctx) -> None:
             dtcs=dtcs,
             charging=charging,
             anomalies=anomalies,
+             health=health,
             days=days,
             live=live,
             gap_s=chart_gap_s,
