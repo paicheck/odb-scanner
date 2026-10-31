@@ -225,8 +225,9 @@ measured on a 2.6M-row month of synthetic readings:
   (Groq's retired default model -- why chat failed in the car on 2026-10-31
   --, breaker trials, a stuck speech engine, history settings, offline
   answers without a position or with old readings, Retry). Android Auto
-  hides the sideloaded app unless its developer setting "Unknown sources" is
-  on. Release APK
+  refuses the sideloaded app even with "Unknown sources" on: it shows Car
+  App Library apps only from Google Play (internal test track; the owner's
+  decision, review §10). Release APK
   `~/odb-scanner-tested/odb-scanner-0.2.0-release-rc-7aedf52b.apk`, built
   with `-PodbBuildDir=$HOME/odb-scanner-build-rc` so the tested 20261031e
   (`7f94cf57`) stays. Pixel 7 plan: `review_output/ai_assistant_device_tests.md`.

@@ -182,13 +182,23 @@ directions, Re-plan / End trip while driving), **Navigation** (the next turn,
 the lanes, traffic ahead and the arrival time, as text -- tap Next to hear it
 again; Mute, End), **Fault codes** and **Assistant** — built from the Car App
 Library's driver-safe templates (`car/`). They read the phone's database and
-never reach the adapter. Because the app is not from the Play Store, Android
-Auto lists it only with developer settings on:
+never reach the adapter.
 
-1. Android Auto settings on the phone → tap **Version** ten times → developer
-   settings → enable **Unknown sources**.
-2. Install the APK, open the app once, set the route keys.
-3. Connect to the car; *ODB Scanner* appears in the launcher.
+**Android Auto shows them only if the app was installed from Google Play.**
+Android Auto's developer setting *Unknown sources* covers media, messaging
+and parked apps, but not apps built with the Car App Library
+([Google](https://developer.android.com/training/cars/testing)). A
+sideloaded APK is refused even with that setting on:
+`CAR.VALIDATOR: Package DENIED; failed all other checks [com.odbscanner]`
+(Android Auto 18.1 beta, Pixel 7, 2026-10-31).
+
+To use the car screens, the app has to come through Google Play: an internal
+test track needs no Play review.
+- **It needs** a Play developer account and a release key that Play
+  accepts. Play refuses builds signed with a debug key.
+- **The catch:** the phones would then install it fresh, once. Save or
+  upload their readings first.
+- **Not checked:** whether the Desktop Head Unit accepts the sideloaded app.
 
 The app is declared in the **charging** category, the closest Android Auto has
 to a trip planner; a Play Store release would need Google's review of that

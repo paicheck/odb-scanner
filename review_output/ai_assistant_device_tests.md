@@ -18,13 +18,11 @@ waits for your OK.
 
 ## Before you start
 
-1. **Android Auto.** The app is not from the Play Store, so Android Auto
-   shows it only with **Unknown sources** on:
-   - On the phone: Android Auto settings → tap **Version** ten times →
-     Developer settings → **Unknown sources** on.
-   - Then Android Auto settings → **Customise launcher**: make sure
-     ODB Scanner is ticked.
-   - That is the likely reason the app was missing in the car on 2026-10-31.
+1. **Android Auto.** The car screens (section G) cannot be tested with
+   this APK. Android Auto shows a Car App Library app only when it was
+   installed from Google Play, and Unknown sources does not change that
+   (review §10). The other sections can be done in the car, on the phone's
+   own screen: its speech plays through the car.
 2. **Services.** In Ask AI → Setup & tests, set up two services with keys,
    for example Groq as main and Gemini as backup. Run each one's **Key** and
    **AI test**; both should pass.
@@ -116,6 +114,8 @@ Do not delete the history or the app's data before you report.
 | F1 | During a long answer, force-stop the speech engine: Settings → Apps → Speech Services by Google → Force stop. | The answer stops. Then ask again: the answer is spoken, by a fresh engine, and navigation guidance still speaks. If the engine never reported the stop, recovery takes up to about a minute plus the answer's length; before this fix it never came. |
 
 ## G. Android Auto (in the car, navigating)
+
+Blocked until the app is installed from Google Play (review §10).
 
 | ID | Do | Expected |
 |---|---|---|

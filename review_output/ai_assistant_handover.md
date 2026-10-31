@@ -37,10 +37,12 @@ sound: `ai_assistant_review.md` §7–8.
   shut down the app's default Groq model on 2026-08-16. It is fixed in this
   candidate. To confirm the service involved, open Ask AI on the Pixel: the
   failure line names the service and the reason.
-- **Android Auto:** the app was installed from Files, and Android Auto
-  hides such apps unless **Unknown sources** is on. To turn it on: Android
-  Auto settings → tap Version ten times → Developer settings → Unknown
-  sources. No code change is needed.
+- **Android Auto:** it shows a Car App Library app only if it came from
+  Google Play. Unknown sources does not cover them; Android Auto's
+  validator refused the app with the setting on. The way in is a Play
+  internal test track: a Play developer account and a release key Play
+  accepts, then one fresh install on each phone. That is your decision
+  (review §10). Until then, test section G is blocked.
 
 **Verified:**
 - 260 phone unit tests, 0 failures (14 new), and the PC's 1,670;

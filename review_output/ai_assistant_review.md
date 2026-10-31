@@ -333,15 +333,31 @@ Mobile data was up and validated the whole time.
   and says either "model … is not available" or "overloaded". It is still
   in the app until the app is closed.
 
-**Android Auto: not a code problem**
-- Android offers the app's car service to Android Auto: enabled, exported,
-  no permission needed, category CHARGING.
-- While connected, Android Auto never bound it.
-- The app was installed from Files, not the Play Store. Android Auto hides
-  such apps unless **Unknown sources** is on in its developer settings
-  (README, Android Auto).
-- No code changed for it. Turning that setting on is now the first step of
-  the device tests.
+**Android Auto: only an app from Google Play is shown**
+- **What Android offers:** the app's car service, to Android Auto (enabled,
+  exported, no permission needed, category CHARGING). While connected,
+  Android Auto never bound it.
+- **With Unknown sources turned on** (Android Auto's own dump showed
+  `allow_unknown_sources: true`), its validator still refused the app at
+  every scan:
+  `W CAR.VALIDATOR: isPackageInstalledByPlayCheck service not connected`,
+  then `W CAR.VALIDATOR: Package DENIED; failed all other checks
+  [com.odbscanner]`.
+- **Why:** Google's testing guide says the Unknown sources setting covers
+  media, messaging notification and parked apps, "but doesn't apply to apps
+  built using the Android for Cars App Library". To test in a car, "you must
+  install it from a trusted source such as Google Play". Internal App
+  Sharing or an internal test track skip the Play review. Others report the
+  same denial on Android Auto 17.x (the Lapin, Vela and Fermata projects).
+- **What it would take:**
+  - a Play developer account;
+  - an internal test track;
+  - a release key Play accepts. Play refuses debug-signed builds, so each
+    phone installs the Play build fresh, once, after its readings are saved.
+- **The owner's decision.** No code can change this. The earlier note
+  here, that turning on Unknown sources would fix it, was wrong.
+- **Until then:** the assistant still works on the phone's own screen in
+  the car, and its speech plays through the car's speakers.
 
 **Left open**
 - The 27-character recognition failure. The log cannot say which of the two

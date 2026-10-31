@@ -14,9 +14,9 @@ import androidx.car.app.validation.HostValidator
  * Everything shown is read from the phone's own database (what the collector
  * last stored) or computed by the route planner; nothing here talks to the
  * vehicle or the adapter. Declared in the "charging" category -- the closest
- * Android Auto category to an EV trip planner. An app outside the Play Store
- * shows on the car only with Android Auto's developer mode "Unknown sources"
- * turned on (see README, Android Auto).
+ * Android Auto category to an EV trip planner. Android Auto shows a Car App
+ * Library app only when it was installed from Google Play: its "Unknown
+ * sources" developer setting does not cover them (see README, Android Auto).
  */
 class OdbCarAppService : CarAppService() {
 
