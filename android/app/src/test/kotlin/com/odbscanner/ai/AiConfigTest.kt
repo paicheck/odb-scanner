@@ -10,7 +10,7 @@ class AiConfigTest {
     @Test
     fun theFreeServicesNeedOnlyAKey() {
         assertEquals("gemini-3.8-flash", AiSettings(provider = "gemini").effectiveModel)
-        assertEquals("llama-3.3-70b-versatile", AiSettings(provider = "groq").effectiveModel)
+        assertEquals("openai/gpt-oss-120b", AiSettings(provider = "groq").effectiveModel)
         assertEquals("mistral-small-latest", AiSettings(provider = "mistral").effectiveModel)
         assertEquals(AiPresets.CLAUDE_DEFAULT_MODEL, AiSettings(provider = "anthropic").effectiveModel)
         for (id in listOf("gemini", "groq", "mistral")) {

@@ -187,7 +187,7 @@ ai:
   # Put the key in config.local.yaml (or ODB_AI_KEY), never here.
   provider: ollama
   # Blank: Claude uses claude-opus-5-5, gemini gemini-3.8-flash, groq
-  # llama-3.3-70b-versatile, mistral mistral-small-latest -- those three have
+  # openai/gpt-oss-120b, mistral mistral-small-latest -- those three have
   # free tiers. The others need one named (an unset model lists what the key
   # can use when you ask).
   model: ""

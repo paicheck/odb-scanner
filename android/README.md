@@ -207,7 +207,7 @@ DeepSeek, xAI**, or any OpenAI-compatible https endpoint. Each needs your own
 API key from that service; keys are stored encrypted with a key held in the
 Android Keystore. Three are free to start with and need only the key -- each
 has a default model that can use the assistant's tools: **Google Gemini**
-(`gemini-3.8-flash`, no card needed), **Groq** (`llama-3.3-70b-versatile`,
+(`gemini-3.8-flash`, no card needed), **Groq** (`openai/gpt-oss-120b`,
 daily limits) and **Mistral** (`mistral-small-latest`, a verified phone
 number). Gemini's and Mistral's free tiers may use what is sent to improve
 their models; the others are billed per use.

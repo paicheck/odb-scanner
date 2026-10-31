@@ -56,6 +56,8 @@ PRESETS: dict[str, Preset] = {
     # Free tiers (checked October 2026): Gemini's needs no card; Groq's has daily
     # limits; Mistral's Experiment plan needs a verified phone number. Gemini's
     # and Mistral's free tiers may use what is sent to improve their models.
+    # Groq shut llama-3.3-70b-versatile down on 2026-08-16; gpt-oss-120b is its
+    # listed replacement (console.groq.com/docs/deprecations) and calls tools.
     "gemini": Preset("Google Gemini (free tier)", "openai",
                      "https://generativelanguage.googleapis.com/v1beta/openai",
                      "https://aistudio.google.com/apikey", "gemini-3.8-flash"),
@@ -63,7 +65,7 @@ PRESETS: dict[str, Preset] = {
                       "https://api.mistral.ai/v1",
                       "https://console.mistral.ai/api-keys", "mistral-small-latest"),
     "groq": Preset("Groq (free tier)", "openai", "https://api.groq.com/openai/v1",
-                   "https://console.groq.com/keys", "llama-3.3-70b-versatile"),
+                   "https://console.groq.com/keys", "openai/gpt-oss-120b"),
     "openrouter": Preset("OpenRouter (many models, one key)", "openai",
                          "https://openrouter.ai/api/v1", "https://openrouter.ai/keys"),
     "deepseek": Preset("DeepSeek", "openai", "https://api.deepseek.com/v1",

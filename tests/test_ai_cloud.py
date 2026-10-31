@@ -55,7 +55,7 @@ def test_openai_compatible_services_have_their_endpoints(provider, host):
 
 
 @pytest.mark.parametrize("provider,model", [
-    ("gemini", "gemini-3.8-flash"), ("groq", "llama-3.3-70b-versatile"),
+    ("gemini", "gemini-3.8-flash"), ("groq", "openai/gpt-oss-120b"),
     ("mistral", "mistral-small-latest"), ("openai", ""),
 ])
 def test_the_free_services_need_only_a_key(provider, model):

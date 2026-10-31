@@ -54,7 +54,7 @@ def test_fallbacks_make_a_chain_in_order():
     first, second, third = llm.members
     assert first.preset.label.startswith("Google Gemini") and first.key == "k1"
     assert second.preset.label.startswith("Groq") and second.key == "k2"
-    assert second.model == "llama-3.3-70b-versatile"          # its own default
+    assert second.model == "openai/gpt-oss-120b"          # its own default
     assert isinstance(third, OllamaClient)
     assert llm.where.startswith("Google Gemini") and "then local Ollama" in llm.where
 

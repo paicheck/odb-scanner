@@ -155,7 +155,8 @@ measured on a 2.6M-row month of synthetic readings:
   capacity trend with warranty-line projection, low-disk warning, phone
   navigation speed-limit sign (Mapbox `maxspeed`) and arrival charge.
 - Assistant: Gemini/Groq/Mistral free tiers need only a key (default models
-  `gemini-3.8-flash` with `reasoning_effort: low`, `llama-3.3-70b-versatile`,
+  `gemini-3.8-flash` with `reasoning_effort: low`, `llama-3.3-70b-versatile`
+  -- retired by Groq on 2026-08-16, now `openai/gpt-oss-120b` --,
   `mistral-small-latest`); clearer timeout messages.
 - Wake word ("hey scanner", off by default): fixed a crash loop — Vosk's
   `SpeechService.shutdown()` released the microphone under its own reading

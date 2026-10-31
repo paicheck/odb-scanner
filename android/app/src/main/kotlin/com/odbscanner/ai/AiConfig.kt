@@ -44,7 +44,7 @@ object AiPresets {
             freeNote = "Free, no card needed. On the free tier Google may use what is sent " +
                 "to improve its models."),
         AiPreset("groq", "Groq (free tier)", "openai", "https://api.groq.com/openai/v1",
-            "console.groq.com", defaultModel = "llama-3.3-70b-versatile",
+            "console.groq.com", defaultModel = "openai/gpt-oss-120b", reasoningEffort = "low",
             freeNote = "Free, with daily limits."),
         AiPreset("mistral", "Mistral (free Experiment plan)", "openai", "https://api.mistral.ai/v1",
             "console.mistral.ai", defaultModel = "mistral-small-latest",
