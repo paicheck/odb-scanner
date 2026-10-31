@@ -112,6 +112,19 @@
             android:name="androidx.car.app.minCarApiLevel"
             android:value="2" />
 
+        <!-- A suggested plan's Switch / Keep buttons, and a notification's
+             tap that hands the current plan to Google Maps (route/TripActions.kt). -->
+        <receiver
+            android:name=".route.TripActionReceiver"
+            android:exported="false" />
+        <activity
+            android:name=".route.HandoffActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <receiver
             android:name=".service.BootReceiver"
             android:exported="true">

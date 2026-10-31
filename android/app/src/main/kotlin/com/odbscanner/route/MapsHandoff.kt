@@ -58,17 +58,43 @@ object MapsHandoff {
             r.plan.stops.map { it.charger.lat to it.charger.lon },
             r.destination.lat to r.destination.lon, r.avoid)
 
-    /** The whole trip for Google Maps: each charging stop, then the destination. */
-    fun intent(r: TripResult): Intent {
-        val url = Uri.parse(link(r).url)
+    /** The trip for Google Maps from [from] (see [link]). */
+    fun intent(r: TripResult, from: Pair<Double, Double>? = null): Intent {
+        val url = Uri.parse(link(r, from).url)
         return Intent(Intent.ACTION_VIEW, url).setPackage(MAPS_PACKAGE)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
-    /** What a tap on a notification does: open Google Maps with [r]. */
-    fun pendingIntent(context: Context, r: TripResult): PendingIntent =
-        PendingIntent.getActivity(context, 2, intent(r),
+    /**
+     * What a notification's tap does: HandoffActivity hands Google Maps the
+     * trip's *current* revision (never one a newer plan has replaced) and
+     * records that it did.
+     */
+    fun pendingIntent(context: Context): PendingIntent =
+        PendingIntent.getActivity(context, 2, Intent(context, HandoffActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+    /**
+     * Open Google Maps with [r] from where the phone is now, and record which
+     * revision it was given; false when it would not open (not installed, or
+     * Android refused). Without Google Maps the link opens in the browser.
+     */
+    fun open(context: Context, r: TripResult): Boolean {
+        val here = PhoneLocation.lastKnown(context)?.let { it.latitude to it.longitude }
+        val maps = intent(r, here)
+        val opened = runCatching { context.startActivity(maps) }.recoverCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, maps.data)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.isSuccess
+        val trip = TripMonitor.state.value
+        if (trip != null && RouteRevisions.waypoints(r.plan, r.destination).map { it.key } ==
+            trip.route.current.keys) {
+            if (opened) TripMonitor.markHandedOff(trip.route.revision)
+            else TripMonitor.markHandoffFailed("Google Maps did not open")
+        }
+        return opened
+    }
 
     /** Whether Android lets this app open Google Maps now, without a tap. */
     fun canOpenNow(context: Context): Boolean =
@@ -84,36 +110,41 @@ object MapsHandoff {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
     /**
-     * Ask out loud whether to send [r] to Google Maps, and do it on a yes.
-     * Only with spoken alerts on, and not over a conversation with the
-     * assistant; the wake word lets go of the microphone meanwhile.
+     * Ask [question] out loud and listen for a yes: true, false, or null when
+     * nothing was heard -- or nothing asked: only with spoken alerts on, and
+     * not over a conversation with the assistant. The wake word lets go of
+     * the microphone meanwhile.
      */
-    suspend fun offer(context: Context, r: TripResult) {
-        if (!AiPrefs.load(context).speakAlerts) return
-        if (VoiceAssistant.state.value != VoiceAssistant.State.IDLE) return
+    suspend fun askYes(context: Context, question: String): Boolean? {
+        if (!AiPrefs.load(context).speakAlerts) return null
+        if (VoiceAssistant.state.value != VoiceAssistant.State.IDLE) return null
         withContext(Dispatchers.Main) { WakeWordService.pause() }
         try {
-            Speaker.sayAndWait(context, "Say yes to send the new route to Google Maps.")
+            Speaker.sayAndWait(context, question)
             VoiceAssistant.beep()
             val heard = runCatching { Listener.listenOnce(context, LISTEN_MS) }.getOrNull()
-            when {
-                heard == null -> Speaker.say(context,
-                    "I didn't hear an answer. Tap the Route updated notification to send it.")
-                !isYes(heard) -> Speaker.say(context, "OK. Google Maps keeps its route; " +
-                    "the notification has the new one.")
-                canOpenNow(context) -> {
-                    val opened = withContext(Dispatchers.Main) {
-                        runCatching { context.startActivity(intent(r)) }.isSuccess
-                    }
-                    Speaker.say(context, if (opened) "Sent to Google Maps."
-                    else "Google Maps did not open. Tap the Route updated notification.")
-                }
-                else -> Speaker.say(context, "Android needs a tap for that: tap the Route " +
-                    "updated notification. To send it by voice next time, allow Display over " +
-                    "other apps in Route settings.")
-            }
+                ?: return null
+            return isYes(heard)
         } finally {
             withContext(Dispatchers.Main + NonCancellable) { WakeWordService.resume() }
+        }
+    }
+
+    /** Ask out loud whether to send [r] to Google Maps, and do it on a yes. */
+    suspend fun offer(context: Context, r: TripResult) {
+        when (askYes(context, "Say yes to send the new route to Google Maps.")) {
+            null -> Speaker.say(context, "Tap the Route updated notification to send it.")
+            false -> Speaker.say(context, "OK. Google Maps keeps its route; " +
+                "the notification has the new one.")
+            true -> if (canOpenNow(context)) {
+                val opened = withContext(Dispatchers.Main) { open(context, r) }
+                Speaker.say(context, if (opened) "Sent to Google Maps."
+                else "Google Maps did not open. Tap the Route updated notification.")
+            } else {
+                Speaker.say(context, "Android needs a tap for that: tap the Route updated " +
+                    "notification. To send it by voice next time, allow Display over other " +
+                    "apps in Route settings.")
+            }
         }
     }
 }

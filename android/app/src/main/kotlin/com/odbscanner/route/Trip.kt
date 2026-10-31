@@ -247,6 +247,7 @@ object TripPlanner {
         avoid: Avoid? = null,
         ways: List<NavRoute>? = null,          // the ways a previous plan found: pick another
         choice: Int = 0,
+        picks: Picks = Picks(),                // chargers the driver avoided or chose, for this trip
     ): TripResult = withContext(Dispatchers.IO) {
         val s = RoutePrefs.load(context)
         val car = CarEnergy.load(context)
@@ -272,6 +273,8 @@ object TripPlanner {
             preferNetworks = Planner.names(s.preferNetworks),
             avoidNetworks = Planner.names(s.avoidNetworks),
             publicOnly = s.publicOnly,
+            avoidChargers = picks.avoidChargers,
+            useChargers = picks.useChargers,
         )
         val own = Prices.ownPrices(s.ownPrices)
         val chargers = services.chargersAlong(points, settings.searchRadiusKm).map { c ->

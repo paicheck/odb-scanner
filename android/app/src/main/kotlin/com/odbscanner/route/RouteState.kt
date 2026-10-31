@@ -143,6 +143,24 @@ object RouteRevisions {
 
     fun signature(keys: List<String>): String = keys.joinToString(">")
 
+    /** What to do with a re-plan of [r] worked out against revision [basedOn]. */
+    enum class Action {
+        REFRESH,   // same stops: apply the fresher figures, nothing to approve
+        APPLY,     // a new route the driver asked for: apply it
+        PROPOSE,   // a new route the driver did not ask for: hold it for them
+        KEEP,      // stale, or turned down before and not urgent: keep the plan
+    }
+
+    fun decide(state: RouteState, basedOn: Int, r: TripResult, driverAsked: Boolean,
+               urgent: Boolean): Action = when {
+        basedOn != state.revision -> Action.KEEP
+        !changesRoute(state, r) -> Action.REFRESH
+        driverAsked -> Action.APPLY
+        !urgent && signature(waypoints(r.plan, r.destination).map { it.key }) in state.declined ->
+            Action.KEEP
+        else -> Action.PROPOSE
+    }
+
     /**
      * Hold [r] (against revision [basedOn]) for the driver, unless it was
      * worked out against an older revision or was turned down before.

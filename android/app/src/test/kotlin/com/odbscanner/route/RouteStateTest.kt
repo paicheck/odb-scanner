@@ -146,4 +146,19 @@ class RouteStateTest {
         assertEquals("ocm:5", RouteRevisions.key("5", 1.0, 2.0))
         assertEquals("ll:51.1235,-0.1000", RouteRevisions.key("", 51.12346, -0.1))
     }
+
+    @Test
+    fun whatTheMonitorDoesWithARePlan() {
+        val s = started()
+        val sameStops = trip(listOf(stop(hubA, 10.0)), 3.0)
+        assertEquals(RouteRevisions.Action.REFRESH, RouteRevisions.decide(s, 1, sameStops, false, false))
+        assertEquals(RouteRevisions.Action.PROPOSE, RouteRevisions.decide(s, 1, planB, false, false))
+        assertEquals(RouteRevisions.Action.APPLY, RouteRevisions.decide(s, 1, planB, true, false))
+        assertEquals(RouteRevisions.Action.KEEP, RouteRevisions.decide(s, 0, planB, true, true))   // stale
+        val declined = RouteRevisions.decline(RouteRevisions.propose(s, 1, planB, "x", 2_000L, false)!!)
+        assertEquals(RouteRevisions.Action.KEEP, RouteRevisions.decide(declined, 1, planB, false, false))
+        assertEquals(RouteRevisions.Action.PROPOSE, RouteRevisions.decide(declined, 1, planB, false, true))
+        assertEquals(RouteRevisions.Action.APPLY, RouteRevisions.decide(declined, 1, planB, true, false))
+    }
 }
+

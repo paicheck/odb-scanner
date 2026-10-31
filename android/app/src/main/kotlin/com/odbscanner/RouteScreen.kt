@@ -1,13 +1,13 @@
 package com.odbscanner
 
 import android.Manifest
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -46,17 +47,18 @@ import com.odbscanner.route.ActiveTrip
 import com.odbscanner.route.CarEnergy
 import com.odbscanner.route.GoogleMaps
 import com.odbscanner.route.MODES
+import com.odbscanner.route.MapsHandoff
 import com.odbscanner.route.NavRoute
 import com.odbscanner.route.NavText
 import com.odbscanner.route.Navigator
 import com.odbscanner.route.PhoneLocation
 import com.odbscanner.route.Place
 import com.odbscanner.route.RoutePrefs
+import com.odbscanner.route.RouteRevisions
 import com.odbscanner.route.RoutingException
 import com.odbscanner.route.TripMonitor
 import com.odbscanner.route.TripPlanner
 import com.odbscanner.route.TripResult
-import com.odbscanner.route.MapsHandoff
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -67,12 +69,7 @@ import java.util.Locale
  * the browser.
  */
 fun startTrip(context: Context, r: TripResult) {
-    val maps = MapsHandoff.intent(r)
-    try {
-        context.startActivity(maps)
-    } catch (_: ActivityNotFoundException) {
-        context.startActivity(Intent(Intent.ACTION_VIEW, maps.data).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
+    MapsHandoff.open(context, r)          // from here; records the revision handed over
 }
 
 fun fmtDuration(seconds: Double): String {
@@ -259,14 +256,49 @@ fun RouteDialog(onDismiss: () -> Unit) {
     )
 }
 
-/** The trip being driven: what the monitor last saw, Re-plan now, End trip. */
+/**
+ * The trip being driven: what the monitor last saw, a suggested plan waiting
+ * for the driver, whether Google Maps has the current plan, Re-plan now, End.
+ */
 @Composable
 private fun ActiveTripBanner(t: ActiveTrip) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var said by remember { mutableStateOf<String?>(null) }
     Column(modifier = Modifier.padding(bottom = 8.dp)) {
         Text("Trip to ${t.destination.label}", fontWeight = FontWeight.SemiBold)
         Text(t.note + (if (t.replans > 0) " · re-planned ${t.replans}×" else ""),
             style = MaterialTheme.typography.bodySmall)
+        Text("Plan revision ${t.route.revision}: ${t.route.current.reason}",
+            style = MaterialTheme.typography.bodySmall)
+        t.route.proposal?.let { p ->
+            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)
+                .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(8.dp))
+                .padding(10.dp)) {
+                Text(if (p.urgent) "Your plan no longer works" else "New plan suggested",
+                    fontWeight = FontWeight.SemiBold)
+                Text("${p.change} (${p.reason})", style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { scope.launch { said = TripMonitor.accept(context) } }) {
+                        Text("Switch")
+                    }
+                    OutlinedButton(onClick = { said = TripMonitor.decline() }) { Text("Keep my plan") }
+                }
+            }
+        }
+        if (t.route.sync.provider == RouteRevisions.GOOGLE_MAPS) {
+            val sent = t.route.sync.sentRevision
+            Text(when {
+                !t.route.needsHandoff -> "Google Maps has this plan (revision $sent)."
+                sent == null -> "Not handed to Google Maps yet."
+                else -> "Google Maps has an older plan (revision $sent); it cannot be updated " +
+                    "from here, only handed this one."
+            }, style = MaterialTheme.typography.bodySmall)
+            if (t.route.needsHandoff) {
+                TextButton(onClick = { startTrip(context, t.result) }) { Text("Send to Google Maps") }
+            }
+        }
+        said?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { TripMonitor.replanNow(context) }) { Text("Re-plan now") }
             TextButton(onClick = { TripMonitor.stop() }) { Text("End trip") }
