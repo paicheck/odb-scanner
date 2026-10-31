@@ -64,12 +64,14 @@ def register(app, ctx) -> None:
         try:
             result = svc.ask(question)
             report, warnings, error = result["report"], result["warnings"], None
+            cited = result.get("citations")
         except AIError as exc:
-            report, warnings, error = "", [], str(exc)
+            report, warnings, error, cited = "", [], str(exc), None
         except Exception as exc:
             # Building the evidence or storing the report failed. The page
             # still renders, with the error, rather than a bare 500.
             log.exception("report generation failed")
+            cited = None
             report, warnings, error = "", [], (
                 f"Report generation failed ({type(exc).__name__}: {exc}). "
                 "See the dashboard log for details.")
@@ -83,6 +85,7 @@ def register(app, ctx) -> None:
             reports=reports_hist,
             report=report,
             warnings=warnings,
+            citations=cited,
             error=error,
             ai_model=svc.llm.model,
             ai_where=svc.llm.where,

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from ai import prompts, reports
+from ai import citations, prompts, reports
 from ai.cloud import llm_from_config, redact
 from ai.ollama import AIError
 from analysis import battery as battery_analysis
@@ -89,9 +89,20 @@ class AnalysisService:
                 capacity = capacity_trend(self.repo, vehicle_id)
             except Exception as exc:  # noqa: BLE001
                 log.warning("capacity trend left out of the evidence: %s", exc)
+        state = None
+        if vehicle_id:
+            try:
+                from analysis.twin import vehicle_state
+                state = vehicle_state(self.repo, vehicle_id)
+                state["quantities"] = {
+                    k: {f: q[f] for f in ("label", "source", "kind", "value", "unit",
+                                          "ts", "current", "note")}
+                    for k, q in state["quantities"].items()}
+            except Exception as exc:  # noqa: BLE001
+                log.warning("vehicle state left out of the evidence: %s", exc)
         return prompts.build_context(vehicle, overview, dtcs, charging,
                                      correlation, anomalies, ecus,
-                                     capacity=capacity, **platform)
+                                     capacity=capacity, state=state, **platform)
 
     def _platform_evidence(self, vehicle_id: int | None) -> dict:
         """Quality / freshness / provenance summary for the evidence packet.
@@ -151,7 +162,8 @@ class AnalysisService:
             # Leaving the machine: no VIN in what is sent -- or stored as sent.
             context = redact(context, vehicle.get("vin"))
             question = redact(question, vehicle.get("vin"))
-        prompt = prompts.interpret_prompt(context, question)
+        # The citation rules go with every question, and are checked below.
+        prompt = prompts.investigation_prompt(context, question)
         temperature = self.cfg.get("ollama.temperature", 0.2)
         model, fell_back = self.llm.model, []
         if hasattr(self.llm, "generate_with_source"):
@@ -162,7 +174,8 @@ class AnalysisService:
         else:
             report = self.llm.generate(prompt, system=prompts.SYSTEM_PROMPT,
                                        temperature=temperature)
-        report, warnings = reports.validate_report(report)
+        cited = citations.check(report, citations.index(context))
+        report, warnings = reports.validate_report(report, citations.caveats(cited))
         if fell_back:
             warnings = [f"Written by the backup {answered_by.where} ({model}): "
                         + "; ".join(f"{where} failed ({why})"
@@ -184,4 +197,4 @@ class AnalysisService:
                                      warnings)
         return {"question": question, "report": report,
                 "warnings": warnings, "context": context,
-                "model": model}
+                "model": model, "citations": cited}

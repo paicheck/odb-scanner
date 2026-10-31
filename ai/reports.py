@@ -38,7 +38,7 @@ def _has_section(text: str, name: str) -> bool:
                      text, re.IGNORECASE | re.MULTILINE) is not None
 
 
-def validate_report(text: str) -> tuple[str, list[str]]:
+def validate_report(text: str, extra: list[str] | tuple = ()) -> tuple[str, list[str]]:
     """Return (amended_report, warnings). Never silently deletes LLM output;
     appends caveats where the language over-claims.
 
@@ -55,6 +55,8 @@ def validate_report(text: str) -> tuple[str, list[str]]:
             warnings.append(caveat)
     if TRUNCATED_MARKER in text:
         warnings.append(TRUNCATION_WARNING)
+    # Checks made elsewhere (ai/citations.py) land in the same block.
+    warnings.extend(w for w in extra if w not in warnings)
     for section in ("LIMITATIONS", "HYPOTHESES"):
         if not _has_section(text, section):
             warnings.append(

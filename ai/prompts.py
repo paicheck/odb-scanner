@@ -56,7 +56,8 @@ def build_context(vehicle: dict, overview: dict, dtcs: dict,
                   freshness: dict | None = None,
                   provenance: dict | None = None,
                   investigation: dict | None = None,
-                  capacity: dict | None = None) -> dict:
+                  capacity: dict | None = None,
+                  state: dict | None = None) -> dict:
     """Assemble the structured evidence packet (compact JSON).
 
     The optional arguments carry the platform's newer evidence discipline:
@@ -94,6 +95,10 @@ def build_context(vehicle: dict, overview: dict, dtcs: dict,
         # analysis/health.capacity_trend: the rated-energy trend and, when the
         # fall is significant, today's rate carried to the warranty line.
         context["battery"]["capacity_trend"] = capacity
+    if state is not None:
+        # analysis/twin.py: each value observed, inferred or unknown, with the
+        # key and the moment it rests on -- what a citation can point to.
+        context["vehicle_state"] = state
     return context
 
 
@@ -110,6 +115,11 @@ CITATION_RULES = """
 Evidence discipline (mandatory):
 - Cite the exact measurement key and its observed timestamp for every claim you
   make, in the form key@timestamp. Never cite "latest" without its timestamp.
+  Copy timestamps exactly as they appear in the evidence: every citation is
+  checked against it, and one that is not there is flagged as unsupported.
+- In vehicle_state, kind "observed" is a reading, "inferred" is worked out
+  from readings by the rule given, "unknown" is not known. Do not present an
+  inferred or not-current value as a current reading.
 - State the sample size behind every statistic and the limitations of that
   evidence. If there is too little evidence, say so and refuse to conclude.
 - Measurements listed under measurement_quality with use_in_scoring=false have a

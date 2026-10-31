@@ -18,6 +18,11 @@
 {% if error %}<div class="err">{{ error }}</div>{% endif %}
 {% if warnings %}{% for w in warnings %}<div class="warn">{{ w }}</div>{% endfor %}{% endif %}
 {% if report %}<pre class="report">{{ report }}</pre>{% endif %}
+{% if citations and citations.verified %}
+<details open><summary>Evidence cited and found ({{ citations.verified | length }} of {{ citations.cited }})</summary>
+  <ul class="note">{% for c in citations.verified %}<li><code>{{ c.key }}@{{ c.ts }}</code>{% if c.value is not none %}: {{ c.value }} in the evidence{% endif %}</li>{% endfor %}</ul>
+</details>
+{% endif %}
 
 <h3>Previous reports</h3>
 {% for r in reports %}
