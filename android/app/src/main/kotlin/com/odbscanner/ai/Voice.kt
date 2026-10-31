@@ -650,7 +650,7 @@ object VoiceAssistant {
         if (trace.firstWordMs == null) trace.firstWordMs = trace.aiMs
         reply.error?.let {
             trace.failed(it, "AI")
-            return fail(context, turn, it, speak)
+            return fail(context, turn, it, speak, reply.spoken)
         }
         trace.answered(Assistant.active.value, Assistant.lastModel)
         if (!streamed && (!fire(VoiceEvent.Answered(turn, speak)) || !speak)) return
@@ -674,11 +674,12 @@ object VoiceAssistant {
     }
 
     /** End [turn] in ERROR: a few words said (unless it was the speech that failed). */
-    private fun fail(context: Context, turn: Int, error: AiError, speak: Boolean) {
+    private fun fail(context: Context, turn: Int, error: AiError, speak: Boolean,
+                     said: String = error.spoken) {
         if (!fire(VoiceEvent.Failed(turn, error))) return
         if (error.provider == AiErrors.SPEECH_OUT) Speaker.stopAssistant()   // a stuck voice
         else if (speak) {
-            Speaker.say(context, error.spoken, owner = SpeechOwner.ASSISTANT, turn = turn)
+            Speaker.say(context, said, owner = SpeechOwner.ASSISTANT, turn = turn)
         }
         scope.launch {
             delay(ERROR_HOLD_MS)

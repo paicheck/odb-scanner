@@ -130,12 +130,19 @@ object Assistant {
      */
     private suspend fun local(context: Context, text: String, why: AiError): Reply? {
         if (!LocalAnswers.covers(why)) return null
-        val intent = LocalAnswers.intent(text) ?: return null
-        val data = runCatching {
-            org.json.JSONObject(AssistantTools(context).run(ToolCall("local", LocalAnswers.tool(intent),
-                org.json.JSONObject())))
-        }.getOrNull() ?: return null
-        val said = LocalAnswers.say(intent, data) ?: return null
+        val intent = LocalAnswers.intent(text)
+        val data = intent?.let { i ->
+            runCatching {
+                org.json.JSONObject(AssistantTools(context).run(ToolCall("local", LocalAnswers.tool(i),
+                    org.json.JSONObject())))
+            }.getOrNull()
+        }
+        val said = data?.let { LocalAnswers.say(intent, it) }
+        if (said == null) {
+            // Not one the phone can answer by itself: the failure, and what it can do.
+            val help = LocalAnswers.cannot(intent)
+            return Reply("${why.spoken} $help", "${why.line}. $help", why)
+        }
         _active.value = "the phone itself (no AI service)"
         lastModel = ""
         return Reply(said, "$said (answered from the phone's own data: no AI service could " +

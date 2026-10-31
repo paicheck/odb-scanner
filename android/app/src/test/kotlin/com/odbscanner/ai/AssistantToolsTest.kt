@@ -1,9 +1,15 @@
 package com.odbscanner.ai
 
 import com.odbscanner.db.MeasurementEntity
+import com.odbscanner.route.CarEnergy
+import com.odbscanner.route.Charger
+import com.odbscanner.route.Place
+import com.odbscanner.route.Plan
 import com.odbscanner.route.Planner
 import com.odbscanner.route.RouteServices
 import com.odbscanner.route.RoutePoint
+import com.odbscanner.route.Stop
+import com.odbscanner.route.TripResult
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -71,5 +77,27 @@ class AssistantToolsTest {
         assertEquals(2, steps[1].exitNumber)
         assertEquals("M23", steps[1].road)
         assertEquals(null, steps[0].exitNumber)
+    }
+
+    @Test
+    fun withoutAPositionTheTripsDistancesAreFromItsStart() {
+        val stop = Stop(km = 100.0, charger = Charger("Hub A", 52.6, -1.4, 150.0, "Op", id = "101"),
+            arrivePct = 30.0, departPct = 80.0, chargeMin = 20, kwh = 30.0, pricePerKwh = 0.6,
+            priceSource = "", cost = 18.0, detourKm = 0.5)
+        val r = TripResult(Place("Start", 51.75, -1.26), Place("Leeds", 53.80, -1.55),
+            Plan("with_stops", 270.0, 10800.0, 90.0, 20.0, listOf(stop), emptyList(), null, 1200.0,
+                18.0, "balanced", emptyList()),
+            CarEnergy(53.2, "test", 90.0, null, "test"), 17.0, emptyList())
+        val unknown = AssistantTools.summary(r, null)
+        val s = unknown.getJSONArray("stops_ahead").getJSONObject(0)
+        assertFalse(s.has("from_here"))
+        assertEquals(100.0, s.getJSONObject("from_start").getDouble("km"), 0.0)
+        assertTrue(unknown.getString("position").startsWith("unknown"))
+        assertFalse(unknown.has("remaining"))
+        val placed = AssistantTools.summary(r, 40.0)
+        assertEquals(60.0, placed.getJSONArray("stops_ahead").getJSONObject(0)
+            .getJSONObject("from_here").getDouble("km"), 0.0)
+        assertEquals(230.0, placed.getJSONObject("remaining").getDouble("km"), 0.0)
+        assertFalse(placed.has("position"))
     }
 }

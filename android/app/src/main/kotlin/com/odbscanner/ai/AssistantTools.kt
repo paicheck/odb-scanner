@@ -139,50 +139,6 @@ class AssistantTools(private val context: Context) : ToolRunner {
     }
 
     // -- the trip -------------------------------------------------------------------
-    private fun summary(r: TripResult, kmAlong: Double?): JSONObject {
-        val p = r.plan
-        val ahead = p.stops.filter { kmAlong == null || it.km > kmAlong - 1.0 }
-        val out = JSONObject()
-            .put("destination", r.destination.label)
-            .put("mode", p.mode)
-            .put("status", p.status)
-            .put("total", dist(p.distanceKm))
-            .put("arrival_charge_pct", p.arrivalPct?.let { round1(it) } ?: JSONObject.NULL)
-            .put("arrival_likely_range_pct", p.arrivalBand?.let {
-                JSONArray().put(round1(it.lowPct)).put(round1(it.highPct)) } ?: JSONObject.NULL)
-            .put("charging_cost_gbp", round2(p.cost))
-            .put("driving_min", Math.round(p.driveS / 60))
-            .put("charging_min", Math.round(p.chargeS / 60))
-        if (kmAlong != null) out.put("remaining", dist((p.distanceKm - kmAlong).coerceAtLeast(0.0)))
-        p.unreachableAtKm?.let { out.put("charge_runs_out_near", dist(it)) }
-        out.put("stops_ahead", JSONArray().apply {
-            ahead.forEach { s ->
-                put(JSONObject()
-                    .put("charger", s.charger.name)
-                    .put("operator", s.charger.operator)
-                    .put("address", s.charger.address)
-                    .put("from_here", dist(s.km - (kmAlong ?: 0.0)))
-                    .put("arrive_pct", s.arrivePct).put("leave_pct", s.departPct)
-                    .put("charging_min", s.chargeMin).put("power_kw", s.charger.powerKw)
-                    .put("cost_gbp", s.cost).put("price_per_kwh_gbp", s.pricePerKwh)
-                    .put("price_source", s.priceSource)
-                    .put("road_there", roadNear(r, s.km))
-                    .put("stop", p.stops.indexOf(s) + 1)
-                    .put("arrive_likely_range_pct", if (s.arriveLowPct != null && s.arriveHighPct != null)
-                        JSONArray().put(s.arriveLowPct).put(s.arriveHighPct) else JSONObject.NULL)
-                    .put("alternatives", JSONArray().apply {
-                        s.alternatives.take(3).forEachIndexed { k, a ->
-                            put(JSONObject().put("alternative", k + 1).put("charger", a.charger.name)
-                                .put("operator", a.charger.operator).put("power_kw", a.charger.powerKw)
-                                .put("from_stop", dist(a.km - s.km))
-                                .put("price_per_kwh_gbp", round2(a.pricePerKwh)))
-                        }
-                    }))
-            }
-        })
-        return out
-    }
-
     private suspend fun where(r: TripResult): Pair<Double?, Double?> {
         val here = PhoneLocation.current(context) ?: return null to null
         val at = Replan.progress(r.line, r.plan.distanceKm, here.latitude, here.longitude)
@@ -499,12 +455,62 @@ class AssistantTools(private val context: Context) : ToolRunner {
         }
 
     // -- helpers ----------------------------------------------------------------------
-    private fun roadNear(r: TripResult, km: Double): String =
-        r.steps.lastOrNull { it.km <= km }?.let { st ->
-            listOf(st.road, st.instruction).firstOrNull { it.isNotBlank() } ?: ""
-        } ?: ""
-
     companion object {
+        /** The trip for the assistant; [kmAlong]: where the phone is on it, null when not known. */
+        internal fun summary(r: TripResult, kmAlong: Double?): JSONObject {
+            val p = r.plan
+            val ahead = p.stops.filter { kmAlong == null || it.km > kmAlong - 1.0 }
+            // Without the phone's position the distances are from the start: said
+            // so, never passed off as from here.
+            val origin = if (kmAlong != null) "from_here" else "from_start"
+            val out = JSONObject()
+                .put("destination", r.destination.label)
+                .put("mode", p.mode)
+                .put("status", p.status)
+                .put("total", dist(p.distanceKm))
+                .put("arrival_charge_pct", p.arrivalPct?.let { round1(it) } ?: JSONObject.NULL)
+                .put("arrival_likely_range_pct", p.arrivalBand?.let {
+                    JSONArray().put(round1(it.lowPct)).put(round1(it.highPct)) } ?: JSONObject.NULL)
+                .put("charging_cost_gbp", round2(p.cost))
+                .put("driving_min", Math.round(p.driveS / 60))
+                .put("charging_min", Math.round(p.chargeS / 60))
+            if (kmAlong != null) out.put("remaining", dist((p.distanceKm - kmAlong).coerceAtLeast(0.0)))
+            else out.put("position", "unknown: the phone has no recent fix, so the distances are " +
+                "from the trip's start and the stops listed may include ones already passed")
+            p.unreachableAtKm?.let { out.put("charge_runs_out_near", dist(it)) }
+            out.put("stops_ahead", JSONArray().apply {
+                ahead.forEach { s ->
+                    put(JSONObject()
+                        .put("charger", s.charger.name)
+                        .put("operator", s.charger.operator)
+                        .put("address", s.charger.address)
+                        .put(origin, dist(s.km - (kmAlong ?: 0.0)))
+                        .put("arrive_pct", s.arrivePct).put("leave_pct", s.departPct)
+                        .put("charging_min", s.chargeMin).put("power_kw", s.charger.powerKw)
+                        .put("cost_gbp", s.cost).put("price_per_kwh_gbp", s.pricePerKwh)
+                        .put("price_source", s.priceSource)
+                        .put("road_there", roadNear(r, s.km))
+                        .put("stop", p.stops.indexOf(s) + 1)
+                        .put("arrive_likely_range_pct", if (s.arriveLowPct != null && s.arriveHighPct != null)
+                            JSONArray().put(s.arriveLowPct).put(s.arriveHighPct) else JSONObject.NULL)
+                        .put("alternatives", JSONArray().apply {
+                            s.alternatives.take(3).forEachIndexed { k, a ->
+                                put(JSONObject().put("alternative", k + 1).put("charger", a.charger.name)
+                                    .put("operator", a.charger.operator).put("power_kw", a.charger.powerKw)
+                                    .put("from_stop", dist(a.km - s.km))
+                                    .put("price_per_kwh_gbp", round2(a.pricePerKwh)))
+                            }
+                        }))
+                }
+            })
+            return out
+        }
+
+        private fun roadNear(r: TripResult, km: Double): String =
+            r.steps.lastOrNull { it.km <= km }?.let { st ->
+                listOf(st.road, st.instruction).firstOrNull { it.isNotBlank() } ?: ""
+            } ?: ""
+
         private const val MILES_PER_KM = 0.621371
 
         val BATTERY_KEYS = listOf(
