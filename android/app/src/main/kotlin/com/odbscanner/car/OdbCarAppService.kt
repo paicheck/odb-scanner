@@ -31,6 +31,11 @@ class OdbCarAppService : CarAppService() {
         }
 
     override fun onCreateSession(): Session = object : Session() {
+        init {
+            // The car screen can start the app's process mid-trip, too.
+            com.odbscanner.route.TripMonitor.restoreInBackground(this@OdbCarAppService)
+        }
+
         override fun onCreateScreen(intent: Intent): Screen = HomeScreen(carContext)
     }
 }

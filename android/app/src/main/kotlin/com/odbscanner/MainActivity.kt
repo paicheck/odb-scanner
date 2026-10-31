@@ -70,6 +70,9 @@ class MainActivity : ComponentActivity() {
         // The wake word survives a reboot or a killed process: back on when the
         // app is next opened (a microphone service may only start from here).
         WakeWordService.resumeIfOn(this)
+        // A trip that was being driven when the app was stopped: planned again
+        // from here and watched (route/TripStore.kt).
+        com.odbscanner.route.TripMonitor.restoreInBackground(this)
         // A bad or unreadable spec must show an error screen, not a crash with
         // no explanation: the asset is generated, and a hand-edited or missing
         // one would otherwise take the whole app down before the UI exists.

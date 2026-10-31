@@ -25,6 +25,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.util.UUID
 import java.util.Locale
@@ -77,14 +78,22 @@ object TripMonitor {
     val state: StateFlow<ActiveTrip?> = _state
 
     fun start(context: Context, result: TripResult, picks: Picks = Picks()) {
-        val app = context.applicationContext
         val now = System.currentTimeMillis()
-        val provider = if (RoutePrefs.load(app).navigateInApp) RouteRevisions.IN_APP
+        val provider = if (RoutePrefs.load(context).navigateInApp) RouteRevisions.IN_APP
         else RouteRevisions.GOOGLE_MAPS
+        startWith(context, result,
+            RouteRevisions.start(UUID.randomUUID().toString(), result, provider, now, picks))
+    }
+
+    /** Watch [result] as revision state [route] (a new trip, or one restored). */
+    private fun startWith(context: Context, result: TripResult, route: RouteState) {
+        val app = context.applicationContext
+        appContext = app
         // lastPct starts empty: "charging" means one READING above the last
         // one, not above a start charge the driver may have typed.
-        _state.value = ActiveTrip(result.destination, result.plan.mode, result, now,
-            route = RouteRevisions.start(UUID.randomUUID().toString(), result, provider, now, picks))
+        _state.value = ActiveTrip(result.destination, result.plan.mode, result,
+            System.currentTimeMillis(), route = route)
+        _state.value?.let(::persist)
         // The location-type foreground service lets the phone still read its
         // position while Google Maps is in front.
         if (PhoneLocation.permitted(app)) TripService.start(app)
@@ -105,6 +114,7 @@ object TripMonitor {
         if (_state.value?.result !== result) start(context, result, picks)
         if (!RoutePrefs.load(context).navigateInApp) return false
         Navigator.start(context, result)
+        _state.value?.let(::persist)                // saved as navigated in the app
         return true
     }
 
@@ -113,6 +123,55 @@ object TripMonitor {
         job = null
         _state.value = null
         Navigator.stop()
+        appContext?.let(TripStore::clear)            // ended: nothing to restore
+    }
+
+    /**
+     * After the app was stopped mid-trip: plan the saved trip again from
+     * where the car is now, as the next revision of its saved RouteState
+     * (picks and what Google Maps has kept), and watch it -- navigating in
+     * the app again if it was. Null when there was nothing to restore; else
+     * what happened. A trip more than TripStore.MAX_AGE_MS old is forgotten.
+     */
+    suspend fun restore(context: Context): String? {
+        val app = context.applicationContext
+        if (_state.value != null) return null
+        val saved = TripStore.load(app) ?: return null
+        val now = System.currentTimeMillis()
+        if (!TripStore.fresh(saved, now)) {
+            TripStore.clear(app)
+            return null
+        }
+        val here = PhoneLocation.current(app, maxAgeMs = 10 * 60_000L)
+            ?: return "No position yet to restore the trip to ${saved.destination.label}."
+        val fresher = try {
+            TripPlanner.plan(app, saved.destination, Place("Your location", here.latitude,
+                here.longitude), null, saved.mode, avoid = saved.avoid, picks = saved.route.picks)
+        } catch (e: Exception) {
+            return "Could not restore the trip to ${saved.destination.label}: " +
+                (e.message ?: e.javaClass.simpleName)
+        }
+        val route = when (val out = RouteRevisions.revise(saved.route, saved.route.revision,
+            fresher, "restored after the app restarted", now)) {
+            is RouteRevisions.Outcome.Revised -> out.state
+            is RouteRevisions.Outcome.Same -> out.state
+            is RouteRevisions.Outcome.Stale -> saved.route
+        }
+        withContext(Dispatchers.Main) {
+            startWith(app, fresher, route)
+            if (saved.navigating) Navigator.start(app, fresher)
+        }
+        val maps = route.needsHandoff
+        notify(app, "Trip restored", "Watching your trip to ${saved.destination.label} again." +
+            (if (maps) " Google Maps has an older plan: tap to send this one." else ""),
+            if (maps) MapsHandoff.pendingIntent(app) else null)
+        return "Trip to ${saved.destination.label} restored."
+    }
+
+    /** restore() without waiting: from the app's or the car screen's start. */
+    fun restoreInBackground(context: Context) {
+        val app = context.applicationContext
+        scope.launch { runCatching { restore(app) } }
     }
 
     /** Re-plan now and wait for it: the trip as it stands afterwards (null: none). */
@@ -140,7 +199,19 @@ object TripMonitor {
     }
 
     private fun update(f: (ActiveTrip) -> ActiveTrip) {
-        _state.value?.let { _state.value = f(it) }
+        val old = _state.value ?: return
+        val new = f(old)
+        _state.value = new
+        if (new.route != old.route || new.result.avoid != old.result.avoid) persist(new)
+    }
+
+    private var appContext: Context? = null
+
+    /** Save what restore() needs: the route state, not the plan. */
+    private fun persist(t: ActiveTrip) {
+        val app = appContext ?: return
+        TripStore.save(app, SavedTrip(t.destination, t.mode, t.result.avoid, Navigator.active,
+            t.route, System.currentTimeMillis()))
     }
 
     private suspend fun check(context: Context, force: Boolean = false,
