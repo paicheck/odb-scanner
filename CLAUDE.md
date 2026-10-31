@@ -186,3 +186,11 @@ measured on a 2.6M-row month of synthetic readings:
   citations, overview health card, phone parity for preferences/wind/ranges.
   What to decide and run: `review_output/overnight_handover.md`. The
   intermittent `test_trips` failure was the test's own clock (fixed).
+- Navigation, 2026-10-31 (branches `maps-voice` → `navigation`, not pushed):
+  one versioned route state on the phone (`route/RouteState.kt`), route changes
+  as proposals the driver accepts, Google Maps tracked by revision and
+  re-offered (it cannot be updated from outside -- evidence in
+  `review_output/navigation_review.md`), shared hand-off links
+  (`handoff_vectors.json`), leg energy, trip restore, assistant route tools
+  with confirmation, Android Auto proposals. Handover:
+  `review_output/navigation_handover.md`.

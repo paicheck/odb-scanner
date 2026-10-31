@@ -136,6 +136,29 @@ re-plans while charging, near a planned charger, on a reading over 15 minutes
 old or a position over 3 minutes old, or more often than every 5 minutes.
 **Re-plan now** and **End trip** are on the planner (and the car screen).
 
+**The plan has revisions, and changes wait for you.** A re-plan that keeps
+the same stops just refreshes the figures. One that moves a charging stop or
+the destination -- and that you did not ask for -- is a *suggestion*: a
+notification with **Switch** / **Keep my plan**, a spoken "Say yes to switch",
+a card on the planner and the navigation screen, and a message on the car
+screen. A suggestion you turned down is not offered again unless the plan has
+stopped working. **Avoid this charger**, **Use** (an alternative), and the
+assistant's avoid/use/network tools are yours, so they apply at once, and the
+choices stay for the rest of the trip.
+
+**Google Maps cannot be updated from another app** -- Google offers no
+interface for changing a navigation already running in Google Maps
+(`review_output/navigation_review.md` has the evidence). So the app keeps
+track of which revision Google Maps was given; when the stops change it offers
+the new trip -- a tap on the notification, or a spoken yes -- from your
+position, so Google Maps starts navigating rather than showing a preview.
+Opening Google Maps by voice from the background needs **Display over other
+apps** (Route settings); otherwise tap the notification.
+
+**If the app is stopped mid-trip**, the trip is saved and, when the app (or
+the car screen) starts again within 12 hours, planned again from where you are
+and watched -- navigating in the app again if it was.
+
 Following a trip needs **precise location**, asked for once when you start one:
 approximate location is ~2 km off and refreshed only every ~10 minutes. While
 the trip runs, a "Watching your trip" notification stays up -- that
