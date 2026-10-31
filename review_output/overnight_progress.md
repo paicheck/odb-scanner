@@ -265,3 +265,19 @@ noted; "real data unchanged" means a metadata snapshot of `~/odb_data` and
   (EXPLAIN: covering-index search) — the overview builds the twin every load.
 - README, `docs/REGRESSION_GUARDS.md`, CLAUDE.md open items updated.
 - Full suite **1,608 passed**, ruff clean, real data unchanged.
+
+## 02:56 — N15 Phone en-route level, held by shared vectors — `5bec3b2`
+
+- `tools/export_enroute_vectors.py` → `tests/data/enroute_vectors.json`: 14 cases
+  on a hand-made plan and a real planner plan, covering all four levels, stale
+  readings, at-stop, charged-since-plan, after the first stop, a higher reserve.
+  Python test fails when the file is stale.
+- `route/EnRoute.kt` ports `analysis/enroute.assess`; `EnRouteTest` compares
+  every field (level, replan, expected, deviation, ratio, target, projected,
+  shortfall, reach, at-stop, stale, alternatives). TripMonitor shows the level
+  and advice in the trip note and speaks a critical one once per plan;
+  re-planning unchanged.
+- Bounded Gradle: **139 JVM tests, 0 failures** (all 14 cases matched on the
+  first run). No Kotlin mutation run (to save a build): the comparison covers
+  many independent numeric fields, so a wrong rule would show.
+- Full suite **1,609 passed**, ruff clean, real data unchanged.

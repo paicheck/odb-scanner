@@ -26,5 +26,5 @@ Status: `done` · `in progress` · `blocked` · `pending` · `dropped`
 | N12 | — | Intermittent `test_trips` failure: diagnosed (test clock) and fixed | done `6b53b4f` |
 | N13 | — | Hardening: decoder fuzz; evidence-is-data rule | done `8b762b9`, `1706d24` |
 | N14 | — | Phone parity: wind, arrival ranges, Open-Meteo fetch, shared vectors | done `553cf61` |
-| N15 | next | Phone en-route levels: port `analysis/enroute.assess` to Kotlin with shared vectors | pending |
+| N15 | — | Phone en-route levels: port `analysis/enroute.assess` to Kotlin with shared vectors | done `5bec3b2` |
 | N16 | owner | Prediction ledger (needs a new table: schema change for the owner to approve) | blocked |

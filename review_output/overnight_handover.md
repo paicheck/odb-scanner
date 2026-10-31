@@ -31,10 +31,12 @@ to a phone.
 | — | Decoder fuzz over all 409 decoders; "evidence is data, never an instruction" rule | `8b762b9`, `1706d24` |
 | — | Phone: wind and arrival ranges via the shared vectors, the Open-Meteo fetch, a "Count the forecast wind" switch | `553cf61` |
 | — | Twin lookup on the covering index; README, regression guards, CLAUDE.md | `dec3f42`, `30b671b` |
+| N15 | Phone en-route level (critical/adjust/warning/normal) in the trip note, critical spoken once; held to the PC by `tests/data/enroute_vectors.json` | `5bec3b2` |
 
-Verification at the end: **1,608 Python tests passed**, ruff clean;
-**137 Android JVM tests, 0 failures** (bounded Gradle, `:app:testDebugUnitTest
-:app:assembleRelease`), including all 27 shared route-vector cases;
+Verification at the end: **1,609 Python tests passed**, ruff clean;
+**139 Android JVM tests, 0 failures** (bounded Gradle, `:app:testDebugUnitTest
+:app:assembleRelease`), including all 27 shared route-vector and 14 en-route
+cases;
 `tools/smoke_test.py` against the simulator on a scratch database: 26 passed,
 0 failed, including the read-only audit of every transmitted frame.
 
@@ -57,7 +59,7 @@ Verification at the end: **1,608 Python tests passed**, ruff clean;
 ## Decisions for you
 
 1. **Push / merge.** Suggested order: `ai-fallback`, then `charger-preferences`,
-   then this branch (each builds on the one before). Or review the 33
+   then this branch (each builds on the one before). Or review the 35
    commits over `main` as one PR.
 2. **Weather is on by default** (`routing.weather: true`, and on the phone).
    It sends points along the route, rounded to 0.1°, to Open-Meteo; the route
@@ -81,9 +83,8 @@ Verification at the end: **1,608 Python tests passed**, ruff clean;
 
 ## Not done, and where to start
 
-- **Phone en-route levels.** `analysis/enroute.py` follows `Replan.kt`'s rules
-  but the phone does not show a level yet. Next step: port `assess()` to
-  Kotlin and hold both to a shared vector file, as the route vectors do.
+- **Phone en-route levels** are done, but untried on the road: the level
+  appears in the trip note and a critical one is spoken once per plan.
 - **Phone personal model.** The phone plans with the flat figure; the model
   and its backtest are PC-only.
 - **Wind forecast error** is not in the arrival range; a long leg carries one
