@@ -5,6 +5,9 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.ln
+import kotlin.math.log2
+import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.tan
 
 /**
@@ -14,6 +17,8 @@ import kotlin.math.tan
  */
 object MapMath {
     const val MAX_ZOOM = 17
+    const val MIN_VIEW_ZOOM = 3.0
+    const val MAX_VIEW_ZOOM = 18.5     // past MAX_ZOOM, zoom-17 tiles are drawn larger
 
     /** Tile-space x of a longitude at zoom [z]: tile index plus fraction. */
     fun worldX(lon: Double, z: Int): Double = (lon + 180.0) / 360.0 * (1 shl z)
@@ -67,6 +72,66 @@ object MapMath {
         } ?: 1
         val n = (1 shl zoom).toDouble()
         return View(zoom, (x0 + x1) / 2 * n, (y0 + y1) / 2 * n, widthPx, heightPx, tilePx)
+    }
+
+    /**
+     * Where a map looks and how close, for one the driver can pinch and drag:
+     * a centre in world units (0 to 1 across the world at zoom 0) and a
+     * continuous zoom. Tiles are fetched at the whole zoom below and drawn
+     * scaled, so zooming is smooth.
+     */
+    data class Camera(val x: Double, val y: Double, val zoom: Double) {
+        /** Pixels per world unit, with [baseTilePx] the drawn size of a tile at a whole zoom. */
+        private fun scale(baseTilePx: Float) = baseTilePx * 2.0.pow(zoom)
+
+        fun view(widthPx: Float, heightPx: Float, baseTilePx: Float): View {
+            val z = floor(zoom).toInt().coerceIn(1, MAX_ZOOM)
+            val n = (1 shl z).toDouble()
+            return View(z, x * n, y * n, widthPx, heightPx,
+                (baseTilePx * 2.0.pow(zoom - z)).toFloat())
+        }
+
+        /** Moved with a finger that moved [dx], [dy] pixels: the map follows it. */
+        fun pan(dx: Float, dy: Float, baseTilePx: Float): Camera {
+            val s = scale(baseTilePx)
+            return copy(x = x - dx / s, y = (y - dy / s).coerceIn(0.0, 1.0))
+        }
+
+        /** Zoomed by [factor] about the screen point ([px], [py]), which stays where it is. */
+        fun zoomAbout(factor: Float, px: Float, py: Float, widthPx: Float, heightPx: Float,
+                      baseTilePx: Float, minZoom: Double = MIN_VIEW_ZOOM,
+                      maxZoom: Double = MAX_VIEW_ZOOM): Camera {
+            if (factor <= 0f) return this
+            val z = (zoom + log2(factor.toDouble())).coerceIn(minZoom, maxZoom)
+            val before = scale(baseTilePx)
+            val after = baseTilePx * 2.0.pow(z)
+            val ox = (px - widthPx / 2) / before
+            val oy = (py - heightPx / 2) / before
+            val rx = (px - widthPx / 2) / after
+            val ry = (py - heightPx / 2) / after
+            return Camera(x + ox - rx, (y + oy - ry).coerceIn(0.0, 1.0), z)
+        }
+
+        companion object {
+            /** Looking at one place, [zoom] close. */
+            fun at(lat: Double, lon: Double, zoom: Double) = Camera(worldX(lon, 0), worldY(lat, 0), zoom)
+        }
+    }
+
+    /** The closest camera at which every (lat, lon) fits inside the box less [padPx]. */
+    fun fitCamera(points: List<Pair<Double, Double>>, widthPx: Float, heightPx: Float,
+                  baseTilePx: Float, padPx: Float): Camera {
+        if (points.isEmpty()) return Camera(0.5, 0.5, MIN_VIEW_ZOOM)
+        val xs = points.map { worldX(it.second, 0) }
+        val ys = points.map { worldY(it.first, 0) }
+        val dx = xs.max() - xs.min()
+        val dy = ys.max() - ys.min()
+        val room = min(
+            if (dx > 0) (widthPx - 2 * padPx) / (dx * baseTilePx) else Double.MAX_VALUE,
+            if (dy > 0) (heightPx - 2 * padPx) / (dy * baseTilePx) else Double.MAX_VALUE)
+        val zoom = if (room == Double.MAX_VALUE) MAX_ZOOM - 2.0
+        else log2(room).coerceIn(MIN_VIEW_ZOOM, MAX_ZOOM.toDouble())
+        return Camera((xs.min() + xs.max()) / 2, (ys.min() + ys.max()) / 2, zoom)
     }
 
     /** Every [n]th point and the last, so a long route draws quickly. */

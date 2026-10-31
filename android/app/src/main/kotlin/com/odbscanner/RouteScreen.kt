@@ -347,7 +347,11 @@ private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit
                 }
             }
         }
-        Column(modifier = Modifier.padding(vertical = 6.dp)) { TripMap(r) }
+        var preview by remember(r) { mutableStateOf(false) }
+        Column(modifier = Modifier.padding(vertical = 6.dp)) {
+            TripMap(r, onExpand = { preview = true })
+        }
+        if (preview) RoutePreview(r) { preview = false }
         if (p.status != "unreachable") {
             Button(onClick = {
                 // Watch this trip against the battery while it is driven.

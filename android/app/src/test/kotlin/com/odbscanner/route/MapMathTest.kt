@@ -59,4 +59,64 @@ class MapMathTest {
         val many = googleMapsTripUrl(0.0 to 0.0, (1..12).map { it.toDouble() to 0.0 }, 0.0 to 0.0)
         assertEquals(MAX_LINK_STOPS, many.substringAfter("waypoints=").split("%7C").size)
     }
+
+    // -- the camera a driver pinches and drags -----------------------------------
+
+    private val trip = listOf(51.75 to -1.26, 53.48 to -2.24, 55.95 to -3.19)   // Oxford → Edinburgh
+
+    @Test
+    fun theFittedCameraShowsTheWholeTripAndNoMore() {
+        val cam = MapMath.fitCamera(trip, 1000f, 700f, 256f, 40f)
+        val v = cam.view(1000f, 700f, 256f)
+        trip.forEach { (lat, lon) ->
+            assertTrue(v.x(lon) in 39f..961f && v.y(lat) in 39f..661f)
+        }
+        // A touch closer and a point falls outside: it is the closest fit.
+        val closer = cam.copy(zoom = cam.zoom + 0.1).view(1000f, 700f, 256f)
+        assertTrue(trip.any { (lat, lon) -> closer.x(lon) !in 40f..960f || closer.y(lat) !in 40f..660f })
+    }
+
+    @Test
+    fun zoomingKeepsThePlaceUnderTheFingers() {
+        val cam = MapMath.fitCamera(trip, 1000f, 700f, 256f, 40f)
+        val (lat, lon) = trip[1]
+        val v = cam.view(1000f, 700f, 256f)
+        val px = v.x(lon)
+        val py = v.y(lat)
+        for (factor in listOf(2f, 0.5f, 1.37f)) {
+            val after = cam.zoomAbout(factor, px, py, 1000f, 700f, 256f).view(1000f, 700f, 256f)
+            assertEquals(px, after.x(lon), 0.5f)
+            assertEquals(py, after.y(lat), 0.5f)
+        }
+        val doubled = cam.zoomAbout(2f, px, py, 1000f, 700f, 256f)
+        assertEquals(cam.zoom + 1.0, doubled.zoom, 1e-9)
+    }
+
+    @Test
+    fun theMapFollowsADrag() {
+        val cam = MapMath.Camera.at(52.0, -1.0, 12.4)
+        val (lat, lon) = 52.0 to -1.0
+        val before = cam.view(800f, 600f, 256f)
+        val after = cam.pan(120f, -45f, 256f).view(800f, 600f, 256f)
+        assertEquals(before.x(lon) + 120f, after.x(lon), 0.5f)
+        assertEquals(before.y(lat) - 45f, after.y(lat), 0.5f)
+    }
+
+    @Test
+    fun zoomStaysWithinWhatTheTilesCanShow() {
+        val cam = MapMath.Camera.at(52.0, -1.0, 18.0)
+        assertEquals(MapMath.MAX_VIEW_ZOOM, cam.zoomAbout(8f, 0f, 0f, 800f, 600f, 256f).zoom, 1e-9)
+        assertEquals(MapMath.MIN_VIEW_ZOOM, cam.zoomAbout(1e-6f, 0f, 0f, 800f, 600f, 256f).zoom, 1e-9)
+        // Fractional zoom: tiles one whole zoom below, drawn larger.
+        val v = MapMath.Camera.at(52.0, -1.0, 13.5).view(800f, 600f, 256f)
+        assertEquals(13, v.zoom)
+        assertEquals(256f * Math.sqrt(2.0).toFloat(), v.tilePx, 0.01f)
+        assertEquals(17, MapMath.Camera.at(52.0, -1.0, 18.5).view(800f, 600f, 256f).zoom)
+    }
+
+    @Test
+    fun oneStopAloneIsShownCloseNotAtTheWholeWorld() {
+        val cam = MapMath.fitCamera(listOf(52.0 to -1.0), 800f, 600f, 256f, 20f)
+        assertEquals(MapMath.MAX_ZOOM - 2.0, cam.zoom, 1e-9)
+    }
 }

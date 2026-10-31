@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -19,6 +20,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -46,6 +48,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -68,7 +71,10 @@ import kotlinx.coroutines.launch
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.hypot
+import kotlin.math.log2
+import kotlin.math.pow
 
 private val BANNER = Color(0xFF1B5E20)
 private val ROAD = Color(0xFF1565C0)
@@ -326,10 +332,15 @@ private fun BottomBar(s: Navigator.State, onClose: () -> Unit) {
 
 /**
  * The road ahead, heading up: OpenStreetMap tiles turned so the way the road
- * goes points up, the car a little below the middle. Zooms out at speed.
+ * goes points up, the car a little below the middle. Zooms out at speed; the
+ * driver can pinch or use + and − to zoom from there, and Overview shows the
+ * whole trip (north up, to explore) until Re-centre.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NavMap(s: Navigator.State) {
+    var userZoom by remember { mutableStateOf(0.0) }      // added to the zoom for the speed
+    var overview by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val density = LocalDensity.current
     val route = s.route
@@ -340,12 +351,30 @@ private fun NavMap(s: Navigator.State) {
         s.fix != null -> s.fix
         else -> route?.points?.firstOrNull()?.let { it.lat to it.lon }
     } ?: return
+    if (overview) {
+        Box(Modifier.fillMaxSize()) {
+            // TripMap's own column shares the height between map and place row.
+            Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+                .padding(6.dp)) {
+                TripMap(s.trip, Modifier.fillMaxWidth().weight(1f), here = here)
+            }
+            Surface(onClick = { overview = false }, shape = RoundedCornerShape(20.dp),
+                color = ROAD, modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) {
+                Text("Re-centre", color = Color.White, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+            }
+        }
+        return
+    }
     val bearing = if (onRoute) route!!.bearingAt(g!!.kmAlong).toFloat() else 0f
-    val zoom = if (s.speedKmh >= 60) 15 else 16
+    val zoomF = ((if (s.speedKmh >= 60) 15.0 else 16.0) + userZoom)
+        .coerceIn(NAV_MIN_ZOOM, MapMath.MAX_VIEW_ZOOM)
+    val zoom = floor(zoomF).toInt().coerceAtMost(MapMath.MAX_ZOOM)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
-        val tilePx = with(density) { 160.dp.toPx() }
+        // Between whole zooms the tiles are drawn larger: smooth pinching.
+        val tilePx = with(density) { 160.dp.toPx() } * 2.0.pow(zoomF - zoom).toFloat()
         // A square around the car big enough to fill the screen at any heading.
         val side = 2f * hypot(w / 2f, h * 0.72f)
         val v = MapMath.View(zoom, MapMath.worldX(here.second, zoom), MapMath.worldY(here.first, zoom),
@@ -362,7 +391,11 @@ private fun NavMap(s: Navigator.State) {
         val world = remember(route, zoom) { route?.let { worldLine(it, zoom) } }
         val line = with(density) { 7.dp.toPx() }
         val dot = with(density) { 9.dp.toPx() }
-        Canvas(Modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize().pointerInput(Unit) {
+            detectTransformGestures { _, _, pinch, _ ->
+                userZoom = (userZoom + log2(pinch.toDouble())).coerceIn(-6.0, 3.0)
+            }
+        }) {
             drawRect(Color(0xFFE8E6E1))
             withTransform({
                 translate(w / 2f - side / 2f, h * 0.72f - side / 2f)
@@ -418,8 +451,16 @@ private fun NavMap(s: Navigator.State) {
         Text("© OpenStreetMap contributors", fontSize = 10.sp,
             modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp)
                 .background(Color.White.copy(alpha = 0.7f)).padding(horizontal = 4.dp))
+        Column(Modifier.align(Alignment.CenterEnd).padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            MapButton("+", "Zoom in") { userZoom = (userZoom + 1).coerceAtMost(3.0) }
+            MapButton("−", "Zoom out") { userZoom = (userZoom - 1).coerceAtLeast(-6.0) }
+            MapButton("⤢", "Overview: the whole trip") { overview = true }
+        }
     }
 }
+
+private const val NAV_MIN_ZOOM = 9.0
 
 /** The route's points in tile space at [zoom], x and y interleaved. */
 private fun worldLine(route: NavRoute, zoom: Int): DoubleArray {
