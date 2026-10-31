@@ -69,6 +69,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun AiVoiceSetupDialog(onDone: () -> Unit) {
     val context = LocalContext.current
+    // Today's usage, as stored: shown before any question is asked this run.
+    remember { UsageLedger.attach(context) }
     val scope = rememberCoroutineScope()
     var settings by remember { mutableStateOf(AiPrefs.load(context)) }
     val voice by VoiceAssistant.status.collectAsState()
