@@ -9,12 +9,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -145,15 +147,23 @@ fun AssistantDialog(onDismiss: () -> Unit) {
                 }
                 OutlinedTextField(question, { question = it.take(500) },
                     label = { Text("Ask") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                // While anything is under way, Stop is the biggest thing here.
+                if (status.active) {
+                    Button(onClick = { VoiceAssistant.stop() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(56.dp)) {
+                        Text("Stop", style = MaterialTheme.typography.titleLarge)
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         enabled = voice != VoiceState.INTERRUPTED &&
                             voice != VoiceState.LISTENING && voice != VoiceState.TRANSCRIBING,
                         onClick = { speak() },
                     ) { Text(if (status.active) "Interrupt" else "Speak") }
-                    // Always there while anything is under way: nothing waits it out.
-                    Button(onClick = { VoiceAssistant.stop() }, enabled = status.active) {
-                        Text("Stop")
+                    if (voice == VoiceState.ERROR && VoiceAssistant.lastQuestion != null) {
+                        OutlinedButton(onClick = { VoiceAssistant.retry(context) }) { Text("Retry") }
                     }
                     Button(onClick = { send() }, enabled = status.free && question.isNotBlank()) {
                         Text("Send")
