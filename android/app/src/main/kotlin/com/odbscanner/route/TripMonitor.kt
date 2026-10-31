@@ -158,10 +158,14 @@ object TripMonitor {
             is RouteRevisions.Outcome.Same -> out.state
             is RouteRevisions.Outcome.Stale -> saved.route
         }
-        withContext(Dispatchers.Main) {
+        val took = withContext(Dispatchers.Main) {
+            // A trip the driver started while this was planning wins.
+            if (_state.value != null) return@withContext false
             startWith(app, fresher, route)
             if (saved.navigating) Navigator.start(app, fresher)
+            true
         }
+        if (!took) return null
         val maps = route.needsHandoff
         notify(app, "Trip restored", "Watching your trip to ${saved.destination.label} again." +
             (if (maps) " Google Maps has an older plan: tap to send this one." else ""),
