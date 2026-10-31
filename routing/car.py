@@ -13,8 +13,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from analysis.consumption_backtest import backtest, error_spread
+from analysis.consumption_backtest import PHYSICS_WINDOW_DAYS, backtest, error_spread
 from analysis.consumption_model import FEATURE_LABELS, DriveSample, estimate
+from analysis.energy_model import fit as fit_physics
 from analysis.trips import PAIR_WITHIN_S, _Lookup, measured_rate, split_drives
 from database.repository import IMPORTED_PREFIX
 
@@ -54,22 +55,28 @@ def measured_consumption(odometer, energy) -> tuple[float | None, float]:
     if km < MIN_MEASURED_KM or rate is None:
         return None, km
     return rate, km
-# The backtest predicts each recent drive from the CONSUMPTION_DAYS before it.
-MODEL_HISTORY_DAYS = 2 * CONSUMPTION_DAYS
+# The backtest predicts each recent drive from the drives before it: the
+# flat rate and the linear model from CONSUMPTION_DAYS, the physics model from
+# PHYSICS_WINDOW_DAYS (it knows the temperature, so last winter helps).
+MODEL_HISTORY_DAYS = PHYSICS_WINDOW_DAYS + CONSUMPTION_DAYS
+# Speed is read under two keys (UDS and the OBD PID); both are the same thing.
+SPEED_KEYS = ("speed_kmh", "vehicle_speed")
+MIN_SPEED_SAMPLES = 3       # fewer, and a drive's mean v² is a guess
 _checks: dict[tuple, dict] = {}
 
 
 def drive_samples(repo, vid: int, days: float) -> list[DriveSample]:
     """This car's drives of the last `days` -- the trip log's drives
-    (analysis/trips.py) -- with their times, average speed and outside
-    temperature, as consumption-model samples."""
+    (analysis/trips.py) -- with their times, average speed, mean of speed²
+    (for drag) and outside temperature, as consumption-model samples."""
     since_s = (datetime.now(timezone.utc) - timedelta(days=days)).timestamp()
     lead_days = days + PAIR_WITHIN_S / 86400.0
     drives = [d for d in split_drives(
         _series(repo, vid, "odometer_km", lead_days),
         _series(repo, vid, "hv_energy_content", lead_days))
         if d.end_s >= since_s]
-    speed_lookup = _Lookup(_series(repo, vid, "speed_kmh", lead_days))
+    speed_lookup = _Lookup([r for k in SPEED_KEYS
+                            for r in _series(repo, vid, k, lead_days)])
     outside_lookup = _Lookup(_series(repo, vid, "outside_temp", lead_days))
     samples = []
     for d in drives:
@@ -78,23 +85,28 @@ def drive_samples(repo, vid: int, days: float) -> list[DriveSample]:
         speeds = speed_lookup.between(d.start_s, d.end_s)
         temps = outside_lookup.between(d.start_s, d.end_s) or [
             v for v in (outside_lookup.nearest(d.start_s),) if v is not None]
+        moving = sum(speeds)
         samples.append(DriveSample(
             distance_km=d.distance_km, energy_kwh=d.energy_kwh,
             temp_c=(sum(temps) / len(temps)) if temps else None,
             avg_speed_kmh=(sum(speeds) / len(speeds)) if speeds else None,
-            start_s=d.start_s, end_s=d.end_s))
+            start_s=d.start_s, end_s=d.end_s,
+            v2_kmh2=(sum(v ** 3 for v in speeds) / moving
+                     if len(speeds) >= MIN_SPEED_SAMPLES and moving > 0 else None)))
     return samples
 
 
 def consumption_check(repo, vid: int) -> dict:
     """This car's own consumption model, if it has earned its place.
 
-    {"model": ConsumptionModel or None, "backtest": analysis.consumption_backtest
-    result, "basis": one sentence}. The model is returned only when, predicting
-    each recent drive from the drives before it, it beat the flat rate
-    (analysis/consumption_backtest.py) and it uses at least one condition --
-    a model of no conditions is the flat rate again. Kept per vehicle until a
-    new odometer reading arrives or the day changes."""
+    {"model": a ConsumptionModel or PhysicsModel or None, "backtest":
+    analysis.consumption_backtest result, "basis": one sentence, "spread":
+    the RateError quantiles of the predictions of whichever is used}. A model is
+    returned only when, predicting each recent drive from the drives before
+    it, it beat the flat rate (analysis/consumption_backtest.py); a linear
+    model also has to use at least one condition -- one of no conditions is
+    the flat rate again. Kept per vehicle until a new odometer reading
+    arrives or the day changes."""
     last = repo.conn.execute(
         "SELECT MAX(ts) FROM measurements WHERE vehicle_id=? AND key='odometer_km'",
         (vid,)).fetchone()[0]
@@ -103,22 +115,34 @@ def consumption_check(repo, vid: int) -> dict:
         return _checks[key]
     samples = drive_samples(repo, vid, MODEL_HISTORY_DAYS)
     result = backtest(samples, window_days=CONSUMPTION_DAYS)
+    now_s = datetime.now(timezone.utc).timestamp()
     model = None
     if result["verdict"] == "model":
-        cutoff = datetime.now(timezone.utc).timestamp() - CONSUMPTION_DAYS * 86400
-        model = estimate([s for s in samples if s.end_s >= cutoff])
+        model = estimate([s for s in samples
+                          if s.end_s >= now_s - CONSUMPTION_DAYS * 86400])
         if model is not None and not model.features_used:
             model = None
             result = dict(result, verdict="flat", reason=(
                 "the latest drives support no condition beyond the flat rate"))
-    if model is not None:
+    elif result["verdict"] == "physics":
+        model = fit_physics([s for s in samples
+                             if s.end_s >= now_s - PHYSICS_WINDOW_DAYS * 86400])
+        if model is None:
+            result = dict(result, verdict="flat", reason=(
+                "too few recent drives to fit the physics model on"))
+    if model is not None and result["verdict"] == "physics":
+        basis = (f"this car's own model (physics: speed, outside temperature and "
+                 f"heating, from {model.n_drives} drives, {model.sample_km:.0f} km) "
+                 f"plans trips: {result['reason']}")
+    elif model is not None:
         used = ", ".join(FEATURE_LABELS[f] for f in model.features_used)
         basis = (f"this car's own model ({used}, from {model.n_drives} drives) plans "
                  f"trips: {result['reason']}")
     else:
         basis = f"flat rate kept: {result['reason']}"
+    used_name = result["verdict"] if model is not None else "flat"
     # How far off its predictions were, for the figure the Route page will use.
-    spread = error_spread(result, model=model is not None)
+    spread = error_spread(result, model=used_name)
     out = {"model": model, "backtest": result, "basis": basis, "spread": spread}
     if len(_checks) > 16:
         _checks.clear()

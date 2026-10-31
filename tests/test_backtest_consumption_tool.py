@@ -22,7 +22,8 @@ def test_the_report_reads_and_never_writes(tmp_path, capsys):
     before = _digest(db.parent)
     assert backtest_consumption.main(["--db", str(db), "--drives"]) == 0
     out = capsys.readouterr().out
-    assert "Verdict: model" in out and "outside temperature:" in out
+    assert "Verdict: physics" in out and "By outside temperature" in out
+    assert "Model in use: physics" in out
     assert "WVWZZZE1ZMS000001" not in out               # no VIN in a report
     assert len([ln for ln in out.splitlines() if ln[:2] == "20"]) == 60
     after = _digest(db.parent)

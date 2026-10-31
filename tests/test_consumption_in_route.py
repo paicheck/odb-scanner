@@ -61,8 +61,10 @@ def test_a_model_that_beat_the_flat_rate_is_offered(tmp_path):
     got = car_energy(repo, vid, Config({}))
     assert got["consumption_model"] is not None
     assert "temp" in got["consumption_model"]["features_used"]
-    assert got["consumption_model_basis"].startswith(
-        "this car's own model (outside temperature")
+    # The physics model wins on these drives (it predicts them best); either
+    # model says what it uses.
+    assert got["consumption_model_basis"].startswith("this car's own model (")
+    assert "outside temperature" in got["consumption_model_basis"]
     repo.close()
 
 

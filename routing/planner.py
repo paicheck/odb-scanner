@@ -46,6 +46,7 @@ from bisect import bisect_right
 from dataclasses import dataclass, field
 
 from analysis.consumption_model import FEATURE_LABELS, ConsumptionModel
+from analysis.energy_model import PhysicsModel
 
 G = 9.81
 EARTH_RADIUS_KM = 6371.0088
@@ -90,13 +91,17 @@ class CarModel:
     drag_area_m2: float = 0.63        # Cd x frontal area: ID.3 0.267 x 2.36 m²
     regen_eff: float = 0.60           # share of descent energy recovered
     charge_curve: tuple[tuple[float, float], ...] = ID3_58_CURVE
-    # Optional: this car's own model (analysis/consumption_model.py), or its
-    # as_dict(); anything with that predict() will do.
+    # Optional: this car's own model (analysis/consumption_model.py or the
+    # physics one, analysis/energy_model.py), or its as_dict(); anything with
+    # that predict() will do.
     consumption_model: object = None
 
     def __post_init__(self):
         if isinstance(self.consumption_model, dict):
-            self.consumption_model = ConsumptionModel.from_dict(self.consumption_model)
+            d = self.consumption_model
+            physics = d.get("kind") == "physics"
+            self.consumption_model = (PhysicsModel.from_dict(d) if physics
+                                      else ConsumptionModel.from_dict(d))
 
 
 @dataclass
