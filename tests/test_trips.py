@@ -26,7 +26,6 @@ VECTORS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data",
 with open(VECTORS, encoding="utf-8") as fh:
     CASES = json.load(fh)["cases"]
 
-NOW = datetime.now(timezone.utc).replace(second=0, microsecond=0)
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
@@ -38,8 +37,8 @@ def test_drives_split_where_the_vectors_say(case):
     assert got == case["drives"], case["about"]
 
 
-def _ts(minutes_ago):
-    return (NOW - timedelta(minutes=minutes_ago)).isoformat(timespec="seconds")
+def _ts(now, minutes_ago):
+    return (now - timedelta(minutes=minutes_ago)).isoformat(timespec="seconds")
 
 
 @pytest.fixture()
@@ -47,9 +46,15 @@ def repo(tmp_path):
     r = Repository(str(tmp_path / "t.db"))
     vid = r.ensure_vehicle("WVWZZZE1ZMS000001")
     rows = []
+    # Anchored when the fixture runs, not when the module was imported: the
+    # windows below are read against the real clock at test time, and the
+    # one-day window has only half an hour to spare (the mild drive ends
+    # 23.5 h ago). A module-level anchor failed whenever more than that passed
+    # between collecting the suite and running this test.
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
 
     def put(key, minutes_ago, value, prov="reported"):
-        rows.append((vid, _ts(minutes_ago), key, "x", value, prov))
+        rows.append((vid, _ts(now, minutes_ago), key, "x", value, prov))
 
     # A cold 40 km drive two days ago: 200 Wh/km at 2 C.
     km, wh = 1000.0, 50000.0
