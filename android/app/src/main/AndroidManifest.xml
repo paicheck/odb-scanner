@@ -51,7 +51,13 @@
          driver first taps Speak), and the phone's speech recogniser and
          text-to-speech engine, which Android 11+ hides unless declared. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- "Display over other apps": asked for only when trips go to Google Maps,
+         and used for one thing: Android lets an app in the background open
+         Google Maps (a re-planned trip, on the driver's spoken yes) only with
+         it. The app draws nothing over other apps (route/MapsHandoff.kt). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <queries>
+        <package android:name="com.google.android.apps.maps" />
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
@@ -81,7 +87,7 @@
         <service
             android:name=".route.TripService"
             android:exported="false"
-            android:foregroundServiceType="location" />
+            android:foregroundServiceType="location|microphone" />
 
         <service
             android:name=".ai.WakeWordService"

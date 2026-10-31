@@ -1,5 +1,6 @@
 package com.odbscanner.route
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -39,12 +41,22 @@ class TripService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureChannel()
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+        val location = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
             ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
-        try {
-            ServiceCompat.startForeground(this, NOTIFICATION_ID,
-                notification(TripMonitor.state.value, null), type)
-        } catch (e: Exception) {          // no location permission, or not allowed now
+        // The microphone too, when it is allowed: a re-plan asks "send it to
+        // Google Maps?" while Google Maps is in front (MapsHandoff), and a
+        // background app hears nothing without it. Android shows the
+        // microphone in use only while it listens.
+        val mic = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && ContextCompat.checkSelfPermission(
+                this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+        val started = listOf(location or mic, location).distinct().any { type ->
+            runCatching {
+                ServiceCompat.startForeground(this, NOTIFICATION_ID,
+                    notification(TripMonitor.state.value, null), type)
+            }.isSuccess
+        }
+        if (!started) {                   // no location permission, or not allowed now
             stopSelf()
             return START_NOT_STICKY
         }

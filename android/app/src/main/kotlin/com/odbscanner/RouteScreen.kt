@@ -5,7 +5,6 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -57,7 +56,7 @@ import com.odbscanner.route.RoutingException
 import com.odbscanner.route.TripMonitor
 import com.odbscanner.route.TripPlanner
 import com.odbscanner.route.TripResult
-import com.odbscanner.route.googleMapsTripUrl
+import com.odbscanner.route.MapsHandoff
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -68,16 +67,11 @@ import java.util.Locale
  * the browser.
  */
 fun startTrip(context: Context, r: TripResult) {
-    val url = Uri.parse(googleMapsTripUrl(
-        r.origin.lat to r.origin.lon,
-        r.plan.stops.map { it.charger.lat to it.charger.lon },
-        r.destination.lat to r.destination.lon))
-    val maps = Intent(Intent.ACTION_VIEW, url).setPackage("com.google.android.apps.maps")
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    val maps = MapsHandoff.intent(r)
     try {
         context.startActivity(maps)
     } catch (_: ActivityNotFoundException) {
-        context.startActivity(Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        context.startActivity(Intent(Intent.ACTION_VIEW, maps.data).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
 
@@ -495,6 +489,19 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Navigate in this app (off: Google Maps)", modifier = Modifier.weight(1f))
                     Switch(checked = inApp, onCheckedChange = { inApp = it })
+                }
+                if (!inApp) {
+                    val allowed = android.provider.Settings.canDrawOverlays(context)
+                    Text(if (allowed) "After a re-plan, say yes and the new route goes to " +
+                        "Google Maps." else "After a re-plan the phone asks whether to send the " +
+                        "new route to Google Maps. Android lets it open Google Maps by voice " +
+                        "only with Display over other apps allowed; otherwise tap the notification.",
+                        style = MaterialTheme.typography.bodySmall)
+                    if (!allowed) {
+                        TextButton(onClick = {
+                            context.startActivity(MapsHandoff.permissionIntent(context))
+                        }) { Text("Allow Display over other apps") }
+                    }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Spoken directions", modifier = Modifier.weight(1f))

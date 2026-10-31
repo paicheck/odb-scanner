@@ -5,6 +5,7 @@ import com.odbscanner.db.AppDatabase
 import com.odbscanner.db.MeasurementEntity
 import com.odbscanner.route.ActiveTrip
 import com.odbscanner.route.NavSpeech
+import com.odbscanner.route.MapsHandoff
 import com.odbscanner.route.Navigator
 import com.odbscanner.route.PhoneLocation
 import com.odbscanner.route.Prices
@@ -236,10 +237,16 @@ class AssistantTools(private val context: Context) : ToolRunner {
                 "with lanes, via ${t.result.plan.stops.size} charging stops")
         }
         // Route settings hand trips to Google Maps. From the background Android
-        // may not let it open; then the phone shows it when unlocked.
+        // lets it open only with "display over other apps" allowed; otherwise
+        // the notification's tap opens it (MapsHandoff).
+        if (!MapsHandoff.canOpenNow(context)) {
+            TripMonitor.offerMapsTap(context, t.result)
+            return JSONObject().put("ok", "Android needs a tap to open Google Maps from the " +
+                "background: tell the driver to tap the 'Send to Google Maps' notification")
+        }
         withContext(Dispatchers.Main) { startTrip(context, t.result) }
-        return JSONObject().put("ok", "Google Maps asked to open with ${t.result.plan.stops.size} " +
-            "charging stops and the destination")
+        return JSONObject().put("ok", "Google Maps opened with ${t.result.plan.stops.size} " +
+            "charging stops and the destination -- the current plan, including any re-plan")
     }
 
     private fun navigation(): JSONObject {
@@ -418,8 +425,10 @@ class AssistantTools(private val context: Context) : ToolRunner {
             spec("replan_trip", "Re-plan the active trip from the current position and the " +
                 "latest charge reading, and return the new plan."),
             spec("start_navigation", "Start turn-by-turn navigation of the planned trip in the " +
-                "app (spoken turns and lanes), via its charging stops. Only when the driver asks " +
-                "to navigate or for directions."),
+                "app (spoken turns and lanes), via its charging stops -- or, when Route settings " +
+                "hand trips to Google Maps, send the current plan (after a re-plan too) to Google " +
+                "Maps. Only when the driver asks to navigate, for directions, or to update or " +
+                "send the route to Google Maps."),
             spec("get_navigation", "While navigating: the next turn (distance, instruction, " +
                 "road, exit, which lanes), the one after, time and distance left, arrival " +
                 "including charging, what traffic adds, and heavy traffic ahead."),

@@ -216,12 +216,26 @@ object TripMonitor {
         }
         if (Navigator.active) Navigator.planChanged(fresher)
         if (before != after || fresher.plan.status == "unreachable") {
-            notify(context, "Route updated", changeText(fresher, reason))
+            // Google Maps cannot be changed from here, only handed the new
+            // trip: the notification does that on a tap, and MapsHandoff asks
+            // whether to do it now (MapsHandoff has why it must ask).
+            val toMaps = !Navigator.active && !RoutePrefs.load(context).navigateInApp &&
+                fresher.plan.status != "unreachable"
+            notify(context, "Route updated", changeText(fresher, reason) +
+                (if (toMaps) " Tap to send it to Google Maps." else ""),
+                if (toMaps) MapsHandoff.pendingIntent(context, fresher) else null)
             speak(context, "Route updated. " + changeSpeech(fresher))
+            if (toMaps) scope.launch { runCatching { MapsHandoff.offer(context, fresher) } }
         } else if (!force && actual < expected - Replan.DRIFT_PCT) {
             speak(context, Replan.stillOkSpeech(actual, expected, fresher.plan.arrivalPct))
         }
     }
+
+    /** A notification whose tap opens Google Maps with [r] (for the assistant). */
+    fun offerMapsTap(context: Context, r: TripResult) = notify(context.applicationContext,
+        "Send to Google Maps", "Tap to open Google Maps with the current plan: " +
+            "${r.plan.stops.size} charging stop(s), then ${r.destination.label}.",
+        MapsHandoff.pendingIntent(context.applicationContext, r))
 
     /** Say the next charging stop once, a few minutes before it. */
     private fun announceStopAhead(context: Context, trip: ActiveTrip, kmAlong: Double) {
@@ -268,7 +282,8 @@ object TripMonitor {
         }
     }
 
-    private fun notify(context: Context, title: String, text: String) {
+    private fun notify(context: Context, title: String, text: String,
+                       tap: PendingIntent? = null) {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(
                 context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return                                    // the planner still shows it
@@ -283,8 +298,9 @@ object TripMonitor {
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setContentIntent(open)
+            .setContentIntent(tap ?: open)
             .setAutoCancel(true)
+            .apply { if (tap != null) addAction(0, "Open the planner", open) }
             .build()
         runCatching { NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, n) }
     }
