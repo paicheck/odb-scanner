@@ -29,8 +29,8 @@ data class HealthStatus(
  * a cooldown that doubles each time it is rested again, up to
  * [maxCooldownMs]. When the cooldown is over one request is let through (a
  * trial, the health check): success restores it, failure rests it longer.
- * A refused key, a used-up quota or a missing permission marks it
- * NEEDS_ATTENTION at once for [attentionMs] -- no point asking again -- and
+ * A refused key, a used-up quota, a missing permission or a model the
+ * service no longer has marks it NEEDS_ATTENTION at once for [attentionMs] -- no point asking again -- and
  * [reset] (the key or settings changed) clears it.
  *
  * Rapid switching is avoided twice over: a service is only rested after
@@ -81,7 +81,7 @@ class CircuitBreaker(
     fun failure(id: String, error: AiError) {
         val now = clock()
         val s = states[id] ?: HealthStatus()
-        val next = if (permanent(error.category)) {
+        val next = if (permanent(error)) {
             s.copy(state = Health.NEEDS_ATTENTION, failures = s.failures + 1,
                 untilMs = now + attentionMs, lastError = error, lastFailMs = now)
         } else {
@@ -120,10 +120,16 @@ class CircuitBreaker(
     fun soonest(ids: List<String>): String? = ids.minByOrNull { status(it).untilMs ?: 0L }
 
     companion object {
-        /** Failures that asking again will not cure. */
-        fun permanent(c: AiErrorCategory): Boolean = c == AiErrorCategory.INVALID_CREDENTIALS ||
-            c == AiErrorCategory.PERMISSION_DENIED || c == AiErrorCategory.QUOTA_EXCEEDED ||
-            c == AiErrorCategory.NOT_CONFIGURED
+        /**
+         * Failures that asking again will not cure -- a model that is not
+         * there (retired, misnamed) included; an overloaded one is not.
+         */
+        fun permanent(e: AiError): Boolean = when (e.category) {
+            AiErrorCategory.INVALID_CREDENTIALS, AiErrorCategory.PERMISSION_DENIED,
+            AiErrorCategory.QUOTA_EXCEEDED, AiErrorCategory.NOT_CONFIGURED -> true
+            AiErrorCategory.MODEL_UNAVAILABLE -> e.reason != "overloaded"
+            else -> false
+        }
     }
 }
 

@@ -299,4 +299,29 @@ class ReliabilityTest {
         assertEquals(setOf("groq", "gemini"), AiPrefs.healthResets(s, s.copy(provider = "gemini",
             backups = listOf("groq"))))
     }
+
+    @Test
+    fun aRetiredModelNeedsAttentionButAnOverloadedOneOnlyRests() = runBlocking {
+        // Groq's own words for a model it shut down (llama-3.3-70b-versatile, 2026-08-16).
+        val gone = AiErrors.fromHttp("Groq (free tier)", 400, """{"error":{"message":"The model """ +
+            """`llama-3.3-70b-versatile` has been decommissioned and is no longer supported.",""" +
+            """"type":"invalid_request_error","code":"model_decommissioned"}}""", "llama-3.3-70b-versatile")
+        assertEquals(AiErrorCategory.MODEL_UNAVAILABLE, gone.category)
+        assertEquals("That AI model isn't available.", gone.spoken)
+        val b = CircuitBreaker(clock = { now })
+        b.failure("groq", gone)
+        assertEquals(Health.NEEDS_ATTENTION, b.status("groq").state)     // not asked every turn
+        val busy = AiErrors.fromHttp("Gemini", 503, """{"error":{"message":"The model is overloaded."}}""",
+            "gemini-3.8-flash")
+        assertEquals("overloaded", busy.reason)
+        b.failure("gemini", busy)
+        assertEquals(Health.HEALTHY, b.status("gemini").state)          // one failure: still used
+        // A backup whose model is gone is skipped, with no wait, once it has said so.
+        val main = Fake(null, gone)
+        val backup = Fake("from gemini")
+        val chain = FallbackChatSession(listOf("Groq" to { main }, "Gemini" to { backup }),
+            changesState = { false }, ids = listOf("groq", "gemini"), health = b)
+        assertEquals("from gemini", chain.ask("q", ToolRunner { "" }))
+        assertTrue(main.asked.isEmpty())
+    }
 }
