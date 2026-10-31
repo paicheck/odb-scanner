@@ -104,6 +104,87 @@ record (timings, outcome, interruptions, fallbacks) and no statistics.
 - **No Retry** after a failure.
 - **Stop is one button among several** on the phone dialog.
 
-## 3. Design
+## 3. What was built
 
-*Filled in as each item is built (`ai_assistant_progress.md`).*
+| Area | What | Commit |
+|---|---|---|
+| Health | Circuit breaker per service: 3 curable failures rest it 60 s, doubling to 10 min; one trial request at a time when the rest ends; a refused key, quota or permission is marked NEEDS_ATTENTION, not retried, until the key or settings change; resting services skipped, the soonest tried if all rest | `f8de645` |
+| Retries | Only what cannot have been processed (connect failures, 429, 503/529), once, after Retry-After / retry-after-ms up to 5 s; never after a read timeout or a dropped connection once sent, never for keys, quota, permission, model or capability, never once stopped | `f8de645` |
+| Context | The conversation's words kept apart from any one service; a backup or rebuilt session is seeded with them; a new trip, New chat, 10 min idle or 16 turns starts afresh; memory can be turned off | `f8de645` |
+| Usage | Tokens per service per day from replies; cost only from your prices (none when a reply gave no counts); daily request and spending limits, warned at 80 %; a reached limit moves to a backup | `f8de645`, `df021d3` |
+| Speech fallback | Online recognition that cannot connect → on the phone ("Say that again"), no consent needed (more private); on-the-phone → online only with consent; a chosen voice needing the network → the phone's own, shown | `f8de645` |
+| Answer style | brief / normal / detailed, "auto" = brief on a trip, navigating or from the car; speech speed; en-GB or en-US | `f8de645`, `df021d3` |
+| Streaming | OpenAI-style services: server-sent events (SSE) → the same reply shape (tool calls from pieces, error events); sentence by sentence to the speech queue as the turn's own, so a stop drops the rest and nothing resumes; a non-streaming service is asked normally; no backup over spoken words | `64da35e` |
+| History | One structured record per turn (times for recognition, first words, answer, speaking; outcome, category, stage, stopped, backup); local, 30 days / 500 records, words only by consent; statistics by service and capability; delete | `64da35e`, `df021d3` |
+| Vehicle | get_trip's live_check (the app's en-route check), get_charging_history, provenance on every reading; the prompt forbids the AI's own battery figures | `64da35e` |
+| Offline | LocalAnswers: battery, range, next stop, arrival, trip left, faults from the same tools when no service could answer; Setup says what works offline | `64da35e`, `df021d3` |
+| In the car | A full-width Stop while anything runs; Retry after a failure (phone, car) | `64da35e`, `df021d3` |
+
+## 4. Investigated, not built
+
+### True barge-in (talking over the assistant without the wake phrase)
+
+What it needs:
+- **A microphone open during speech output.** The recogniser is not running
+  then, but the wake-word recorder is, and it could be.
+- **Voice activity detection on it.**
+- **Echo cancellation good enough** that the assistant's own voice does not
+  count as speech.
+
+What stands in the way:
+- **No recogniser during speech.** Android's SpeechRecognizer cannot run
+  while text-to-speech plays without hearing it.
+- **The wake-word recorder uses VOICE_RECOGNITION.** That source has no
+  echo cancellation on many phones; `AcousticEchoCanceler`, now enabled
+  where offered, depends on the phone.
+- **Bluetooth.** Through a car's Bluetooth the microphone is the car's, the
+  speech goes through the car's speakers, and the phone's echo canceller
+  has no reference signal.
+- **Android Auto** owns the audio routing.
+- **Echo looks like speech.** A detector that reacts to any voice would
+  react to the assistant's own voice through the car's speakers. That is
+  the "interprets its own voice as a command" loop the roadmap warns of.
+
+The wake phrase avoids all of this: Vosk only listens for one phrase, which
+the assistant itself does not say. So the safe barge-in is the wake phrase,
+or a tap.
+
+A free-speech barge-in would be a setting, off by default, measured on the
+Pixel 7 and in the car first. It is not claimed here, and nothing was built
+for it.
+
+### Local AI
+
+- **Ollama on the PC.**
+  - **The working route:** the phone reaches it through the custom
+    OpenAI-compatible service at an **https** address, for example
+    `tailscale serve --bg --https=443 http://localhost:11434` (the PC
+    already uses Tailscale for `odb-ingest`), with the base URL
+    `https://<pc>.<tailnet>.ts.net/v1` and a model such as
+    `llama3.2:3b` or `qwen2.5:7b`. Tool calling depends on the model.
+  - **Why not plain HTTP:** a plain `http://192.168…` address is refused,
+    because the app allows no cleartext. Allowing it would need a
+    network-security config naming each host, so it was left as it is.
+  - **What it brings:** streaming and the setup tests work with it, and
+    nothing leaves the home network.
+- **A model on the phone.** Gemini Nano (AICore) is not on the Pixel 7.
+  MediaPipe's LLM inference or llama.cpp would need a model download of
+  1–4 GB and a new native dependency. Speed, memory and battery could only
+  be measured on the phone, so it was not attempted.
+- **Recognition on the phone:** on-device SpeechRecognizer where Android
+  has it (Setup shows whether), plus the fallback above. Vosk's large
+  English model (1.8 GB) could do full recognition offline. That is not
+  done; only the wake word uses Vosk.
+- **Speech on the phone:** the engine's voices. Setup marks those that need
+  the network "(online)", and the fallback uses the engine's own.
+
+### Drives on the phone
+
+"How much did my last journey use?" needs the PC's drive splitting
+(`analysis/trips.py`) ported to Kotlin with shared vectors, as the planner
+is. That was not done here. The phone has the readings; the PC's Trips page
+answers it.
+
+## 5. Results
+
+See `ai_assistant_handover.md` (verification, what needs the phone).

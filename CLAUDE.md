@@ -211,3 +211,11 @@ measured on a 2.6M-row month of synthetic readings:
   (SpeechQueue), Stop and Interrupt on the phone, the car and the wake word,
   and the AI & Voice Setup screen with a test per capability. Handover:
   `review_output/ai_voice_handover.md`.
+- AI assistant, 2026-10-31 (branch `ai-assistant` on `ai-voice`; not pushed;
+  no APK built): service health (circuit breaker) and safe retries, the
+  conversation carried across services, usage and limits, speech fallback,
+  streaming (OpenAI-style), interaction history, the app's live check in
+  get_trip, answers from the phone's own data offline, a big Stop and Retry.
+  The `ai-voice` debug APK the owner tests is `~/odb-scanner-tested/
+  odb-scanner-ai-voice-debug-7a53162.apk` (tag `tested-ai-voice-7a53162`).
+  Handover: `review_output/ai_assistant_handover.md`.
