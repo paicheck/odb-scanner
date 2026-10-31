@@ -292,6 +292,19 @@ private fun BottomBar(s: Navigator.State, onClose: () -> Unit) {
                     color = if (band?.belowReserve == true) SEVERE else MaterialTheme.colorScheme.onSurface)
             }
         }
+        // Measured against planned: the car's latest battery reading and the
+        // consumption so far (EnRoute's ratio), or that there is no fresh reading.
+        val judged = TripMonitor.state.collectAsState().value?.assessment
+        val measured = when {
+            judged == null -> null
+            judged.staleReading -> "No fresh battery reading: the figures are the plan's"
+            judged.deviationPct != null && judged.actualPct != null -> String.format(
+                java.util.Locale.ROOT, "Battery %.0f %% · plan %.0f %% here", judged.actualPct,
+                judged.expectedPct ?: 0.0) + (judged.ratio?.takeIf { kotlin.math.abs(it - 1.0) >= 0.02 }
+                ?.let { String.format(java.util.Locale.ROOT, " · using %.2f× the plan", it) } ?: "")
+            else -> null
+        }
+        measured?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         if (s.note.isNotBlank() && s.phase == Navigator.Phase.DRIVING && g?.offRoute != true) {
             Text(s.note, style = MaterialTheme.typography.bodySmall)
         }
@@ -437,8 +450,14 @@ private fun NavMap(s: Navigator.State) {
     }
     val bearing = if (onRoute) route!!.bearingAt(g!!.kmAlong).toFloat() else 0f
     val night = NavStatus.isNight(here.first, here.second, System.currentTimeMillis())
-    val zoomF = ((if (s.speedKmh >= 60) 15.0 else 16.0) + userZoom)
-        .coerceIn(NAV_MIN_ZOOM, MapMath.MAX_VIEW_ZOOM)
+    // Closer as a turn comes up; further out the faster the road.
+    val autoZoom = when {
+        g != null && !g.offRoute && g.toNextKm < 0.3 -> 16.5
+        s.speedKmh >= 100 -> 14.5
+        s.speedKmh >= 60 -> 15.0
+        else -> 16.0
+    }
+    val zoomF = (autoZoom + userZoom).coerceIn(NAV_MIN_ZOOM, MapMath.MAX_VIEW_ZOOM)
     val zoom = floor(zoomF).toInt().coerceAtMost(MapMath.MAX_ZOOM)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val w = constraints.maxWidth.toFloat()

@@ -47,6 +47,7 @@ object EnRoute {
         val atStop: Int? = null,
         val staleReading: Boolean = false,
         val alternatives: List<Known> = emptyList(),   // on this plan, within reach
+        val actualPct: Double? = null,      // the battery reading judged
     )
 
     /** The plan's charge arriving at [km]: before any charging step there. */
@@ -57,7 +58,12 @@ object EnRoute {
     }
 
     fun assess(plan: Plan, kmAlong: Double, actualPct: Double, readingAgeS: Double?,
-               reservePct: Double, chargedSincePlan: Boolean): Assessment {
+               reservePct: Double, chargedSincePlan: Boolean): Assessment =
+        judge(plan, kmAlong, actualPct, readingAgeS, reservePct, chargedSincePlan)
+            .copy(actualPct = actualPct)
+
+    private fun judge(plan: Plan, kmAlong: Double, actualPct: Double, readingAgeS: Double?,
+                      reservePct: Double, chargedSincePlan: Boolean): Assessment {
         val l = Locale.ROOT
         val expected = Replan.expectedPct(plan.profile, kmAlong)
             ?: return Assessment("normal", false, "No plan profile to compare with.", null)
