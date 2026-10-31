@@ -67,7 +67,12 @@ import com.odbscanner.route.NavSpeech
 import com.odbscanner.route.NavText
 import com.odbscanner.route.Navigator
 import com.odbscanner.route.TripMonitor
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.geometry.Size
+import com.odbscanner.route.NavStatus
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.ceil
@@ -114,6 +119,7 @@ fun NavigationScreen(onClose: () -> Unit) {
                 Column(Modifier.fillMaxSize()) {
                     TurnBanner(s)
                     Lanes(s)
+                    TripAlerts(s)
                     // Clipped: the turned map is drawn larger than its box.
                     Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
                         NavMap(s)
@@ -264,15 +270,26 @@ private fun BottomBar(s: Navigator.State, onClose: () -> Unit) {
                 else -> "Traffic is light"
             }, style = MaterialTheme.typography.bodySmall,
                 color = if ((delay ?: 0.0) >= 300) SEVERE else MaterialTheme.colorScheme.onSurface)
+            val toGo = g.remainingKm + (s.target?.stop?.let { s.trip.plan.distanceKm - it.km } ?: 0.0)
+            val (driven, _) = NavStatus.progress(s.trip.plan.distanceKm, toGo)
+            Text("${NavText.distance(driven)} driven · ${NavText.distance(toGo)} to go",
+                style = MaterialTheme.typography.bodySmall)
+            // Estimates from the latest plan (re-planned from the car's battery as
+            // it drives), with the range the car's own record supports.
             s.target?.stop?.let { st ->
+                val range = if (st.arriveLowPct != null && st.arriveHighPct != null)
+                    " (likely ${st.arriveLowPct.toInt()}–${st.arriveHighPct.toInt()} %)" else ""
                 Text("Charging stop ${s.trip.plan.stops.indexOf(st) + 1}: ${st.charger.name} in " +
                     "${NavText.distance(g.remainingKm)} · arrive ${clockIn(g.remainingS)} " +
-                    "with ${st.arrivePct.toInt()} %",
-                    style = MaterialTheme.typography.bodySmall)
+                    "with about ${st.arrivePct.toInt()} %$range · charge to " +
+                    "${st.departPct.toInt()} %, about ${st.chargeMin} min",
+                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
             } ?: s.trip.plan.arrivalPct?.let { pct ->
-                // From the latest plan: re-planned from the car's battery as it drives.
-                Text("Arrive with about ${pct.toInt()} % charge",
-                    style = MaterialTheme.typography.bodySmall)
+                val band = s.trip.plan.arrivalBand
+                Text("Arrive with about ${pct.toInt()} % charge" +
+                    (band?.let { " (likely ${it.lowPct.toInt()}–${it.highPct.toInt()} %)" } ?: ""),
+                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
+                    color = if (band?.belowReserve == true) SEVERE else MaterialTheme.colorScheme.onSurface)
             }
         }
         if (s.note.isNotBlank() && s.phase == Navigator.Phase.DRIVING && g?.offRoute != true) {
@@ -331,6 +348,58 @@ private fun BottomBar(s: Navigator.State, onClose: () -> Unit) {
 }
 
 /**
+ * What needs the driver's attention, above the map: the GPS when the
+ * position cannot be trusted, the en-route level when it is not normal, and a
+ * suggested plan with two large buttons. Nothing here changes the route by
+ * itself.
+ */
+@Composable
+private fun TripAlerts(s: Navigator.State) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val trip by TripMonitor.state.collectAsState()
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1_000)
+            now = System.currentTimeMillis()
+        }
+    }
+    @Composable
+    fun banner(text: String, colour: Color) = Text(text, color = Color.White, fontSize = 15.sp,
+        fontWeight = FontWeight.Medium,
+        modifier = Modifier.fillMaxWidth().background(colour).padding(horizontal = 12.dp, vertical = 6.dp))
+    NavStatus.gps(s.fixAtMs, s.accuracyM, now)?.let { banner(it, Color(0xFF616161)) }
+    val proposal = trip?.route?.proposal
+    trip?.assessment?.takeIf { it.level != "normal" && proposal == null }?.let { a ->
+        banner("${a.level.uppercase(java.util.Locale.ROOT)}: ${a.action}", when (a.level) {
+            "critical" -> SEVERE
+            "adjust" -> HEAVY
+            else -> Color(0xFF9E7700)
+        })
+    }
+    proposal?.let { p ->
+        Column(Modifier.fillMaxWidth().background(if (p.urgent) SEVERE else ROAD)
+            .padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Text(if (p.urgent) "Your plan no longer works" else "New plan suggested",
+                color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(p.change, color = Color.White, fontSize = 15.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(top = 8.dp)) {
+                Button(onClick = { scope.launch { TripMonitor.accept(context) } },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White,
+                        contentColor = Color.Black),
+                    modifier = Modifier.weight(1f).height(56.dp)) { Text("Switch", fontSize = 18.sp) }
+                OutlinedButton(onClick = { TripMonitor.decline() },
+                    modifier = Modifier.weight(1f).height(56.dp)) {
+                    Text("Keep my plan", color = Color.White, fontSize = 18.sp)
+                }
+            }
+        }
+    }
+}
+
+/**
  * The road ahead, heading up: OpenStreetMap tiles turned so the way the road
  * goes points up, the car a little below the middle. Zooms out at speed; the
  * driver can pinch or use + and − to zoom from there, and Overview shows the
@@ -367,6 +436,7 @@ private fun NavMap(s: Navigator.State) {
         return
     }
     val bearing = if (onRoute) route!!.bearingAt(g!!.kmAlong).toFloat() else 0f
+    val night = NavStatus.isNight(here.first, here.second, System.currentTimeMillis())
     val zoomF = ((if (s.speedKmh >= 60) 15.0 else 16.0) + userZoom)
         .coerceIn(NAV_MIN_ZOOM, MapMath.MAX_VIEW_ZOOM)
     val zoom = floor(zoomF).toInt().coerceAtMost(MapMath.MAX_ZOOM)
@@ -406,6 +476,8 @@ private fun NavMap(s: Navigator.State) {
                     drawImage(img, dstOffset = IntOffset(v.left(t).toInt(), v.top(t).toInt()),
                         dstSize = IntSize(size, size), filterQuality = FilterQuality.Medium)
                 }
+                // Night: the map dims, the route stays bright.
+                if (night) drawRect(Color.Black.copy(alpha = 0.45f), size = Size(side, side))
                 if (route != null && world != null) {
                     fun px(i: Int) = Offset(((world[2 * i] - v.cx) * tilePx + side / 2).toFloat(),
                         ((world[2 * i + 1] - v.cy) * tilePx + side / 2).toFloat())

@@ -74,6 +74,8 @@ object Navigator {
         val speedKmh: Double = 0.0,
         val stopHere: Target? = null,        // the charger the car is at (AT_STOP)
         val traffic: Boolean = false,        // this route came with live traffic
+        val fixAtMs: Long = 0L,              // when the latest GPS fix came (NavStatus.gps)
+        val accuracyM: Float? = null,        // its accuracy
     ) {
         val target: Target? get() = targets.getOrNull(leg)
         val lastLeg: Boolean get() = leg >= targets.lastIndex
@@ -376,8 +378,10 @@ object Navigator {
 
     private fun onFix(loc: Location) {
         lastFix = loc
-        val s = _state.value ?: return
         val now = System.currentTimeMillis()
+        val s = (_state.value ?: return).copy(fixAtMs = now,
+            accuracyM = if (loc.hasAccuracy()) loc.accuracy else null)
+        _state.value = s
         val speed = if (loc.hasSpeed()) loc.speed * 3.6 else s.speedKmh
         val fix = loc.latitude to loc.longitude
         when (s.phase) {

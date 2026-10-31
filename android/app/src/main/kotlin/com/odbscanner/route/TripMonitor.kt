@@ -44,6 +44,7 @@ data class ActiveTrip(
     val charging: Boolean = false,
     val announced: Set<String> = emptySet(),   // stops already announced aloud
     val proposed: TripResult? = null,          // the plan route.proposal describes, waiting
+    val assessment: EnRoute.Assessment? = null, // the latest en-route level (EnRoute.kt)
     val replanAtMs: Long = plannedAtMs,        // the latest re-plan worked out, applied or not
 )
 
@@ -269,6 +270,7 @@ object TripMonitor {
         // the route -- announced when it does.
         val judged = if (fresh) EnRoute.assess(plan, at.kmAlong, actual, (now - readMs!!) / 1000.0,
             RoutePrefs.load(context).reservePct, trip.chargedSincePlan || trip.charging) else null
+        update { it.copy(assessment = judged) }
         val level = judged?.takeIf { it.level != "normal" }
             ?.let { " · ${it.level.uppercase(Locale.ROOT)}: ${it.action}" } ?: ""
         if (judged?.level == "critical") {
