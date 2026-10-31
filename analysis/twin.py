@@ -221,8 +221,12 @@ def _parked_since(repo, vid: int, mode: Quantity, as_of: datetime) -> Quantity |
     """When the odometer last moved, if the car is standing."""
     if mode.value not in ("parked", "asleep", "charging"):
         return None
-    rows = [r for r in _rows(repo, vid, "odometer_km", _iso(as_of), limit=5000)
-            if _ours(r) and r.get("success") not in (0, "0")
+    # Only columns ix_measurements_series covers: up to 5000 rows, no table reads.
+    rows = [dict(r) for r in repo.conn.execute(
+        "SELECT ts, value, success, provenance FROM measurements WHERE key='odometer_km' "
+        "AND vehicle_id=? AND ts <= ? ORDER BY ts DESC, id DESC LIMIT 5000",
+        (vid, _iso(as_of))).fetchall()]
+    rows = [r for r in rows if _ours(r) and r.get("success") not in (0, "0")
             and isinstance(r.get("value"), (int, float))]
     if not rows:
         return None
