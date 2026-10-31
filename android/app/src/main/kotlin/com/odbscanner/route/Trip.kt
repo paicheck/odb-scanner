@@ -31,6 +31,9 @@ data class RouteSettings(
     val avoid: Avoid = Avoid(),
     val navigateInApp: Boolean = true,     // false: hand the trip to Google Maps
     val voiceGuidance: Boolean = true,
+    val preferNetworks: String = "",       // "Ionity, Gridserve": favoured, real price shown
+    val avoidNetworks: String = "",        // never used
+    val publicOnly: Boolean = false,       // leave out members-only chargers
 ) {
     val missingKeys: List<String>
         get() = listOfNotNull(
@@ -63,6 +66,9 @@ object RoutePrefs {
                 p.getBoolean("avoid_ferries", false)),
             navigateInApp = p.getBoolean("navigate_in_app", true),
             voiceGuidance = p.getBoolean("voice_guidance", true),
+            preferNetworks = p.getString("prefer_networks", "") ?: "",
+            avoidNetworks = p.getString("avoid_networks", "") ?: "",
+            publicOnly = p.getBoolean("public_only", false),
         )
     }
 
@@ -85,6 +91,9 @@ object RoutePrefs {
             .putBoolean("avoid_ferries", s.avoid.ferries)
             .putBoolean("navigate_in_app", s.navigateInApp)
             .putBoolean("voice_guidance", s.voiceGuidance)
+            .putString("prefer_networks", Planner.names(s.preferNetworks).joinToString(", "))
+            .putString("avoid_networks", Planner.names(s.avoidNetworks).joinToString(", "))
+            .putBoolean("public_only", s.publicOnly)
             .apply()
     }
 
@@ -257,6 +266,9 @@ object TripPlanner {
             reservePct = s.reservePct, chargeToPct = s.chargeToPct,
             mode = mode?.takeIf { it in MODES } ?: s.mode,
             timeValuePerHour = s.timeValuePerHour, defaultPricePerKwh = s.defaultPricePerKwh,
+            preferNetworks = Planner.names(s.preferNetworks),
+            avoidNetworks = Planner.names(s.avoidNetworks),
+            publicOnly = s.publicOnly,
         )
         val own = Prices.ownPrices(s.ownPrices)
         val chargers = services.chargersAlong(points, settings.searchRadiusKm).map { c ->

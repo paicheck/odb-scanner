@@ -375,8 +375,12 @@ private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit
         p.stops.forEachIndexed { i, s ->
             Column(modifier = Modifier.padding(top = 6.dp)) {
                 Text("${i + 1}. ${s.charger.name}" +
-                    (if (s.charger.operator.isNotBlank()) " · ${s.charger.operator}" else ""),
+                    (if (s.charger.operator.isNotBlank()) " · ${s.charger.operator}" else "") +
+                    (if (s.preferred) " · preferred" else ""),
                     fontWeight = FontWeight.Medium)
+                if (s.access.isNotBlank()) {
+                    Text(s.access, style = MaterialTheme.typography.bodySmall)
+                }
                 Text(String.format(Locale.ROOT,
                     "at %.0f km · %.0f kW · %.0f %% → %.0f %% · %d min",
                     s.km, s.charger.powerKw, s.arrivePct, s.departPct, s.chargeMin),
@@ -387,6 +391,14 @@ private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit
                     s.cost, s.priceSource), style = MaterialTheme.typography.bodySmall)
                 if (s.charger.address.isNotBlank()) {
                     Text(s.charger.address, style = MaterialTheme.typography.bodySmall)
+                }
+                if (s.alternatives.isNotEmpty()) {
+                    Text("Also near: " + s.alternatives.joinToString("; ") { a ->
+                        String.format(Locale.ROOT, "%s%s, %.0f kW, %+.0f km, £%.2f/kWh",
+                            a.charger.name,
+                            if (a.charger.operator.isNotBlank()) " (${a.charger.operator})" else "",
+                            a.charger.powerKw, a.km - s.km, a.pricePerKwh)
+                    }, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -417,6 +429,9 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
     var avoid by remember { mutableStateOf(s.avoid) }
     var inApp by remember { mutableStateOf(s.navigateInApp) }
     var voice by remember { mutableStateOf(s.voiceGuidance) }
+    var prefer by remember { mutableStateOf(s.preferNetworks) }
+    var avoidNets by remember { mutableStateOf(s.avoidNetworks) }
+    var publicOnly by remember { mutableStateOf(s.publicOnly) }
     AlertDialog(
         onDismissRequest = onDone,
         title = { Text("Route settings") },
@@ -485,6 +500,19 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                     minLines = 2, modifier = Modifier.fillMaxWidth())
                 Text("Your prices beat the price Open Charge Map lists; matched on the " +
                     "network's name.", style = MaterialTheme.typography.bodySmall)
+                Text("Charging networks", fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 8.dp))
+                OutlinedTextField(prefer, { prefer = it.take(400) },
+                    label = { Text("Prefer (comma-separated)") },
+                    placeholder = { Text("Ionity, Gridserve") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(avoidNets, { avoidNets = it.take(400) },
+                    label = { Text("Never use (comma-separated)") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth())
+                toggle("Public chargers only (no members-only sites)", publicOnly) { publicOnly = it }
+                Text("A preferred network wins a close choice; the price shown is still its " +
+                    "real price, and it never adds a stop the trip does not need.",
+                    style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {
@@ -503,6 +531,9 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                     avoid = avoid,
                     navigateInApp = inApp,
                     voiceGuidance = voice,
+                    preferNetworks = prefer,
+                    avoidNetworks = avoidNets,
+                    publicOnly = publicOnly,
                 ))
                 onDone()
             }) { Text("Save") }

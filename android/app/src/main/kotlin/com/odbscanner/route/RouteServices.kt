@@ -321,7 +321,8 @@ class RouteServices(
                 val poi = data.optJSONObject(i) ?: continue
                 val operator = poi.optJSONObject("OperatorInfo")?.let { str(it, "Title") } ?: ""
                 if ("tesla-only" in operator.lowercase()) continue
-                if (!poi.isNull("UsageTypeID") && poi.optInt("UsageTypeID", 0) in PRIVATE_USAGE) continue
+                val usage = if (poi.isNull("UsageTypeID")) null else poi.optInt("UsageTypeID", 0)
+                if (usage in PRIVATE_USAGE) continue
                 val status = poi.optJSONObject("StatusType")
                 if (status != null && !status.isNull("IsOperational") &&
                     !status.optBoolean("IsOperational", true)) continue
@@ -343,6 +344,8 @@ class RouteServices(
                     lat = lat, lon = lon, powerKw = powers.max(),
                     operator = operator, address = street,
                     usageCost = str(poi, "UsageCost"),
+                    id = if (poi.isNull("ID")) "" else poi.opt("ID").toString(),
+                    usageType = usage,
                 ))
             }
             return out

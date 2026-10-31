@@ -34,7 +34,16 @@ class PlannerTest {
         mode = o.optString("mode", "balanced"),
         timeValuePerHour = o.optDouble("time_value_per_hour", 15.0),
         defaultPricePerKwh = o.optDouble("default_price_per_kwh", 0.79),
+        avoidNetworks = strings(o.optJSONArray("avoid_networks")),
+        preferNetworks = strings(o.optJSONArray("prefer_networks")),
+        preferDiscount = o.optDouble("prefer_discount", 0.25),
+        publicOnly = o.optBoolean("public_only", false),
+        avoidChargers = strings(o.optJSONArray("avoid_chargers")).toSet(),
+        useChargers = strings(o.optJSONArray("use_chargers")).toSet(),
     )
+
+    private fun strings(a: JSONArray?) =
+        if (a == null) emptyList() else (0 until a.length()).map { a.getString(it) }
 
     private fun points(a: JSONArray) = (0 until a.length()).map { i ->
         val p = a.getJSONArray(i)
@@ -46,7 +55,8 @@ class PlannerTest {
         Charger(c.getString("name"), c.getDouble("lat"), c.getDouble("lon"),
             c.getDouble("power_kw"), c.optString("operator"), c.optString("address"),
             pricePerKwh = if (c.isNull("price_per_kwh")) null else c.getDouble("price_per_kwh"),
-            fee = c.optDouble("fee", 0.0))
+            fee = c.optDouble("fee", 0.0), id = c.optString("id"),
+            usageType = if (c.isNull("usage_type")) null else c.getInt("usage_type"))
     }
 
     @Test
@@ -105,6 +115,10 @@ class PlannerTest {
                 assertEquals("$name stop $k", s.getLong("charge_min"), got.chargeMin)
                 assertEquals("$name stop $k", s.getDouble("kwh"), got.kwh, 0.051)
                 assertEquals("$name stop $k", s.getDouble("cost"), got.cost, 0.011)
+                assertEquals("$name stop $k", s.getString("id"), got.charger.id)
+                assertEquals("$name stop $k", s.getBoolean("preferred"), got.preferred)
+                assertEquals("$name stop $k alternatives", strings(s.getJSONArray("alternatives")),
+                    got.alternatives.map { it.charger.id })
             }
             assertEquals(name, want.getInt("profile_points"), plan.profile.size)
             val last = want.getJSONArray("profile_last")
@@ -187,7 +201,7 @@ class PlannerTest {
         assertEquals(32.0, route.distanceKm, 1e-9)
 
         val chargers = RouteServices.parseChargers(JSONArray(
-            """[{"AddressInfo":{"Title":"Services","Latitude":51.1,"Longitude":-0.2,
+            """[{"ID":123456,"AddressInfo":{"Title":"Services","Latitude":51.1,"Longitude":-0.2,
                  "AddressLine1":"M23","Town":"Crawley"},"OperatorInfo":{"Title":"Ionity"},
                  "Connections":[{"ConnectionTypeID":33,"PowerKW":350},
                                 {"ConnectionTypeID":2,"PowerKW":400}]},
@@ -209,12 +223,20 @@ class PlannerTest {
                  "Connections":[{"ConnectionTypeID":33,"PowerKW":150}]}]"""))
         assertEquals(
             listOf(
-                Charger("Services", 51.1, -0.2, 350.0, "Ionity", "M23, Crawley"),
+                Charger("Services", 51.1, -0.2, 350.0, "Ionity", "M23, Crawley", id = "123456"),
                 Charger("Charger", 51.0, 0.0, 0.0, "", ""),
-                Charger("Open", 51.2, -0.2, 150.0, "", "", usageCost = "£0.79/kWh"),
+                Charger("Open", 51.2, -0.2, 150.0, "", "", usageCost = "£0.79/kWh", usageType = 5),
             ),
             chargers,
         )
+    }
+
+    @Test
+    fun networkNamesAreReadLikeTheDashboard() {   // web/routes/route.py::_names
+        assertEquals(listOf("Ionity", "gridserve"), Planner.names(" Ionity, ,gridserve , IONITY,Gridserve"))
+        assertEquals(emptyList<String>(), Planner.names(""))
+        assertEquals(20, Planner.names((1..30).joinToString(",") { "N$it" }).size)
+        assertEquals(60, Planner.names("x".repeat(80)).single().length)
     }
 
     @Test(expected = RoutingException::class)

@@ -43,6 +43,17 @@ const val CHEAPEST_TIME_VALUE = 3.0        // per hour: enough to refuse silly d
 const val DETOUR_ROAD_FACTOR = 1.4
 const val DETOUR_SPEED_KMH = 40.0
 const val NEAREST_STRIDE = 10
+// Open Charge Map UsageTypeID: public, but only for members or after notice --
+// not for a passing car without an account. Left out under publicOnly. (The
+// private and staff-only types are dropped when chargers are fetched.)
+val MEMBERS_ONLY_USAGE = setOf(4, 7)
+val USAGE_LABELS = mapOf(1 to "public", 4 to "public, membership required",
+    5 to "public, pay at location", 7 to "public, notice required")
+// Search-only cost of NOT using a charger the driver chose: large enough that
+// the plan uses it whenever it can be reached. Never part of a shown cost.
+const val PIN_BONUS = 1e6
+const val ALT_WINDOW_KM = 30.0             // alternatives: this far either side of a stop
+const val ALT_MAX = 4
 
 data class CarModel(
     val usableKwh: Double,
@@ -65,6 +76,14 @@ data class PlanSettings(
     val levelStepPct: Double = 5.0,
     val minChargePct: Double = 10.0,
     val chargingEff: Double = 0.92,
+    // Charger choice. Networks match the operator's name, ignoring case, by any
+    // part ("ionity" matches "IONITY GmbH"). Chargers are Open Charge Map IDs.
+    val avoidNetworks: List<String> = emptyList(),   // never used
+    val preferNetworks: List<String> = emptyList(),  // cheaper by preferDiscount, when choosing
+    val preferDiscount: Double = 0.25,
+    val publicOnly: Boolean = false,                 // also leave out MEMBERS_ONLY_USAGE
+    val avoidChargers: Set<String> = emptySet(),     // never used
+    val useChargers: Set<String> = emptySet(),       // used whenever reachable
 ) {
     fun timeValue(): Double = when (mode) {
         "fastest" -> FASTEST_TIME_VALUE
@@ -84,6 +103,17 @@ data class Charger(
     val fee: Double = 0.0,
     val priceSource: String = "",
     val usageCost: String = "",          // Open Charge Map's price text, as listed
+    val id: String = "",                 // Open Charge Map ID, for avoid / use
+    val usageType: Int? = null,          // Open Charge Map UsageTypeID
+)
+
+/** Another charger near a stop: what the driver can pick instead. */
+data class Alternative(
+    val charger: Charger,
+    val km: Double,
+    val detourKm: Double,
+    val pricePerKwh: Double,
+    val preferred: Boolean,
 )
 
 /** A route point: elevation in metres, or null when the provider gave none. */
@@ -100,7 +130,11 @@ data class Stop(
     val priceSource: String,
     val cost: Double,
     val detourKm: Double,
-)
+    val preferred: Boolean = false,
+    val alternatives: List<Alternative> = emptyList(),
+) {
+    val access: String get() = USAGE_LABELS[charger.usageType] ?: ""
+}
 
 data class Plan(
     val status: String,               // "direct" | "with_stops" | "unreachable"
@@ -241,6 +275,8 @@ object Planner {
         val table: DoubleArray,
         val levelCost: DoubleArray,
         val fixedCost: Double,
+        val choicePrice: Double,          // price as the search sees it (preferences)
+        val preferred: Boolean,
     )
 
     private class State(val cost: Double, val parent: Int, val parentLevel: Int)
@@ -283,19 +319,25 @@ object Planner {
         val tables = HashMap<Double, DoubleArray>()
         val found = mutableListOf<Candidate>()
         for (c in chargers) {
-            if (c.powerKw < settings.minChargerKw) continue
+            if (c.powerKw < settings.minChargerKw || !usable(c, settings)) continue
             val (idx, off) = nearestPoint(points, c.lat, c.lon)
             if (off > settings.searchRadiusKm || idx == n - 1) continue
             val table = tables.getOrPut(c.powerKw) { chargeTable(car, c.powerKw) }
             val price = c.pricePerKwh ?: settings.defaultPricePerKwh
+            // Preferences change what the search weighs, never a shown cost:
+            // simulate() prices every stop at `price`.
+            val preferred = networkIn(c.operator, settings.preferNetworks)
+            val choice = if (preferred) price * (1.0 - settings.preferDiscount) else price
             val detourS = 2 * off * DETOUR_ROAD_FACTOR / DETOUR_SPEED_KMH * 3600.0
+            var fixed = c.fee + tv * (settings.stopOverheadMin * 60.0 + detourS) / 3600.0
+            if (c.id.isNotEmpty() && c.id in settings.useChargers) fixed -= PIN_BONUS
             found.add(Candidate(
                 idx, off, c, price, table,
                 DoubleArray(levels.size) { li ->
-                    price * levelKwh[li] / settings.chargingEff +
+                    choice * levelKwh[li] / settings.chargingEff +
                         tv * tableSeconds(table, levels[li]) / 3600.0
                 },
-                c.fee + tv * (settings.stopOverheadMin * 60.0 + detourS) / 3600.0,
+                fixed, choice, preferred,
             ))
         }
         val cands = found.sortedBy { it.idx }       // stable, like Python's sort
@@ -335,7 +377,7 @@ object Planner {
                     val cand = cands[r.node - 1]
                     val arrive = min(cap, dep - r.used)
                     val base = cost + cand.fixedCost -
-                        cand.price * arrive / settings.chargingEff -
+                        cand.choicePrice * arrive / settings.chargingEff -
                         tv * tableSeconds(cand.table, arrive / cap * 100.0) / 3600.0
                     val row = best[r.node]
                     for (l2 in levels.indices) {
@@ -419,6 +461,49 @@ object Planner {
         return out.reversed()
     }
 
+    /** Network names from a comma-separated string: trimmed, no repeats, at
+     *  most 20 of at most 60 characters (web/routes/route.py `_names`). */
+    fun names(raw: String): List<String> {
+        val out = mutableListOf<String>()
+        for (item in raw.split(",")) {
+            val name = item.trim().take(60)
+            if (name.isNotEmpty() && out.none { it.equals(name, ignoreCase = true) }) out.add(name)
+        }
+        return out.take(20)
+    }
+
+    /** Whether [operator] belongs to one of the networks [names]: any of them
+     *  found in it, ignoring case ("ionity" matches "IONITY GmbH"). */
+    fun networkIn(operator: String, names: List<String>): Boolean {
+        val op = operator.lowercase()
+        return names.any { it.isNotBlank() && it.trim().lowercase() in op }
+    }
+
+    /** Whether the driver's choices allow charger [c] at all. */
+    fun usable(c: Charger, settings: PlanSettings): Boolean {
+        if (c.id.isNotEmpty() && c.id in settings.avoidChargers) return false
+        if (networkIn(c.operator, settings.avoidNetworks)) return false
+        return !(settings.publicOnly && c.usageType in MEMBERS_ONLY_USAGE)
+    }
+
+    /** Up to ALT_MAX other usable chargers within ALT_WINDOW_KM of a stop,
+     *  nearest along the route first -- the same order as the Python planner. */
+    private fun alternatives(cand: Candidate, cands: List<Candidate>, cum: DoubleArray):
+        List<Alternative> {
+        val km = cum[cand.idx]
+        return cands.filter { d ->
+            d !== cand && abs(cum[d.idx] - km) <= ALT_WINDOW_KM &&
+                !(d.charger.id.isNotEmpty() && d.charger.id == cand.charger.id)
+        }.sortedWith(compareBy<Candidate> { round(abs(cum[it.idx] - km), 3) }
+            .thenBy { -it.charger.powerKw }
+            .thenBy { it.charger.name })
+            .take(ALT_MAX)
+            .map { d ->
+                Alternative(d.charger, round(cum[d.idx], 1), round(d.offsetKm, 1),
+                    round(d.price, 4), d.preferred)
+            }
+    }
+
     private fun simulate(
         points: List<RoutePoint>, cum: DoubleArray, seg: DoubleArray, cands: List<Candidate>,
         path: List<Pair<Int, Int>>, levels: List<Double>, driveS: Double, startPct: Double,
@@ -455,6 +540,8 @@ object Planner {
                 pricePerKwh = round(cand.price, 4),
                 priceSource = cand.charger.priceSource.ifEmpty { "default price" },
                 cost = round(money, 2), detourKm = round(cand.offsetKm, 1),
+                preferred = cand.preferred,
+                alternatives = alternatives(cand, cands, cum),
             ))
             profile.add(cand.idx to depart)                  // vertical step
             energy = depart
@@ -525,6 +612,27 @@ object Planner {
                 .format(l, s.defaultPricePerKwh, s.chargingEff),
             "Charging time follows the ID.3 58 kWh DC curve, capped by the charger's " +
                 "rated power; real sessions are often slower.",
-        )
+        ) + choiceAssumptions(s)
+    }
+
+    private fun choiceAssumptions(s: PlanSettings): List<String> {
+        val l = java.util.Locale.ROOT
+        val out = mutableListOf<String>()
+        if (s.avoidNetworks.isNotEmpty()) {
+            out += "Never uses: ${s.avoidNetworks.joinToString(", ")}."
+        }
+        if (s.preferNetworks.isNotEmpty()) {
+            out += ("Prefers ${s.preferNetworks.joinToString(", ")}: their energy counts " +
+                "%.0f %% cheaper when choosing stops; the costs shown are the real prices.")
+                .format(l, s.preferDiscount * 100)
+        }
+        if (s.publicOnly) {
+            out += "Public access only: chargers that need a membership or notice are left out."
+        }
+        if (s.avoidChargers.isNotEmpty() || s.useChargers.isNotEmpty()) {
+            out += "Your picks: ${s.useChargers.size} charger(s) used where reachable, " +
+                "${s.avoidChargers.size} avoided."
+        }
+        return out
     }
 }
