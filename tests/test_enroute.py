@@ -115,3 +115,21 @@ def test_being_on_a_tight_plan_is_not_a_problem():
     assert assess(tight, 50, on)["level"] == "normal"
     assert assess(tight, 50, on - 1.0)["level"] == "normal"      # noise, not drift
     assert assess(tight, 50, on - 4.0)["level"] == "critical"
+
+
+def test_the_shared_vectors_are_current_and_cover_every_level():
+    """tests/data/enroute_vectors.json holds the phone to these rules
+    (android/.../route/EnRouteTest.kt)."""
+    import json
+    import os
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.join(root, "tools"))
+    from export_enroute_vectors import build, render
+    path = os.path.join(root, "tests", "data", "enroute_vectors.json")
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    assert text == render(build()), (
+        "enroute_vectors.json is stale: python tools/export_enroute_vectors.py")
+    levels = {c["expect"]["level"] for c in json.loads(text)["cases"]}
+    assert levels == {"normal", "warning", "adjust", "critical"}

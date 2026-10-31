@@ -169,9 +169,23 @@ object TripMonitor {
             stopIdx != null -> null                 // at a planned charger: wait for it
             else -> Replan.reason(expected, actual, at.offRouteKm)
         }
+        // The level (EnRoute: the dashboard's rules) goes in the note; it
+        // recommends, and the re-plan below stays the only thing that changes
+        // the route -- announced when it does.
+        val judged = if (fresh) EnRoute.assess(plan, at.kmAlong, actual, (now - readMs!!) / 1000.0,
+            RoutePrefs.load(context).reservePct, trip.chargedSincePlan || trip.charging) else null
+        val level = judged?.takeIf { it.level != "normal" }
+            ?.let { " · ${it.level.uppercase(Locale.ROOT)}: ${it.action}" } ?: ""
+        if (judged?.level == "critical") {
+            val key = "critical@${trip.plannedAtMs}"
+            if (key !in trip.announced) {
+                update { it.copy(announced = it.announced + key) }
+                speak(context, judged.action)
+            }
+        }
         val checked = if (stopIdx != null) "At charging stop ${stopIdx + 1}: " +
             plan.stops[stopIdx].charger.name
-        else String.format(Locale.ROOT, "Charge %.0f %%, plan %.0f %% here", actual, expected)
+        else String.format(Locale.ROOT, "Charge %.0f %%, plan %.0f %% here", actual, expected) + level
         if (reason == null) {
             update { it.copy(lastPct = seen, charging = false, note = checked) }
             return@withLock
