@@ -3,13 +3,21 @@ package com.odbscanner.ai
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
-import java.net.HttpURLConnection
 import java.net.URL
 
-/** An assistant request failed; the message says why, fit to show or speak. */
-class AiException(message: String, cause: Throwable? = null) : Exception(message, cause)
+/**
+ * An assistant request failed. [error] says how, in one of the twelve
+ * categories (AiErrors), safe to show; the message is its sentence.
+ */
+class AiException(message: String, cause: Throwable? = null, val error: AiError? = null) :
+    Exception(message, cause) {
+    constructor(error: AiError, cause: Throwable? = null) : this(error.message, cause, error)
+
+    val category: AiErrorCategory get() = error?.category ?: AiErrorCategory.UNKNOWN_ERROR
+}
 
 /** A tool the AI may call: a name, what it does, its JSON-schema parameters. */
 data class ToolSpec(val name: String, val description: String, val parameters: JSONObject)
@@ -35,11 +43,20 @@ interface ChatSession {
 
 const val MAX_TOOL_ROUNDS = 6
 
+/** A test question's answer: what was said, by which model, and the tokens it took. */
+data class Probe(val text: String, val model: String, val inputTokens: Int?,
+                 val outputTokens: Int?)
+
 /**
  * OpenAI-compatible chat completions with function calling: OpenAI, Gemini,
  * Mistral, Groq, OpenRouter, DeepSeek, xAI, a custom endpoint or Ollama.
- * HttpURLConnection + org.json, like the app's other services. No sampling
- * parameters or output cap are sent: several newer models reject them.
+ * org.json over [transport] (HttpURLConnection by default), like the app's
+ * other services. No sampling parameters or output cap are sent: several
+ * newer models reject them.
+ *
+ * A turn that fails or is cancelled is taken out of the history again, so
+ * the conversation stays one the service accepts and nothing of that turn
+ * comes back. Cancelling the caller aborts the request in flight.
  */
 class OpenAiChatSession(
     private val baseUrl: String,
@@ -52,29 +69,43 @@ class OpenAiChatSession(
     private val timeoutMs: Int = 90_000,
     /** Sent as reasoning_effort when set (AiPreset.reasoningEffort); "" sends none. */
     private val reasoningEffort: String = "",
+    /** Who this is, in errors ("Groq"); the host when not given. */
+    private val provider: String = "",
+    private val transport: HttpTransport = UrlTransport,
 ) : ChatSession {
     private val messages = JSONArray().put(JSONObject().put("role", "system").put("content", system))
+    private val host = runCatching { URL(baseUrl).host }.getOrDefault(baseUrl)
+    private val label = provider.ifBlank { host }
 
     override suspend fun ask(text: String, tools: ToolRunner): String = withContext(Dispatchers.IO) {
-        messages.put(JSONObject().put("role", "user").put("content", text))
-        repeat(MAX_TOOL_ROUNDS) {
-            val reply = request()
-            val msg = reply.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
-                ?: throw AiException("Unexpected reply from the AI service")
-            messages.put(echo(msg))
-            val calls = parseToolCalls(msg)
-            if (calls.isEmpty()) {
-                return@withContext contentText(msg).ifBlank { throw AiException("The AI gave no answer") }
+        val mark = messages.length()
+        try {
+            messages.put(JSONObject().put("role", "user").put("content", text))
+            repeat(MAX_TOOL_ROUNDS) {
+                val reply = request()
+                val msg = reply.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                    ?: throw invalid("Unexpected reply from $label")
+                messages.put(echo(msg))
+                val calls = parseToolCalls(msg)
+                if (calls.isEmpty()) {
+                    return@withContext contentText(msg).ifBlank { throw invalid("$label gave no answer") }
+                }
+                for (call in calls) {
+                    messages.put(JSONObject().put("role", "tool").put("tool_call_id", call.id)
+                        .put("content", tools.run(call)))
+                }
             }
-            for (call in calls) {
-                messages.put(JSONObject().put("role", "tool").put("tool_call_id", call.id)
-                    .put("content", tools.run(call)))
-            }
+            throw invalid("$label kept calling tools without answering")
+        } catch (t: Throwable) {
+            while (messages.length() > mark) messages.remove(messages.length() - 1)
+            throw t
         }
-        throw AiException("The AI kept calling tools without answering")
     }
 
-    private fun request(): JSONObject {
+    private fun invalid(message: String) =
+        AiException(AiError(AiErrorCategory.INVALID_RESPONSE, label, message))
+
+    private suspend fun request(): JSONObject {
         val body = JSONObject().put("model", model).put("messages", messages)
         if (reasoningEffort.isNotBlank()) body.put("reasoning_effort", reasoningEffort)
         if (tools.isNotEmpty()) {
@@ -86,55 +117,45 @@ class OpenAiChatSession(
                 }
             })
         }
-        return JSONObject(post("$baseUrl/chat/completions", body.toString()))
-    }
-
-    private fun post(url: String, body: String): String {
-        val host = runCatching { URL(url).host }.getOrDefault(url)
-        val conn = URL(url).openConnection() as HttpURLConnection
-        var sent = false
-        try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 15_000
-            conn.readTimeout = timeoutMs
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            conn.setRequestProperty("Accept", "application/json")
-            if (key.isNotBlank()) conn.setRequestProperty("Authorization", "Bearer $key")
-            val bytes = body.toByteArray(Charsets.UTF_8)
-            // A known length makes the connection open here, not at the reply,
-            // so `sent` really marks the request as on its way.
-            conn.setFixedLengthStreamingMode(bytes.size)
-            conn.outputStream.use { it.write(bytes) }
-            sent = true
-            val code = conn.responseCode
-            val text = (if (code < 400) conn.inputStream else conn.errorStream)
-                ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-            when {
-                code == 401 || code == 403 -> throw AiException("$host refused the API key (HTTP $code)")
-                code == 404 -> throw AiException("$host: model '$model' not found (HTTP 404)")
-                code == 429 -> throw AiException("$host rate limit reached; try again shortly")
-                code >= 400 -> throw AiException("$host returned HTTP $code: ${text.take(200)}")
-            }
-            return text
-        } catch (e: java.net.UnknownHostException) {
-            throw AiException("No internet connection: could not look up $host", e)
-        } catch (e: java.net.SocketTimeoutException) {
-            // Which wait ran out says where the problem is: the phone's
-            // connection, or the service taking too long to think.
-            val connecting = !sent || e.message?.contains("connect", ignoreCase = true) == true
-            throw AiException(if (connecting)
-                "Could not connect to $host: check the phone's internet connection"
-                else "$host did not answer within ${timeoutMs / 1000} s; " +
-                    "try again, or a quicker service such as Groq", e)
-        } catch (e: IOException) {
-            throw AiException("Could not reach $host: ${e.message}", e)
-        } finally {
-            conn.disconnect()
+        val text = post("$baseUrl/chat/completions", body.toString(), timeoutMs)
+        return try {
+            JSONObject(text)
+        } catch (e: JSONException) {
+            throw AiException(AiErrors.fromException(label, host, e), e)
         }
     }
 
+    private suspend fun post(url: String, body: String, readTimeoutMs: Int): String =
+        call(transport, label, host, key, model, HttpRequest("POST", url, headers(key) + mapOf(
+            "Content-Type" to "application/json; charset=utf-8"), body,
+            readTimeoutMs = readTimeoutMs))
+
     companion object {
+        fun headers(key: String): Map<String, String> =
+            mapOf("Accept" to "application/json") +
+                (if (key.isNotBlank()) mapOf("Authorization" to "Bearer $key") else emptyMap())
+
+        /**
+         * One request through [transport]: the body of a 2xx reply, else an
+         * AiException in its category, the key taken out of any message.
+         */
+        suspend fun call(transport: HttpTransport, label: String, host: String, key: String,
+                         model: String, req: HttpRequest): String {
+            val reply = try {
+                transport.send(req)
+            } catch (e: HttpFailure) {
+                throw AiException(AiErrors.fromException(label, host, e.cause ?: e, e.sent,
+                    (req.readTimeoutMs + 999) / 1000), e)
+            } catch (e: IOException) {
+                throw AiException(AiErrors.fromException(label, host, e), e)
+            }
+            if (reply.status >= 400) {
+                throw AiException(AiErrors.fromHttp(label, reply.status, reply.body, model,
+                    listOf(key)))
+            }
+            return reply.body
+        }
+
         /** The assistant message as it goes back into the history. */
         fun echo(msg: JSONObject): JSONObject {
             val out = JSONObject().put("role", "assistant")
@@ -165,23 +186,52 @@ class OpenAiChatSession(
             return c?.toString()?.trim() ?: ""
         }
 
-        /** Model ids the service offers (GET /models), for the settings picker. */
-        fun listModels(baseUrl: String, key: String): List<String> {
-            val conn = URL("${baseUrl.trimEnd('/')}/models").openConnection() as HttpURLConnection
-            try {
-                conn.connectTimeout = 15_000
-                conn.readTimeout = 20_000
-                if (key.isNotBlank()) conn.setRequestProperty("Authorization", "Bearer $key")
-                val code = conn.responseCode
-                if (code >= 400) throw AiException("Listing models failed (HTTP $code)")
-                val data = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-                    .optJSONArray("data") ?: return emptyList()
-                return (0 until data.length()).mapNotNull { data.optJSONObject(it)?.optString("id") }
-                    .filter { it.isNotBlank() }.sorted()
-            } catch (e: IOException) {
-                throw AiException("Could not reach the service: ${e.message}", e)
-            } finally {
-                conn.disconnect()
+        /**
+         * Model ids the service offers (GET /models): for the settings picker,
+         * and the setup screen's key test (a refused key fails here).
+         */
+        suspend fun listModels(baseUrl: String, key: String, label: String = "",
+                               transport: HttpTransport = UrlTransport): List<String> {
+            val url = "${baseUrl.trimEnd('/')}/models"
+            val host = runCatching { URL(url).host }.getOrDefault(url)
+            val text = call(transport, label.ifBlank { host }, host, key, "",
+                HttpRequest("GET", url, headers(key), readTimeoutMs = 20_000))
+            val data = try {
+                JSONObject(text).optJSONArray("data") ?: return emptyList()
+            } catch (e: JSONException) {
+                throw AiException(AiErrors.fromException(label.ifBlank { host }, host, e), e)
+            }
+            return (0 until data.length()).mapNotNull { data.optJSONObject(it)?.optString("id") }
+                .map { it.removePrefix("models/") }.filter { it.isNotBlank() }.sorted()
+        }
+
+        /**
+         * One short question with no tools and no history, for the setup
+         * screen's AI test: the answer, the model that gave it and the
+         * tokens, where the reply says. Synthetic words only.
+         */
+        suspend fun probe(baseUrl: String, key: String, model: String, label: String,
+                          prompt: String, reasoningEffort: String = "",
+                          transport: HttpTransport = UrlTransport,
+                          readTimeoutMs: Int = 30_000): Probe {
+            val url = "${baseUrl.trimEnd('/')}/chat/completions"
+            val host = runCatching { URL(url).host }.getOrDefault(url)
+            val body = JSONObject().put("model", model).put("messages", JSONArray()
+                .put(JSONObject().put("role", "user").put("content", prompt)))
+            if (reasoningEffort.isNotBlank()) body.put("reasoning_effort", reasoningEffort)
+            val text = call(transport, label, host, key, model, HttpRequest("POST", url,
+                headers(key) + mapOf("Content-Type" to "application/json; charset=utf-8"),
+                body.toString(), readTimeoutMs = readTimeoutMs))
+            return try {
+                val o = JSONObject(text)
+                val msg = o.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                    ?: throw JSONException("no choices")
+                val usage = o.optJSONObject("usage")
+                Probe(contentText(msg), o.optString("model").ifBlank { model },
+                    usage?.optInt("prompt_tokens")?.takeIf { usage.has("prompt_tokens") },
+                    usage?.optInt("completion_tokens")?.takeIf { usage.has("completion_tokens") })
+            } catch (e: JSONException) {
+                throw AiException(AiErrors.fromException(label, host, e), e)
             }
         }
     }

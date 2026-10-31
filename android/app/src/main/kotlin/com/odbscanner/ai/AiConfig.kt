@@ -78,11 +78,17 @@ data class AiSettings(
     val wakeWord: Boolean = false,       // always listening for the wake phrase
     val wakePhrase: String = "hey scanner",
     val backups: List<String> = emptyList(),   // tried in order when the service fails
+    val disabled: Set<String> = emptySet(),    // turned off: never asked, kept configured
+    val sttOffline: Boolean = false,           // recognise on the phone only, where it can
+    val ttsVoice: String = "",                 // a TextToSpeech voice name; "" the engine's own
 ) {
     val preset: AiPreset get() = AiPresets.byId(provider)
     val effectiveModel: String
         get() = model.ifBlank { preset.defaultModel }
     val effectiveBaseUrl: String get() = baseUrl.ifBlank { preset.baseUrl }.trimEnd('/')
+
+    /** The services asked, in order: the chosen one, then the backups, none turned off. */
+    val chain: List<String> get() = (listOf(provider) + backups).filter { it !in disabled }
 }
 
 object AiPrefs {
@@ -101,6 +107,10 @@ object AiPrefs {
             wakePhrase = p.getString("wake_phrase", "hey scanner") ?: "hey scanner",
             backups = cleanBackups(p.getString("backups", "") ?: "",
                 p.getString("provider", "anthropic") ?: "anthropic"),
+            disabled = (p.getString("disabled", "") ?: "").split(',').map { it.trim() }
+                .filter { id -> AiPresets.ALL.any { it.id == id } }.toSet(),
+            sttOffline = p.getBoolean("stt_offline", false),
+            ttsVoice = p.getString("tts_voice", "") ?: "",
         )
     }
 
@@ -124,6 +134,9 @@ object AiPrefs {
             .putString("wake_phrase", s.wakePhrase.trim().lowercase().ifBlank { "hey scanner" })
             .putString("backups", cleanBackups(s.backups.joinToString(","), s.provider)
                 .joinToString(","))
+            .putString("disabled", s.disabled.joinToString(","))
+            .putBoolean("stt_offline", s.sttOffline)
+            .putString("tts_voice", s.ttsVoice.trim())
             .apply()
     }
 

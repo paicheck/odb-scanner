@@ -5,10 +5,6 @@ import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import com.anthropic.core.JsonValue
 import com.anthropic.errors.AnthropicIoException
 import com.anthropic.errors.AnthropicServiceException
-import com.anthropic.errors.NotFoundException
-import com.anthropic.errors.PermissionDeniedException
-import com.anthropic.errors.RateLimitException
-import com.anthropic.errors.UnauthorizedException
 import com.anthropic.models.beta.messages.BetaContentBlockParam
 import com.anthropic.models.beta.messages.BetaFallbacksParam
 import com.anthropic.models.beta.messages.BetaMessage
@@ -37,6 +33,11 @@ import java.time.Duration
  *   results in one user message. Tools are declared once, for the session.
  * - No sampling parameters and no forced tool choice (current models reject
  *   both).
+ * - The SDK's call blocks and has no cancel, so it runs in Cancellable: a
+ *   cancelled turn returns at once and the late reply is dropped. The SDK's
+ *   own retries are off -- a voice turn falls back to the next service
+ *   instead of waiting through retries -- and a failed or cancelled turn is
+ *   taken out of the history again.
  */
 class ClaudeChatSession(
     apiKey: String,
@@ -46,15 +47,27 @@ class ClaudeChatSession(
     tools: List<ToolSpec>,
     baseUrl: String = "",
 ) : ChatSession {
+    private val key = apiKey
     private val client: AnthropicClient = AnthropicOkHttpClient.builder()
         .apiKey(apiKey)
-        .timeout(Duration.ofSeconds(90))
+        .timeout(Duration.ofSeconds(TIMEOUT_S))
+        .maxRetries(0)
         .apply { if (baseUrl.isNotBlank()) baseUrl(baseUrl) }
         .build()
     private val betaTools = tools.map(::betaTool)
     private val history = mutableListOf<BetaMessageParam>()
 
     override suspend fun ask(text: String, tools: ToolRunner): String = withContext(Dispatchers.IO) {
+        val mark = history.size
+        try {
+            turn(text, tools)
+        } catch (t: Throwable) {
+            while (history.size > mark) history.removeAt(history.size - 1)
+            throw t
+        }
+    }
+
+    private suspend fun turn(text: String, tools: ToolRunner): String {
         history.add(BetaMessageParam.ofUser(text))
         repeat(MAX_TOOL_ROUNDS) {
             val reply = create()
@@ -64,8 +77,7 @@ class ClaudeChatSession(
                     // output). The next question simply follows this one.
                     val why = reply.stopDetails().flatMap { it.category() }.map { it.toString() }
                         .orElse(null)
-                    return@withContext "I can't help with that one" +
-                        (if (why != null) " ($why)." else ".")
+                    return "I can't help with that one" + (if (why != null) " ($why)." else ".")
                 }
                 else -> Unit
             }
@@ -73,8 +85,11 @@ class ClaudeChatSession(
             val calls = reply.content().mapNotNull { it.toolUse().orElse(null) }
             if (reply.stopReason().orElse(null) != BetaStopReason.TOOL_USE || calls.isEmpty()) {
                 val answer = textOf(reply)
-                if (answer.isBlank()) throw AiException("Claude gave no answer")
-                return@withContext if (reply.stopReason().orElse(null) == BetaStopReason.MAX_TOKENS)
+                if (answer.isBlank()) {
+                    throw AiException(AiError(AiErrorCategory.INVALID_RESPONSE, LABEL,
+                        "Claude gave no answer"))
+                }
+                return if (reply.stopReason().orElse(null) == BetaStopReason.MAX_TOKENS)
                     "$answer (cut short)" else answer
             }
             // Every result for this turn in ONE user message, matched by id.
@@ -87,10 +102,11 @@ class ClaudeChatSession(
             }
             history.add(BetaMessageParam.ofUserOfContentBlockParams(results))
         }
-        throw AiException("The AI kept calling tools without answering")
+        throw AiException(AiError(AiErrorCategory.INVALID_RESPONSE, LABEL,
+            "Claude kept calling tools without answering"))
     }
 
-    private fun create(): BetaMessage {
+    private suspend fun create(): BetaMessage {
         val params = MessageCreateParams.builder()
             .model(model)
             .maxTokens(16000L)
@@ -101,24 +117,13 @@ class ClaudeChatSession(
             .fallbacks(BetaFallbacksParam.ofDefault())
             .apply { betaTools.forEach { addTool(it) } }
             .build()
-        return try {
-            client.beta().messages().create(params)
-        } catch (e: UnauthorizedException) {
-            throw AiException("Anthropic refused the API key", e)
-        } catch (e: PermissionDeniedException) {
-            throw AiException("This API key may not use $model", e)
-        } catch (e: NotFoundException) {
-            throw AiException("Claude model '$model' not found", e)
-        } catch (e: RateLimitException) {
-            throw AiException("Anthropic rate limit reached; try again shortly", e)
-        } catch (e: AnthropicServiceException) {
-            throw AiException("Anthropic returned HTTP ${e.statusCode()}", e)
-        } catch (e: AnthropicIoException) {
-            throw AiException("Could not reach Anthropic: ${e.message}", e)
-        }
+        return guarded(model, key) { client.beta().messages().create(params) }
     }
 
     companion object {
+        const val LABEL = "Claude (Anthropic)"
+        const val HOST = "api.anthropic.com"
+        const val TIMEOUT_S = 90L
         const val FALLBACK_BETA = "server-side-fallback-2026-07-01"
         val SUGGESTED = listOf("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5",
             "claude-fable-5-1")
@@ -153,17 +158,45 @@ class ClaudeChatSession(
             else -> v
         }
 
-        /** Model ids the key can use, newest first (GET /v1/models). */
-        fun listModels(apiKey: String, baseUrl: String = ""): List<String> = try {
-            AnthropicOkHttpClient.builder().apiKey(apiKey)
+        /** An SDK failure in its category, the key taken out of any message. */
+        fun classify(e: Throwable, model: String, key: String): AiError = when (e) {
+            is AiException -> e.error ?: AiErrors.fromException(LABEL, HOST, e)
+            is AnthropicServiceException ->
+                AiErrors.fromHttp(LABEL, e.statusCode(), e.message ?: "", model, listOf(key))
+            is AnthropicIoException ->
+                AiErrors.fromException(LABEL, HOST, e.cause ?: e, sent = true,
+                    timeoutS = TIMEOUT_S.toInt())
+            else -> AiErrors.fromException(LABEL, HOST, e)
+        }
+
+        /** [work] (a blocking SDK call) cancellable, its failures classified. */
+        suspend fun <T> guarded(model: String, key: String, work: () -> T): T = try {
+            Cancellable.blocking(work = work)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw AiException(classify(e, model, key), e)
+        }
+
+        private fun client(apiKey: String, baseUrl: String, timeoutS: Long) =
+            AnthropicOkHttpClient.builder().apiKey(apiKey).maxRetries(0)
+                .timeout(Duration.ofSeconds(timeoutS))
                 .apply { if (baseUrl.isNotBlank()) baseUrl(baseUrl) }.build()
-                .models().list().data().map { it.id() }
-        } catch (e: UnauthorizedException) {
-            throw AiException("Anthropic refused the API key", e)
-        } catch (e: AnthropicServiceException) {
-            throw AiException("Listing models failed (HTTP ${e.statusCode()})", e)
-        } catch (e: AnthropicIoException) {
-            throw AiException("Could not reach Anthropic: ${e.message}", e)
+
+        /** Model ids the key can use, newest first (GET /v1/models): a refused key fails here. */
+        suspend fun listModels(apiKey: String, baseUrl: String = ""): List<String> =
+            guarded("", apiKey) { client(apiKey, baseUrl, 20).models().list().data().map { it.id() } }
+
+        /** One short question, no tools, no history: the setup screen's AI test. */
+        suspend fun probe(apiKey: String, model: String, prompt: String,
+                          baseUrl: String = ""): Probe = guarded(model, apiKey) {
+            val reply = client(apiKey, baseUrl, 30).messages().create(
+                com.anthropic.models.messages.MessageCreateParams.builder()
+                    .model(model).maxTokens(200L).addUserMessage(prompt).build())
+            val text = reply.content().mapNotNull { it.text().orElse(null)?.text() }
+                .joinToString("").trim()
+            Probe(text, reply.model().asString(), reply.usage().inputTokens().toInt(),
+                reply.usage().outputTokens().toInt())
         }
     }
 }

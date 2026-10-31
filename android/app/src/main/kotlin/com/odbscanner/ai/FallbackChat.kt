@@ -33,11 +33,16 @@ class FallbackChatSession(
 
     override val model: String get() = sessions.getOrNull(index)?.model ?: ""
 
+    /** The service answering now (a backup once one has had to). */
+    val activeLabel: String get() = members.getOrNull(index)?.first ?: ""
+    val onBackup: Boolean get() = index > 0
+
     /** Which service answered, and why the ones before it did not; once. */
     fun takeNote(): String? = note.also { note = null }
 
     override suspend fun ask(text: String, tools: ToolRunner): String {
         val failed = mutableListOf<String>()
+        var last: AiException? = null
         while (index < members.size) {
             val (label, make) = members[index]
             var acted = false
@@ -52,14 +57,22 @@ class FallbackChatSession(
                 else "Answered by $label: ${failed.joinToString("; ")}."
                 return answer
             } catch (e: AiException) {
+                // (A CancellationException is not an AiException: a stopped
+                // turn is never handed to a backup.)
                 if (acted) {
-                    throw AiException("${e.message} -- after it had already acted on " +
-                        "that, so the backup was not asked", e)
+                    val err = e.error ?: AiError(e.category, label, e.message ?: "failed")
+                    throw AiException(err.copy(message = "${err.message} -- after it had " +
+                        "already acted on that, so the backup was not asked"), e)
                 }
-                failed += "$label failed (${e.message})"
+                failed += "$label failed (" + (e.error?.let { "${it.category}: " } ?: "") +
+                    "${e.message})"
+                last = e
                 index++
             }
         }
-        throw AiException("every AI service failed: ${failed.joinToString("; ")}")
+        val err = last?.error
+        throw AiException(AiError(err?.category ?: AiErrorCategory.UNKNOWN_ERROR, "AI services",
+            "every AI service failed: ${failed.joinToString("; ")}", err?.detail ?: "",
+            err?.status, err?.reason ?: ""), last)
     }
 }
