@@ -50,6 +50,55 @@ data class Interaction(
     }
 }
 
+/**
+ * One turn as it goes, becoming its [Interaction]: filled in by the voice
+ * assistant at each stage, with who answered taken as the answer came back.
+ */
+class TurnTrace(val source: VoiceSource) {
+    val atMs = System.currentTimeMillis()
+    var sttMs: Long? = null
+    var firstWordMs: Long? = null
+    var aiMs: Long? = null
+    var ttsMs: Long? = null
+    var outcome = Interaction.OUTCOME_ANSWERED
+    var category: String? = null
+    var stage: String? = null
+    var interrupted = false
+    var question: String? = null
+    // Who answered (or failed), as it happened: never the previous turn's.
+    var provider = ""
+    var model = ""
+    var fallback = false
+
+    /** [active]: Assistant.active as the answer came back ("Groq (backup)"). */
+    fun answered(active: String?, model: String) {
+        provider = active?.removeSuffix(" (backup)") ?: ""
+        this.model = model
+        fallback = active?.endsWith("(backup)") == true
+    }
+
+    fun failed(e: AiError, at: String) {
+        outcome = Interaction.OUTCOME_FAILED
+        category = e.category.name
+        stage = at
+        if (provider.isBlank()) provider = e.provider
+    }
+
+    /** Stopped, or talked over: where it was when it was. */
+    fun stopped() {
+        outcome = Interaction.OUTCOME_STOPPED
+        interrupted = true
+        if (stage == null) stage = when {
+            source != VoiceSource.TYPED && sttMs == null -> "recognition"
+            aiMs == null -> "AI"
+            else -> "speech"
+        }
+    }
+
+    fun build(): Interaction = Interaction(atMs, source.name, provider, model, sttMs,
+        firstWordMs, aiMs, ttsMs, outcome, category, stage, interrupted, fallback, question)
+}
+
 /** What the history says, for a provider and/or capability, or for all. */
 data class HistoryStats(
     val count: Int,
@@ -114,21 +163,45 @@ object History {
         return all.filter { it.atMs >= since }.sortedBy { it.atMs }.takeLast(MAX)
     }
 
+    /**
+     * What may be kept of [all] under your settings: [prune]d, and the
+     * questions' words only while you keep them ([text]).
+     */
+    fun kept(all: List<Interaction>, nowMs: Long, days: Int, text: Boolean): List<Interaction> =
+        prune(all, nowMs, days).map { if (text || it.question == null) it else it.copy(question = null) }
+
     private fun file(context: Context) = File(context.filesDir, FILE)
 
-    @Synchronized
-    fun load(context: Context): List<Interaction> = runCatching {
+    private fun read(context: Context): List<Interaction> = runCatching {
         file(context).takeIf { it.exists() }?.readLines()?.mapNotNull(Interaction::decode)
     }.getOrNull() ?: emptyList()
+
+    private fun write(context: Context, all: List<Interaction>) {
+        runCatching {
+            if (all.isEmpty()) file(context).delete()
+            else file(context).writeText(all.joinToString("\n", postfix = "\n") { Interaction.encode(it) })
+        }
+    }
+
+    /**
+     * The history, as your settings now allow: a shorter keep, "off", or the
+     * questions' words turned off take effect on what is already stored.
+     */
+    @Synchronized
+    fun load(context: Context): List<Interaction> {
+        val raw = read(context)
+        val s = AiPrefs.load(context)
+        val kept = kept(raw, System.currentTimeMillis(), s.historyDays, s.historyText)
+        if (kept != raw) write(context, kept)
+        return kept
+    }
 
     /** Add [i], keeping only what the retention setting allows. */
     @Synchronized
     fun add(context: Context, i: Interaction) {
         val s = AiPrefs.load(context)
-        if (s.historyDays <= 0) return
-        val kept = prune(load(context) + (if (s.historyText) i else i.copy(question = null)),
-            System.currentTimeMillis(), s.historyDays)
-        runCatching { file(context).writeText(kept.joinToString("\n", postfix = "\n") { Interaction.encode(it) }) }
+        write(context, kept(read(context) + i, System.currentTimeMillis(), s.historyDays,
+            s.historyText))
     }
 
     @Synchronized

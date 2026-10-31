@@ -137,6 +137,7 @@ object Assistant {
         }.getOrNull() ?: return null
         val said = LocalAnswers.say(intent, data) ?: return null
         _active.value = "the phone itself (no AI service)"
+        lastModel = ""
         return Reply(said, "$said (answered from the phone's own data: no AI service could " +
             "be used -- ${why.category})")
     }

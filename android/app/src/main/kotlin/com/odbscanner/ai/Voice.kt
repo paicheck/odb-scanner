@@ -449,7 +449,7 @@ object VoiceAssistant {
         val app = context.applicationContext
         lastQuestion = text
         job = scope.launch {
-            val trace = Trace(VoiceSource.TYPED).also { it.question = text }
+            val trace = TurnTrace(VoiceSource.TYPED).also { it.question = text }
             traced(app, trace) { answerTurn(app, turn, text, speak, trace) }
         }
         return turn
@@ -465,39 +465,12 @@ object VoiceAssistant {
     }
 
     /** One turn's record for the interaction history, filled in as it goes. */
-    private class Trace(val source: VoiceSource) {
-        val atMs = System.currentTimeMillis()
-        var sttMs: Long? = null
-        var firstWordMs: Long? = null
-        var aiMs: Long? = null
-        var ttsMs: Long? = null
-        var outcome = Interaction.OUTCOME_ANSWERED
-        var category: String? = null
-        var stage: String? = null
-        var interrupted = false
-        var question: String? = null
-
-        fun failed(e: AiError, at: String) {
-            outcome = Interaction.OUTCOME_FAILED
-            category = e.category.name
-            stage = at
-        }
-
-        fun build(): Interaction {
-            val who = Assistant.active.value
-            return Interaction(atMs, source.name, who?.removeSuffix(" (backup)") ?: "",
-                if (aiMs != null) Assistant.lastModel else "", sttMs, firstWordMs, aiMs, ttsMs,
-                outcome, category, stage, interrupted, who?.endsWith("(backup)") == true, question)
-        }
-    }
-
     /** Run [block] and record its trace, however it ends (a stop included). */
-    private suspend fun traced(context: Context, trace: Trace, block: suspend () -> Unit) {
+    private suspend fun traced(context: Context, trace: TurnTrace, block: suspend () -> Unit) {
         try {
             block()
         } catch (e: kotlinx.coroutines.CancellationException) {
-            trace.outcome = Interaction.OUTCOME_STOPPED
-            trace.interrupted = true
+            trace.stopped()
             throw e
         } finally {
             val record = trace.build()
@@ -615,11 +588,11 @@ object VoiceAssistant {
     }
 
     private suspend fun voiceTurn(context: Context, turn: Int) {
-        val trace = Trace(_status.value.source ?: VoiceSource.PHONE)
+        val trace = TurnTrace(_status.value.source ?: VoiceSource.PHONE)
         traced(context, trace) { listenAndAnswer(context, turn, trace) }
     }
 
-    private suspend fun listenAndAnswer(context: Context, turn: Int, trace: Trace) {
+    private suspend fun listenAndAnswer(context: Context, turn: Int, trace: TurnTrace) {
         withContext(Dispatchers.Main) { WakeWordService.pause() }   // one user of the microphone
         try {
             Speaker.stopAssistant()
@@ -656,7 +629,7 @@ object VoiceAssistant {
      * speech for this turn, so a stop or a barge-in drops whatever is left.
      */
     private suspend fun answerTurn(context: Context, turn: Int, text: String, speak: Boolean,
-                                   trace: Trace) {
+                                   trace: TurnTrace) {
         val begun = SystemClock.elapsedRealtime()
         val chunker = SentenceChunker()
         var streamed = false
@@ -679,6 +652,7 @@ object VoiceAssistant {
             trace.failed(it, "AI")
             return fail(context, turn, it, speak)
         }
+        trace.answered(Assistant.active.value, Assistant.lastModel)
         if (!streamed && (!fire(VoiceEvent.Answered(turn, speak)) || !speak)) return
         if (!speak) return
         // What is left to say: the rest of a streamed answer, or all of it.

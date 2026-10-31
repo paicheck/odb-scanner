@@ -49,4 +49,51 @@ class HistoryTest {
         assertEquals(r, Interaction.decode(Interaction.encode(r)))
         assertNull(Interaction.decode("{"))
     }
+
+    @Test
+    fun aChangedSettingAppliesToWhatIsAlreadyStored() {
+        val now = 100 * day
+        val all = listOf(i(now - 2 * day, "Groq").copy(question = "where next?"),
+            i(now - 10 * day, "Groq").copy(question = "how far?"), i(now, "Groq"))
+        assertTrue(History.kept(all, now, 30, text = false).all { it.question == null })
+        assertEquals("where next?", History.kept(all, now, 30, text = true)[1].question)
+        assertEquals(2, History.kept(all, now, 7, text = true).size)    // a shorter keep
+        assertTrue(History.kept(all, now, 0, text = true).isEmpty())    // off: none kept
+    }
+
+    @Test
+    fun aTurnIsCreditedToWhoAnsweredItNotToTheTurnBefore() {
+        val failed = TurnTrace(VoiceSource.PHONE).apply {
+            sttMs = 700; aiMs = 4000
+            failed(AiError(AiErrorCategory.TIMEOUT, "Groq", "slow"), "AI")
+        }.build()
+        assertEquals("Groq", failed.provider)
+        assertEquals("", failed.model)                           // no model answered
+        assertEquals(false, failed.fallback)
+        val backup = TurnTrace(VoiceSource.CAR).apply {
+            answered("Gemini (backup)", "gemini-3.8-flash")
+        }.build()
+        assertEquals("Gemini", backup.provider); assertTrue(backup.fallback)
+        // A speech failure after the answer stays with the service that answered.
+        val voice = TurnTrace(VoiceSource.PHONE).apply {
+            answered("Groq", "llama"); failed(AiError(AiErrorCategory.AUDIO_ERROR,
+                AiErrors.SPEECH_OUT, "x"), "speech")
+        }.build()
+        assertEquals("Groq", voice.provider); assertEquals("speech", voice.stage)
+    }
+
+    @Test
+    fun aStoppedTurnSaysWhereItWasStopped() {
+        fun stopped(f: TurnTrace.() -> Unit, src: VoiceSource = VoiceSource.PHONE) =
+            TurnTrace(src).apply(f).apply { stopped() }.build()
+        val listening = stopped({})
+        assertEquals(Interaction.OUTCOME_STOPPED, listening.outcome)
+        assertTrue(listening.interrupted)
+        assertEquals("recognition", listening.stage)
+        assertEquals("", listening.provider)                      // nobody was asked
+        assertEquals("AI", stopped({}, VoiceSource.TYPED).stage)
+        assertEquals("AI", stopped({ sttMs = 800 }).stage)
+        val speaking = stopped({ sttMs = 800; aiMs = 2000; answered("Groq", "llama") })
+        assertEquals("speech", speaking.stage); assertEquals("Groq", speaking.provider)
+    }
 }
