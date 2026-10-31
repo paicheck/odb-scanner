@@ -176,38 +176,34 @@ def cumulative_km(points: list[tuple]) -> list[float]:
     return out
 
 
-def _model_rate(car: CarModel, temp_c, avg_speed_kmh,
-                 elev_gain_m_per_km, hvac_on) -> float:
+def _model_rate(car: CarModel, temp_c, avg_speed_kmh, hvac_on) -> float:
+    """The flat-road rate: the car's personal model for these conditions when
+    it has one, else consumption_kwh_per_km.
+
+    Hills are never part of this rate. segment_kwh adds a climb's potential
+    energy and credits regeneration on the way down; a rate that also grew
+    with the gradient would count every hill twice. Errors are not swallowed:
+    a model that cannot predict must not quietly plan on another figure.
+    """
     m = getattr(car, "consumption_model", None)
     if m is None:
         return car.consumption_kwh_per_km
-    predict = getattr(m, "predict", None)
-    if callable(predict):
-        try:
-            return float(predict(temp_c, avg_speed_kmh, elev_gain_m_per_km, hvac_on)[0])
-        except Exception:
-            pass
     if isinstance(m, dict):
         x = float(m.get("base_kwh_per_km", car.consumption_kwh_per_km))
         if temp_c is not None:
             x += float(m.get("temp_coeff", 0.0)) * temp_c
         if avg_speed_kmh is not None:
             x += float(m.get("speed_coeff", 0.0)) * avg_speed_kmh
-        if elev_gain_m_per_km is not None:
-            x += float(m.get("elev_coeff", 0.0)) * elev_gain_m_per_km
         if hvac_on is not None and m.get("hvac_coeff"):
             x += float(m.get("hvac_coeff", 0.0)) if hvac_on else 0.0
         return max(0.05, x)
-    return car.consumption_kwh_per_km
+    return float(m.predict(temp_c, avg_speed_kmh, None, hvac_on)[0])
 
 
 def segment_kwh(dist_km: float, dh_m: float, car: CarModel,
-                temp_c=None, avg_speed_kmh=None,
-                elev_gain_m_per_km=None, hvac_on=None) -> float:
+                temp_c=None, avg_speed_kmh=None, hvac_on=None) -> float:
     """Energy for one stretch of road; negative only through regeneration."""
-    if elev_gain_m_per_km is None and dist_km and dh_m and dh_m > 0:
-        elev_gain_m_per_km = dh_m / dist_km
-    rate = _model_rate(car, temp_c, avg_speed_kmh, elev_gain_m_per_km, hvac_on)
+    rate = _model_rate(car, temp_c, avg_speed_kmh, hvac_on)
     flat = dist_km * rate
     potential = car.mass_kg * G * abs(dh_m) / 3.6e6          # kWh
     if dh_m > 0:
@@ -343,8 +339,7 @@ def _alternatives(cand, cands, cum) -> list[dict]:
 def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
               car: CarModel, settings: PlanSettings,
               chargers: list[Charger],
-              temp_c=None, avg_speed_kmh=None,
-              elev_gain_m_per_km=None, hvac_on=None) -> Plan:
+              temp_c=None, avg_speed_kmh=None, hvac_on=None) -> Plan:
     """Plan a trip along `points` [(lat, lon, elevation_m or None), ...].
 
     `drive_s` is the routing provider's driving time for the whole route;
@@ -366,7 +361,6 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
         dh = (b[2] - a[2]) if (a[2] is not None and b[2] is not None) else 0.0
         seg[i] = segment_kwh(cum[i] - cum[i - 1], dh, car,
                              temp_c=temp_c, avg_speed_kmh=avg_speed_kmh,
-                             elev_gain_m_per_km=elev_gain_m_per_km,
                              hvac_on=hvac_on)
         net[i] = net[i - 1] + seg[i]
 

@@ -599,3 +599,29 @@ def test_service_failure_is_a_message_not_a_500(db, monkeypatch):
     "to=Leeds&reserve=nan", "to=" + "x" * 5000, "to=Leeds&charge_to=inf"])
 def test_bad_numbers_never_500(db, services, query):
     assert _client(db, KEYS).get("/route?" + query).status_code == 200
+
+
+# -- the personal consumption model in the planner ----------------------------------
+def test_a_hill_is_counted_once_even_with_a_personal_model():
+    """Regression: segment_kwh derived each stretch's climb rate and fed it to
+    the model's elevation coefficient while also adding the potential energy."""
+    from routing.planner import segment_kwh
+    flat_car = CarModel(usable_kwh=53.2, consumption_kwh_per_km=0.17)
+    modelled = CarModel(usable_kwh=53.2, consumption_kwh_per_km=0.17,
+                        consumption_model={"base_kwh_per_km": 0.17, "elev_coeff": 0.01})
+    for dist, climb in ((1.0, 50.0), (0.1, 10.0), (2.0, -30.0)):
+        assert segment_kwh(dist, climb, modelled) == pytest.approx(
+            segment_kwh(dist, climb, flat_car))
+
+
+def test_a_model_that_cannot_predict_is_an_error_not_a_fallback():
+    from routing.planner import segment_kwh
+
+    class Broken:
+        def predict(self, *a):
+            raise ValueError("bad coefficients")
+
+    car = CarModel(usable_kwh=53.2, consumption_kwh_per_km=0.17,
+                   consumption_model=Broken())
+    with pytest.raises(ValueError):
+        segment_kwh(1.0, 0.0, car)
