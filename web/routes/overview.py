@@ -22,6 +22,7 @@ from web.dashboard import OVERVIEW_PANELS, _int_param
 
 
 def register(app, ctx) -> None:
+    cfg = ctx.cfg
     _fresh_window = ctx._fresh_window
     _profile = ctx._profile
     map_tiles = ctx.map_tiles
@@ -81,7 +82,11 @@ def register(app, ctx) -> None:
         )
         anomalies = [dict(a) for a in repo.anomalies(vid, days)] if vid else []
         from analysis.health_summary import health_summary as _health_summary
-        health = _health_summary(repo, vid) if vid else {}
+        from analysis.twin import vehicle_state
+        # The same threshold the collector alerts on.
+        low_12v = float(cfg.get("collector.low_12v_voltage", 12.0))
+        health = _health_summary(repo, vid, low_12v=low_12v) if vid else {}
+        state = vehicle_state(repo, vid) if vid else None
 
         # Per-key series with their own observation timestamps. The chart used
         # to read the battery snapshot table, which carries values forward and
@@ -119,7 +124,8 @@ def register(app, ctx) -> None:
             dtcs=dtcs,
             charging=charging,
             anomalies=anomalies,
-             health=health,
+            health=health,
+            state=state,
             days=days,
             live=live,
             gap_s=chart_gap_s,

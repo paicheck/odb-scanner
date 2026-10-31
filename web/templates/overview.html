@@ -41,6 +41,40 @@
     <div class="big">{{ charging.get('count', 0) }} sessions</div></div>
 </div>
 
+{% if health or state %}
+<div class="cards health-cards">
+  {% if health %}
+  {% set h = health %}
+  <div class="card"><h3>Health</h3>
+    <div class="big">{{ {'attention': 'Needs attention', 'incomplete': 'Nothing wrong found',
+                         'ok': 'OK'}[h.status] }}</div>
+    {% if h.status == 'attention' %}<span class="tag critical">attention</span>{% elif h.status == 'incomplete' %}<span class="tag communication">not everything checked</span>{% endif %}
+    {% for r in h.reasons %}<div class="note">{{ r }}</div>{% endfor %}
+    <div class="note">Fault codes stored: {{ h.faults.stored }}{% if h.faults.needing_attention %},
+      needing attention: {% for f in h.faults.needing_attention %}{% if not loop.first %}, {% endif %}{{ f.code }} ({{ f.status }}){% endfor %}{% endif %}</div>
+    {% set tv = h.twelve_volt %}
+    <div class="note">12 V at rest: {% if tv.resting %}{{ "%.2f"|format(tv.resting.value) }} V,
+      <span class="age{% if tv.status == 'unknown' %} age-stale{% endif %}" title="{{ tv.resting.ts | fmtts }}">{{ tv.resting.ts | age }}</span>
+      ({{ {'ok': 'fine', 'low': 'low', 'unknown': 'too old to judge'}[tv.status] }}){% else %}no resting reading yet{% endif %}</div>
+    {% set ct = h.capacity_trend %}
+    <div class="note">Capacity trend: {% if ct.status == 'ok' %}{{ "%+.1f"|format(ct.pct_per_year) }} % a year{% else %}{{ ct.status }} ({{ ct.days_with_readings }} day{{ 's' if ct.days_with_readings != 1 }} of readings){% endif %}</div>
+  </div>
+  {% endif %}
+  {% if state %}
+  {% set m = state.quantities.mode %}
+  <div class="card"><h3>What the car is doing</h3>
+    <div class="big">{{ m.value }}</div>
+    <div class="note">{{ m.kind }}: {{ m.note }}</div>
+    {% set ps = state.quantities.parked_since %}
+    {% if ps %}<div class="note">Standing since {% if ps.value.startswith('at least') %}at least {% endif %}{{ ps.ts | fmtts }}</div>{% endif %}
+    <div class="note">{{ state.counts.observed }} values observed ({{ state.counts.current }} current),
+      {{ state.counts.inferred }} inferred, {{ state.counts.unknown }} unknown ·
+      <a href="/api/twin">all, with sources</a></div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
 {% if where %}
 {% from "_panels.html" import evidence_badge %}
 {% set f = where.latest %}

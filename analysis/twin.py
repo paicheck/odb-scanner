@@ -34,17 +34,19 @@ from datetime import datetime, timedelta, timezone
 from analysis.freshness import classify
 from database.repository import IMPORTED_PREFIX
 
-# (name, key, label, unit, scale, fresh for seconds)
+# (name, key -- or keys, the newest reading of any wins -- label, unit, scale,
+# fresh for seconds)
 SPECS = (
     ("soc", "soc_normal", "State of charge (display)", "%", 1.0, 900),
     ("energy", "hv_energy_content", "Energy in the battery", "kWh", 0.001, 900),
     ("usable", "hv_energy_max", "Usable capacity (BMS)", "kWh", 0.001, 30 * 86400),
     ("odometer", "odometer_km", "Odometer", "km", 1.0, 900),
-    ("speed", "speed_kmh", "Speed", "km/h", 1.0, 120),
+    ("speed", ("speed_kmh", "vehicle_speed"), "Speed", "km/h", 1.0, 120),
     ("battery_temp", "battery_temp", "Battery temperature", "°C", 1.0, 900),
     ("outside_temp", "outside_temp", "Outside temperature", "°C", 1.0, 3600),
     ("resting_12v", "adapter_12v_voltage", "12 V battery at rest", "V", 1.0, 2 * 86400),
-    ("aux_12v", "aux_12v_voltage", "12 V system (car awake)", "V", 1.0, 900),
+    ("aux_12v", ("aux_12v_voltage", "lv_voltage_obd"), "12 V system (car awake)", "V",
+     1.0, 900),
 )
 ADAPTER_KEYS = ("adapter_12v_voltage",)     # the adapter's own reading, not the car's
 LOOKBACK = 120                              # rows per key, as analysis/freshness.py
@@ -95,8 +97,25 @@ def _ours(row: dict) -> bool:
     return not prov.startswith(IMPORTED_PREFIX) and prov != "simulated"
 
 
-def _observed(repo, vid: int, spec, as_of: datetime) -> tuple[Quantity, list[dict]]:
-    name, key, label, unit, scale, fresh_s = spec
+def _keys(spec) -> tuple[str, ...]:
+    return spec[1] if isinstance(spec[1], tuple) else (spec[1],)
+
+
+def _observed(repo, vid: int, spec, as_of: datetime) -> tuple[Quantity, dict]:
+    """The quantity from whichever of its keys was read most recently, and
+    every key's rows (for the mode)."""
+    rows, best = {}, None
+    for key in _keys(spec):
+        q, rows[key] = _observed_key(repo, vid, spec, key, as_of)
+        if best is None or (q.kind != "unknown" and (
+                best.kind == "unknown" or (q.ts or "") > (best.ts or ""))):
+            best = q
+    return best, rows
+
+
+def _observed_key(repo, vid: int, spec, key: str, as_of: datetime
+                  ) -> tuple[Quantity, list[dict]]:
+    name, _, label, unit, scale, fresh_s = spec
     # Simulated rows describe no car: as if they were not there. Imported ones
     # stay, and freshness labels them evidence, never current.
     rows = [r for r in _rows(repo, vid, key, _iso(as_of))
@@ -158,11 +177,12 @@ def _mode(q: dict[str, Quantity], rows: dict[str, list[dict]], as_of: datetime
         times = [t for t in times if t is not None]
         return max(times) if times else None
 
-    car_keys = [s[1] for s in SPECS if s[1] not in ADAPTER_KEYS]
+    car_keys = [k for s in SPECS for k in _keys(s) if k not in ADAPTER_KEYS]
     car_last, adapter_last = heard(car_keys), heard(ADAPTER_KEYS)
     def recent(key, seconds):
         return _ours_between(rows.get(key, []), as_of - timedelta(seconds=seconds), as_of)
-    speeds, odo = recent("speed_kmh", 120), recent("odometer_km", 600)
+    speeds = sorted(recent("speed_kmh", 120) + recent("vehicle_speed", 120))
+    odo = recent("odometer_km", 600)
     energy, odo30 = recent("hv_energy_content", 1800), recent("odometer_km", 1800)
     mode = "unknown"
     if speeds and speeds[-1][1] > MOVING_KMH:
@@ -228,7 +248,8 @@ def vehicle_state(repo, vehicle_id: int, as_of: datetime | None = None) -> dict:
     quantities: dict[str, Quantity] = {}
     rows: dict[str, list[dict]] = {}
     for spec in SPECS:
-        quantities[spec[0]], rows[spec[1]] = _observed(repo, vehicle_id, spec, as_of)
+        quantities[spec[0]], spec_rows = _observed(repo, vehicle_id, spec, as_of)
+        rows.update(spec_rows)
     quantities["energy_pct"] = _energy_pct(quantities)
     mode = _mode(quantities, rows, as_of)
     quantities["mode"] = mode

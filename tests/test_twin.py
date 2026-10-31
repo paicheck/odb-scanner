@@ -168,3 +168,13 @@ def test_the_api_reconstructs_an_earlier_moment(car, tmp_path):
     now = client.get("/api/twin").json()
     assert now["quantities"]["soc"]["value"] == 40.0 and "predictions" in now
     assert client.get("/api/twin", params={"as_of": "yesterday"}).status_code == 400
+
+
+def test_speed_from_either_source_the_newest_wins(car):
+    repo, vid = car
+    _put(repo, vid, "speed_kmh", -10, 30.0)
+    _put(repo, vid, "vehicle_speed", -0.5, 62.0)            # OBD PID 0x0D, newer
+    state = vehicle_state(repo, vid, as_of=T)
+    assert _q(state, "speed")["value"] == 62.0
+    assert _q(state, "speed")["source"] == "vehicle_speed"
+    assert state["mode"] == "driving"
