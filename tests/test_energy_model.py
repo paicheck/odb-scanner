@@ -133,3 +133,14 @@ def test_quantiles():
     assert t_quantile(0.9, 10) == pytest.approx(1.3722, abs=2e-3)
     assert t_quantile(0.9, 3) == pytest.approx(1.6377, abs=2e-2)
     assert t_quantile(0.9, 5000) == pytest.approx(1.2816, abs=1e-3)
+
+
+def test_no_term_goes_below_zero_and_the_held_ones_are_said():
+    """Drives that look as if a cold start gave energy back: no car does that,
+    so the term is held at zero rather than making winter look cheap."""
+    impossible = dict(TRUE, warmup=-0.8)
+    m = fit(_drives(300, seed=9, theta=impossible))
+    assert all(v >= 0 for v in m.mean)
+    assert "warmup" in m.held and m.learned("warmup") == 0.0
+    assert PhysicsModel.from_dict(m.as_dict()).held == m.held
+    assert fit(_drives(300, seed=9)).held == ()

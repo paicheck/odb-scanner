@@ -152,6 +152,7 @@ class PhysicsModel:
     excluded: int = 0                    # drives left out as implausible
     downweighted: int = 0                # drives the Huber weight reduced
     ranges: dict = field(default_factory=dict)   # "temp", "speed", "km": seen
+    held: tuple[str, ...] = ()           # held at zero: the drives pushed them below
     kind: str = "physics"
     # For the planner's assumption text (routing/planner.py).
     features_used: tuple[str, ...] = ("temp", "speed")
@@ -181,6 +182,22 @@ class PhysicsModel:
         u = (c.v2_kmh2 if c.v2_kmh2 is not None else self.x_mean[1] * 1e4) / 1e4
         journey = self.journey_var + wind_share * self.wind_var * u
         return max(0.03, rate), sqrt(max(0.0, model_var) + journey + unk)
+
+    def coef_sd(self, c: Conditions) -> float:
+        """The sd of the rate from the coefficients' own uncertainty alone:
+        how well the drives pin down what the car uses in these conditions
+        (not how much one journey varies)."""
+        x, _ = self._x(c)
+        return sqrt(max(0.0, sum(x[a] * self.cov[a][b] * x[b]
+                                 for a in range(len(x)) for b in range(len(x)))))
+
+    def learned(self, name: str) -> float:
+        """How much the drives have narrowed one coefficient: 0 is the prior
+        unchanged, 1 is pinned down exactly."""
+        if name in self.held:
+            return 0.0
+        i = NAMES.index(name)
+        return max(0.0, 1.0 - sqrt(max(0.0, self.cov[i][i])) / PRIOR[name][1])
 
     def leg(self, km: float, c: Conditions, temp_sd: float = 0.0,
             wind_share: float = 1.0) -> tuple[float, float]:
@@ -232,7 +249,7 @@ class PhysicsModel:
                 "sample_km": self.sample_km, "excluded": self.excluded,
                 "downweighted": self.downweighted,
                 "ranges": {k: list(v) for k, v in self.ranges.items()},
-                "features_used": list(self.features_used),
+                "features_used": list(self.features_used), "held": list(self.held),
                 "coefficients": dict(zip(NAMES, self.mean))}
 
     @classmethod
@@ -249,7 +266,8 @@ class PhysicsModel:
                    downweighted=int(d.get("downweighted") or 0),
                    ranges={k: (float(v[0]), float(v[1]))
                            for k, v in (d.get("ranges") or {}).items()},
-                   features_used=tuple(d.get("features_used") or ("temp", "speed")))
+                   features_used=tuple(d.get("features_used") or ("temp", "speed")),
+                   held=tuple(d.get("held") or ()))
 
 
 # -- fitting ------------------------------------------------------------------
@@ -282,14 +300,18 @@ def _meas_var(y: float, km: float) -> float:
     return (y * ODOMETER_SD_KM / km) ** 2 + 2 * (ENERGY_READ_SD / km) ** 2
 
 
-def _posterior(rows, w):
+HELD_SD = 1e-7               # a coefficient held at zero: this sure of it
+
+
+def _posterior(rows, w, held=()):
     """Posterior mean and covariance of the coefficients, given per-drive
-    precisions w (1 / variance of the rate)."""
+    precisions w (1 / variance of the rate); those named in `held` are held
+    at zero (see _constrained)."""
     p = len(NAMES)
     prec = [[0.0] * p for _ in range(p)]
     rhs = [0.0] * p
     for i, n in enumerate(NAMES):
-        m0, s0 = PRIOR[n]
+        m0, s0 = (0.0, HELD_SD) if n in held else PRIOR[n]
         prec[i][i] += 1.0 / s0 ** 2
         rhs[i] += m0 / s0 ** 2
     for (x, y, *_), wi in zip(rows, w):
@@ -323,9 +345,10 @@ def fit(samples) -> PhysicsModel | None:
     def var(y, km, u):
         return jv + wv * u + lv / km + _meas_var(y, km)
 
+    held: tuple[str, ...] = ()
     for _ in range(4):
         w = [h / var(y, km, u) for h, (_, y, km, _, u) in zip(huber, rows)]
-        mean, cov = _posterior(rows, w)
+        mean, cov, held = _constrained(rows, w)
         if mean is None:
             return None
         res = [y - sum(b * v for b, v in zip(mean, x)) for x, y, *_ in rows]
@@ -349,7 +372,26 @@ def fit(samples) -> PhysicsModel | None:
         ranges["speed"] = (min(speeds), max(speeds))
     return PhysicsModel(mean, cov, jv, lv, x_mean, x_var, wind_var=wv, n_drives=n,
                         sample_km=total, excluded=excluded,
-                        downweighted=sum(1 for h in huber if h < 1.0), ranges=ranges)
+                        downweighted=sum(1 for h in huber if h < 1.0), ranges=ranges,
+                        held=held)
+
+
+def _constrained(rows, w):
+    """The posterior with every coefficient non-negative. Each term is energy
+    a car spends (rolling, drag, auxiliaries, heating, a cold pack, warming a
+    cabin); none can be negative, and a negative one would make winter or
+    the motorway look cheaper than it is. So a coefficient the drives push
+    below zero is held at zero and the rest fitted again, the most negative
+    first, until none is."""
+    held: list[str] = []
+    while True:
+        mean, cov = _posterior(rows, w, held)
+        if mean is None:
+            return None, None, ()
+        neg = [(m, n) for m, n in zip(mean, NAMES) if m < 0 and n not in held]
+        if not neg:
+            return [max(0.0, m) for m in mean], cov, tuple(held)
+        held.append(min(neg)[1])
 
 
 # The prior's pseudo-drives for the variance components: (excess, u, 1/km).
