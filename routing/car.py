@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from analysis.consumption_backtest import backtest
+from analysis.consumption_backtest import backtest, error_spread
 from analysis.consumption_model import FEATURE_LABELS, DriveSample, estimate
 from analysis.trips import PAIR_WITHIN_S, _Lookup, measured_rate, split_drives
 from database.repository import IMPORTED_PREFIX
@@ -117,7 +117,9 @@ def consumption_check(repo, vid: int) -> dict:
                  f"trips: {result['reason']}")
     else:
         basis = f"flat rate kept: {result['reason']}"
-    out = {"model": model, "backtest": result, "basis": basis}
+    # How far off its predictions were, for the figure the Route page will use.
+    spread = error_spread(result, model=model is not None)
+    out = {"model": model, "backtest": result, "basis": basis, "spread": spread}
     if len(_checks) > 16:
         _checks.clear()
     _checks[key] = out
@@ -147,6 +149,7 @@ def car_energy(repo, vid: int, cfg) -> dict:
 
     configured = cfg.get("routing.consumption_kwh_per_100km")
     model, model_basis = None, "a figure set in config is used as it is"
+    spread = None
     if configured:
         cons, cons_basis = float(configured) / 100.0, "set in config"
     else:
@@ -165,7 +168,7 @@ def car_energy(repo, vid: int, cfg) -> dict:
 
     if not configured:
         check = consumption_check(repo, vid)
-        model, model_basis = check["model"], check["basis"]
+        model, model_basis, spread = check["model"], check["basis"], check["spread"]
     return {
         "usable_kwh": round(usable_kwh, 2), "usable_basis": usable_basis,
         "start_pct": round(start_pct, 1), "start_ts": now_ts, "start_basis": now_basis,
@@ -174,4 +177,7 @@ def car_energy(repo, vid: int, cfg) -> dict:
         # A dict, so the figures can travel through the page context.
         "consumption_model": model.as_dict() if model else None,
         "consumption_model_basis": model_basis,
+        # kWh/km more (negative: less) than predicted on its recent drives,
+        # 10th to 90th percentile: the Route page's arrival range.
+        "consumption_spread": spread,
     }

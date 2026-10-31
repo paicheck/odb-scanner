@@ -161,6 +161,7 @@ class Plan:
     mode: str = "balanced"
     assumptions: list[str] = field(default_factory=list)
     weather: dict | None = None       # wind kWh and temperatures, when forecast
+    arrival_band: dict | None = None  # low/high arrival % and what they rest on
 
     def as_dict(self) -> dict:
         return {
@@ -174,6 +175,7 @@ class Plan:
             else round(self.unreachable_at_km, 1),
             "cost": round(self.cost, 2), "mode": self.mode,
             "assumptions": self.assumptions, "weather": self.weather,
+            "arrival_band": self.arrival_band,
         }
 
 
@@ -204,6 +206,21 @@ def _model_rate(car: CarModel, temp_c, avg_speed_kmh, hvac_on) -> float:
     if m is None:
         return car.consumption_kwh_per_km
     return float(m.predict(temp_c, avg_speed_kmh, None, hvac_on)[0])
+
+
+# Without a measured spread, consumption is taken to be within this share of
+# the planned rate either way: an assumption, and the page says so.
+ASSUMED_RATE_ERROR = 0.10
+
+
+@dataclass
+class RateError:
+    """How far the real consumption may be from the planned rate, kWh/km:
+    `low` (negative: used less) to `high`, e.g. the 10th to 90th percentile
+    of this car's own drives against their predictions."""
+    low: float
+    high: float
+    basis: str
 
 
 @dataclass
@@ -391,7 +408,8 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
               car: CarModel, settings: PlanSettings,
               chargers: list[Charger],
               temp_c=None, avg_speed_kmh=None, hvac_on=None,
-              weather: list[Conditions] | None = None) -> Plan:
+              weather: list[Conditions] | None = None,
+              rate_error: RateError | None = None) -> Plan:
     """Plan a trip along `points` [(lat, lon, elevation_m or None), ...].
 
     `drive_s` is the routing provider's driving time for the whole route;
@@ -399,6 +417,8 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
     dropped here). `weather`, sorted by km, gives each stretch its forecast:
     the wind through wind_kwh, the temperature through the car's own model
     only (a flat figure has no temperature to adjust) -- in place of temp_c.
+    `rate_error` sets the arrival range (see _add_bands); without it, the
+    rate is assumed right to within ASSUMED_RATE_ERROR.
     """
     if len(points) < 2:
         raise ValueError("a route needs at least two points")
@@ -435,6 +455,7 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
                "temp_min": round(min(temps), 1) if temps else None,
                "temp_max": round(max(temps), 1) if temps else None} if weather else None
     conditions = (span, avg_speed_kmh, hvac_on, summary)
+    planned_rate = _model_rate(car, temp_c, avg_speed_kmh, hvac_on)
 
     levels = leave_levels(settings)
     level_kwh = [cap * x / 100.0 for x in levels]
@@ -514,8 +535,9 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
 
     if final is not None:
         path = _path(best, final[2], final[3])
-        return _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct,
-                         car, settings, None, conditions)
+        return _add_bands(_simulate(points, cum, seg, cands, path, levels, drive_s,
+                                    start_pct, car, settings, None, conditions),
+                          car, settings, rate_error, planned_rate)
 
     # Unreachable: follow the plan that gets furthest, and say where it fails.
     far = (-1.0, big, 0, -1)          # (km reached, cost, node, level)
@@ -528,8 +550,41 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
         if km > far[0] + 1e-9 or (km >= far[0] - 1e-9 and cost < far[1] - 1e-9):
             far = (km, cost, j, li)
     path = _path(best, far[2], far[3])
-    return _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct,
-                     car, settings, reserve, conditions)
+    return _add_bands(_simulate(points, cum, seg, cands, path, levels, drive_s,
+                                start_pct, car, settings, reserve, conditions),
+                      car, settings, rate_error, planned_rate)
+
+
+def _add_bands(plan: Plan, car: CarModel, settings: PlanSettings,
+               err: RateError | None, rate: float) -> Plan:
+    """Each arrival's range, if the car uses err.low to err.high kWh/km more
+    than planned over the leg that leads there. A whole leg carries the spread
+    of one drive; a long leg evens out some of it, so the range is on the wide
+    side. Stops were chosen for the planned figure; this says how much room
+    that leaves."""
+    if err is None:
+        err = RateError(-ASSUMED_RATE_ERROR * rate, ASSUMED_RATE_ERROR * rate,
+                        f"assumed: consumption within {ASSUMED_RATE_ERROR * 100:.0f} % "
+                        "of the plan either way (not measured on this car)")
+    cap = car.usable_kwh
+
+    def band(pct: float, leg_km: float) -> tuple[float, float]:
+        return (round(max(0.0, pct - leg_km * err.high / cap * 100.0), 1),
+                round(min(100.0, pct - leg_km * err.low / cap * 100.0), 1))
+
+    prev = 0.0
+    for s in plan.stops:
+        s["arrive_low_pct"], s["arrive_high_pct"] = band(s["arrive_pct"], s["km"] - prev)
+        s["arrive_low_below_reserve"] = s["arrive_low_pct"] < settings.reserve_pct
+        prev = s["km"]
+    if plan.arrival_pct is not None:
+        lo, hi = band(plan.arrival_pct, plan.distance_km - prev)
+        plan.arrival_band = {"low_pct": lo, "high_pct": hi, "basis": err.basis,
+                             "below_reserve": lo < settings.reserve_pct}
+    plan.assumptions.append(
+        f"Arrival ranges: {err.basis}; that is {err.low * 100:+.1f} to "
+        f"{err.high * 100:+.1f} kWh/100 km against the plan over each leg.")
+    return plan
 
 
 def _reach(j, node_idx, cands, net, budget, n):

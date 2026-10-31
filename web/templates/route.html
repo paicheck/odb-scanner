@@ -82,6 +82,8 @@
 <div class="cards route-summary">
   <div class="card"><h3>Arrival charge</h3>
     <div class="big">{% if pl.arrival_pct is not none %}{{ pl.arrival_pct }} %{% else %}—{% endif %}</div>
+    {% if pl.arrival_band %}<div class="note{% if pl.arrival_band.below_reserve %} warn{% endif %}"
+      title="{{ pl.arrival_band.basis }}">likely {{ pl.arrival_band.low_pct }}–{{ pl.arrival_band.high_pct }} %{% if pl.arrival_band.below_reserve %}: could arrive below your {{ form.reserve | round | int }} % reserve{% endif %}</div>{% endif %}
     <div class="note">{% if pl.status == 'direct' %}no charging needed
       {% elif pl.status == 'with_stops' %}after {{ pl.stops | length }} charging stop{{ 's' if pl.stops | length != 1 }}
       {% else %}not reachable with the chargers found{% endif %}</div></div>
@@ -160,7 +162,8 @@
       <br><a href="https://www.openstreetmap.org/?mlat={{ s.lat }}&amp;mlon={{ s.lon }}#map=17/{{ s.lat }}/{{ s.lon }}"
              target="_blank" rel="noopener noreferrer">map</a>{% if s.avoid_url %}
       · <a href="{{ s.avoid_url }}">avoid this one</a>{% endif %}</td>
-    <td>{{ s.power_kw | round | int }} kW</td><td>{{ s.arrive_pct }} %</td>
+    <td>{{ s.power_kw | round | int }} kW</td><td>{{ s.arrive_pct }} %{% if s.arrive_low_pct is defined %}
+      <br><span class="note{% if s.arrive_low_below_reserve %} warn{% endif %}">{{ s.arrive_low_pct }}–{{ s.arrive_high_pct }} %</span>{% endif %}</td>
     <td>{{ s.depart_pct }} %</td><td>{{ s.charge_min }} min</td>
     <td>£{{ '%.2f' | format(s.price_per_kwh) }}/kWh{% if s.fee %} + £{{ '%.2f' | format(s.fee) }}{% endif %}
       <br><span class="note">{{ s.price_source }}</span></td>

@@ -110,3 +110,30 @@ def backtest(samples: list[DriveSample], window_days: float = WINDOW_DAYS,
                          f"kWh/100 km against the flat rate's {f:.1f}: not enough "
                          f"better (needs {MARGIN * 100:.0f} %)")
     return out
+
+
+def _quantile(pairs: list[tuple[float, float]], q: float) -> float:
+    """The q-quantile of values weighted by their weights: (value, weight)."""
+    pairs = sorted(pairs)
+    total = sum(w for _, w in pairs)
+    run = 0.0
+    for v, w in pairs:
+        run += w
+        if run >= q * total:
+            return v
+    return pairs[-1][0]
+
+
+def error_spread(result: dict, model: bool, low_q: float = 0.1,
+                 high_q: float = 0.9) -> dict | None:
+    """How much more than predicted (kWh/km; negative: less) this car used on
+    the backtest's drives, as the distance-weighted low_q and high_q
+    quantiles -- for the model's predictions, or the flat rate's. None with
+    fewer than MIN_PREDICTIONS drives."""
+    key = "model_kwh" if model else "flat_kwh"
+    errs = [((d["actual_kwh"] - d[key]) / d["km"], d["km"])
+            for d in result.get("drives") or [] if d["km"] > 0]
+    if len(errs) < MIN_PREDICTIONS:
+        return None
+    return {"low": _quantile(errs, low_q), "high": _quantile(errs, high_q),
+            "drives": len(errs), "low_q": low_q, "high_q": high_q}

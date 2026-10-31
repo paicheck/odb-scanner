@@ -127,7 +127,7 @@ def register(app, ctx) -> None:
         from analysis.position import positions
         from routing import prices, providers, weather
         from routing.car import DEFAULT_CONSUMPTION, DEFAULT_USABLE_KWH, car_energy
-        from routing.planner import MODES, CarModel, PlanSettings, plan_trip
+        from routing.planner import MODES, CarModel, PlanSettings, RateError, plan_trip
 
         p = request.query_params
         _, vid = vehicle_and_id()
@@ -246,10 +246,15 @@ def register(app, ctx) -> None:
             # This car's own model plans the trip once its backtest has earned
             # that (routing/car.py), unless the driver changed the figure the
             # form shows -- the form always sends it back.
-            mine = car and car.get("consumption_model")
-            if mine and abs(form["consumption"]
-                            - car["consumption_kwh_per_100km"]) > 0.05:
-                mine = None
+            own_figure = bool(car) and abs(
+                form["consumption"] - car["consumption_kwh_per_100km"]) <= 0.05
+            mine = car.get("consumption_model") if own_figure else None
+            spread = car.get("consumption_spread") if own_figure else None
+            rate_error = RateError(
+                spread["low"], spread["high"],
+                f"measured: how this car's last {spread['drives']} drives differed "
+                f"from what was predicted for them ({spread['low_q'] * 100:.0f}th to "
+                f"{spread['high_q'] * 100:.0f}th percentile)") if spread else None
             model = CarModel(
                 usable_kwh=car["usable_kwh"] if car else DEFAULT_USABLE_KWH,
                 consumption_kwh_per_km=form["consumption"] / 100.0,
@@ -266,7 +271,7 @@ def register(app, ctx) -> None:
                     route.points, route.duration_s)
             plan = plan_trip(route.points, route.duration_s, form["start_pct"],
                              model, settings, chargers, avg_speed_kmh=speed,
-                             weather=forecast)
+                             weather=forecast, rate_error=rate_error)
             step = max(1, -(-len(route.points) // ROUTE_LINE_MAX))
             line = [[pt[0], pt[1]] for pt in route.points[::step]]
             if line[-1] != list(route.points[-1][:2]):
