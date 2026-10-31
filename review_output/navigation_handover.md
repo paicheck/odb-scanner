@@ -1,7 +1,8 @@
 # Navigation handover — 2026-10-31
 
 Branch `navigation` (12 commits on `maps-voice`, which holds today's two
-earlier phone commits). **Nothing pushed, merged or delivered.** The car, the
+earlier phone commits). **Pushed to GitHub on 2026-10-31; not merged into
+`main`, not delivered to a phone.** The car, the
 adapter and the real database were not touched. Details per step:
 `navigation_progress.md`; the research and decision: `navigation_review.md`;
 tasks: `navigation_backlog.md`.
@@ -64,10 +65,10 @@ OSM/Mapbox map); it can sit behind the same route state later (NV13).
 
 ## Decisions for you
 
-- Push / merge: `maps-voice` then `navigation` (each builds on the last), or
-  `navigation` alone (it contains both).
+- Merge: `navigation` into `main` (it contains `maps-voice`).
 - Whether to try the Navigation SDK later (NV13): account, billing and a
-  Google-only navigation screen.
+  Google-only navigation screen. **On hold** (2026-10-31): the owner is
+  getting a second opinion first; nothing is built for it.
 
 ## Known limits
 

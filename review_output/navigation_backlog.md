@@ -1,6 +1,6 @@
 # Navigation backlog — 2026-10-31
 
-Branch `navigation` (from `maps-voice`). Nothing pushed. Status: `pending`,
+Branch `navigation` (from `maps-voice`). Pushed 2026-10-31, not merged. Status: `pending`,
 `in progress`, `done <commit>`, `blocked`, `dropped`.
 
 | ID | Task | Status |
@@ -17,6 +17,6 @@ Branch `navigation` (from `maps-voice`). Nothing pushed. Status: `pending`,
 | NV10 | Android Auto: arrival range, next stop, accept/keep a proposed change, revision status | done `794af01` |
 | NV11 | Dashboard: Google Maps link (shared builder), per-leg energy | done `cf98b4f` |
 | NV12 | Handover and docs | done |
-| NV13 | Navigation SDK provider behind the same RouteState (option B), if the owner wants Google's guidance in-app | not started: needs a billing account and a Google-only navigation screen |
+| NV13 | Navigation SDK provider behind the same RouteState (option B), if the owner wants Google's guidance in-app | on hold (owner, 2026-10-31): a second opinion first; needs a billing account and a Google-only navigation screen |
 | NV14 | Try it in the car: proposals, Google Maps re-hand-off, restore after a kill, Android Auto message template, night map | owner |
 | NV15 | A suggested plan's "Switch" while the in-app navigator is mid-leg re-routes to the new stop; checked by reading, not on the road | owner |

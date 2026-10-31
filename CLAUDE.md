@@ -181,16 +181,19 @@ measured on a 2.6M-row month of synthetic readings:
 - Phones: HONOR X8a (the car phone) and a Pixel 7 (Android beta), signed with
   the Windows PC's debug key, now `~/.android/debug.keystore` here.
 - Overnight 2026-10-31 (branch `overnight-2026-10-31`, on `charger-preferences`
-  on `ai-fallback`; none pushed): consumption model + backtest, forecast wind,
-  arrival ranges, digital twin (`/api/twin`), en-route levels, checked AI
-  citations, overview health card, phone parity for preferences/wind/ranges.
+  on `ai-fallback`; merged into `main` at `1d064b8`): consumption model +
+  backtest, forecast wind, arrival ranges, digital twin (`/api/twin`),
+  en-route levels, checked AI citations, overview health card, phone parity
+  for preferences/wind/ranges.
   What to decide and run: `review_output/overnight_handover.md`. The
   intermittent `test_trips` failure was the test's own clock (fixed).
-- Navigation, 2026-10-31 (branches `maps-voice` → `navigation`, not pushed):
+- Navigation, 2026-10-31 (branch `navigation`, on `maps-voice`; pushed, not
+  merged into `main`):
   one versioned route state on the phone (`route/RouteState.kt`), route changes
   as proposals the driver accepts, Google Maps tracked by revision and
   re-offered (it cannot be updated from outside -- evidence in
   `review_output/navigation_review.md`), shared hand-off links
   (`handoff_vectors.json`), leg energy, trip restore, assistant route tools
   with confirmation, Android Auto proposals. Handover:
-  `review_output/navigation_handover.md`.
+  `review_output/navigation_handover.md`. The Navigation SDK (NV13) is on
+  hold while the owner weighs it up.
