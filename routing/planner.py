@@ -176,7 +176,8 @@ def cumulative_km(points: list[tuple]) -> list[float]:
     return out
 
 
-def _model_rate(car: CarModel, temp_c, avg_speed_kmh, elev_gain_m_per_km, hvac_on) -> float:
+def _model_rate(car: CarModel, temp_c, avg_speed_kmh,
+                 elev_gain_m_per_km, hvac_on) -> float:
     m = getattr(car, "consumption_model", None)
     if m is None:
         return car.consumption_kwh_per_km
