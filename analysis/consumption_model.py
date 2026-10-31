@@ -55,6 +55,11 @@ class DriveSample:
     hvac_on: bool | None = None
     start_s: float | None = None     # epoch seconds; the backtest needs them
     end_s: float | None = None
+    # Mean of speed squared over the distance, (km/h)²: what air drag goes
+    # with. A drive half at 30 and half at 120 km/h has an average speed of 48
+    # but drags like 87. From the speed samples: sum(v³) / sum(v).
+    v2_kmh2: float | None = None
+    net_climb_m: float | None = None  # height at the end less at the start, if known
 
 
 @dataclass
