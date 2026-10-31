@@ -173,4 +173,18 @@ recognition.
 
 ## 4. Results
 
-*Filled in with the implementation (`ai_voice_progress.md`).*
+| Finding (§2) | Now | Commit |
+|---|---|---|
+| No Stop; nobody held the job | VoiceAssistant owns the turn: Stop in the phone dialog, on the car screen and on the setup screen; Interrupt (Speak over it, or the wake phrase) | `3040f06` |
+| Network calls could not be cancelled | one transport aborts the connection; the SDK call is walked away from at once and its reply dropped; SDK retries off | `0272003` |
+| Cancellation was swallowed | CancellationException goes on up; the stopped turn is rolled out of the conversation | `0272003` |
+| Errors read aloud in full | a few words for the category; the detail is shown | `0272003`, `3040f06` |
+| The mutex made a new question wait | the old turn is cancelled first, so the lock is free at once | `3040f06` |
+| Free-text errors; STT and TTS reasons lost | twelve categories, with a reason (dns, tls, expired, region, silence…); recogniser and TTS codes kept | `0272003` |
+| Several flags; no turn ids; one TTS queue | VoiceMachine (one state, numbered turns, stale events refused); SpeechQueue (by owner and turn) | `3040f06` |
+| The Google Maps question could overlap a conversation | it is a voice turn of its own | `3040f06` |
+| No way to test a provider | AI & Voice Setup: connection, key, AI, speech in, speech out, whole chain; results stored without keys | `9ad14a5` |
+| No off switch, voice or on-device choice | turn off or on, main and backup, voice picker, on-device recognition | `0272003`, `9ad14a5` |
+
+The verification is in `ai_voice_handover.md`, and what needs a real phone
+is listed there too.

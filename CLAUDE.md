@@ -205,3 +205,9 @@ measured on a 2.6M-row month of synthetic readings:
   owner tests the `navigation` APK meanwhile (`tested-apk-20261031c`, copy
   in `~/odb-scanner-tested/`): never run `assembleRelease` on this branch
   until they say. Handover: `review_output/intelligence_handover.md`.
+- AI and voice, 2026-10-31 (branch `ai-voice` on `navigation-intelligence`;
+  not pushed): failures in twelve categories with redaction, requests that
+  stop, one voice state machine (VoiceMachine), speech by owner and turn
+  (SpeechQueue), Stop and Interrupt on the phone, the car and the wake word,
+  and the AI & Voice Setup screen with a test per capability. Handover:
+  `review_output/ai_voice_handover.md`.
