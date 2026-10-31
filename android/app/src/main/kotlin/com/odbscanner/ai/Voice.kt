@@ -593,6 +593,9 @@ object VoiceAssistant {
     }
 
     private suspend fun listenAndAnswer(context: Context, turn: Int, trace: TurnTrace) {
+        // Until this turn's words are heard there is nothing to retry: never
+        // the question before it.
+        lastQuestion = null
         withContext(Dispatchers.Main) { WakeWordService.pause() }   // one user of the microphone
         try {
             Speaker.stopAssistant()

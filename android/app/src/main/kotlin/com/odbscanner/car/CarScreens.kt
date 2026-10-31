@@ -183,7 +183,7 @@ class AssistantScreen(carContext: CarContext) : Screen(carContext) {
             // Stop instead of Repeat while it runs (an action strip holds few).
             actions.addAction(Action.Builder().setTitle("Stop")
                 .setOnClickListener { VoiceAssistant.stop() }.build())
-        } else if (status.state == VoiceState.ERROR && VoiceAssistant.lastQuestion != null) {
+        } else if (status.retryable && VoiceAssistant.lastQuestion != null) {
             // After a failure: ask the same question again, no need to repeat it.
             actions.addAction(Action.Builder().setTitle("Retry")
                 .setOnClickListener { VoiceAssistant.retry(carContext) }.build())

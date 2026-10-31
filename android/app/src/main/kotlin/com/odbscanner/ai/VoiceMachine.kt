@@ -23,6 +23,12 @@ data class VoiceStatus(
     /** A new turn may start (a failed one does not block the next). */
     val free: Boolean get() = state == VoiceState.IDLE || state == VoiceState.ERROR
 
+    /**
+     * The last turn failed and nothing has started since: Retry may ask it
+     * again -- after the error has settled too, not only while it shows.
+     */
+    val retryable: Boolean get() = free && error != null
+
     /** Something is under way that Stop would end. */
     val active: Boolean get() = !free && state != VoiceState.INTERRUPTED
 

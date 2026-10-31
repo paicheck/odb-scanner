@@ -180,4 +180,21 @@ class VoiceMachineTest {
         assertFalse(l.on(VoiceEvent.Answered(t, true)))
         assertEquals(VoiceState.LISTENING, l.status.state)
     }
+
+    @Test
+    fun retryStaysOfferedAfterTheErrorSettlesUntilANewTurn() {
+        val (m, t) = listening()
+        m.on(VoiceEvent.Heard(t))
+        m.on(VoiceEvent.Failed(t, err))
+        assertTrue(m.status.retryable)
+        m.on(VoiceEvent.Settle(t))
+        assertEquals(VoiceState.IDLE, m.status.state)
+        assertTrue("still offered after the 6 s hold", m.status.retryable)
+        m.on(VoiceEvent.Start(VoiceSource.CAR))
+        assertFalse(m.status.retryable)
+        val (s, st) = speaking()                           // stopped, not failed: nothing to retry
+        s.on(VoiceEvent.Stop); s.on(VoiceEvent.Settle(st))
+        assertFalse(s.status.retryable)
+        assertFalse(VoiceMachine().status.retryable)
+    }
 }

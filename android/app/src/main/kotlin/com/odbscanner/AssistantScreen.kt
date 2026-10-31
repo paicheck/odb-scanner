@@ -162,7 +162,7 @@ fun AssistantDialog(onDismiss: () -> Unit) {
                             voice != VoiceState.LISTENING && voice != VoiceState.TRANSCRIBING,
                         onClick = { speak() },
                     ) { Text(if (status.active) "Interrupt" else "Speak") }
-                    if (voice == VoiceState.ERROR && VoiceAssistant.lastQuestion != null) {
+                    if (status.retryable && VoiceAssistant.lastQuestion != null) {
                         OutlinedButton(onClick = { VoiceAssistant.retry(context) }) { Text("Retry") }
                     }
                     Button(onClick = { send() }, enabled = status.free && question.isNotBlank()) {
