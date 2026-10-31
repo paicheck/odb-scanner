@@ -131,6 +131,8 @@ class PlannerTest {
                     got.alternatives.map { it.charger.id })
                 assertEquals("$name stop $k low", s.getDouble("arrive_low_pct"), got.arriveLowPct!!, 0.051)
                 assertEquals("$name stop $k high", s.getDouble("arrive_high_pct"), got.arriveHighPct!!, 0.051)
+                assertEquals("$name stop $k leg km", s.getDouble("leg_km"), got.legKm, 0.051)
+                assertEquals("$name stop $k leg kWh", s.getDouble("leg_kwh"), got.legKwh, 0.0051)
             }
             if (want.isNull("arrival_band")) assertNull(name, plan.arrivalBand)
             else {
@@ -138,6 +140,12 @@ class PlannerTest {
                 assertEquals("$name band low", band.getDouble(0), plan.arrivalBand!!.lowPct, 0.051)
                 assertEquals("$name band high", band.getDouble(1), plan.arrivalBand!!.highPct, 0.051)
                 assertEquals("$name below reserve", band.getBoolean(2), plan.arrivalBand!!.belowReserve)
+            }
+            if (want.isNull("last_leg")) assertNull(name, plan.lastLegKwh)
+            else {
+                val leg = want.getJSONObject("last_leg")
+                assertEquals("$name last leg km", leg.getDouble("km"), plan.lastLegKm!!, 0.051)
+                assertEquals("$name last leg kWh", leg.getDouble("kwh"), plan.lastLegKwh!!, 0.0051)
             }
             if (want.isNull("wind_kwh")) assertNull(name, plan.windKwh)
             else assertEquals("$name wind", want.getDouble("wind_kwh"), plan.windKwh!!, 0.011)

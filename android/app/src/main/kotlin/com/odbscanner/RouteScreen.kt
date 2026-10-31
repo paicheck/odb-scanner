@@ -421,6 +421,16 @@ private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit
                     "at %.0f km · %.0f kW · %.0f %% → %.0f %% · %d min",
                     s.km, s.charger.powerKw, s.arrivePct, s.departPct, s.chargeMin),
                     style = MaterialTheme.typography.bodySmall)
+                // The leg after it: to the next stop, or to the destination.
+                val next = p.stops.getOrNull(i + 1)
+                val onKm = next?.let { it.legKm } ?: p.lastLegKm
+                val onKwh = next?.let { it.legKwh } ?: p.lastLegKwh
+                Text(String.format(Locale.ROOT, "Leg here: %.0f km, %.1f kWh", s.legKm, s.legKwh) +
+                    (if (onKm != null && onKwh != null) String.format(Locale.ROOT,
+                        " · then %.0f km, %.1f kWh to %s%s", onKm, onKwh,
+                        if (next != null) "stop ${i + 2}" else "the destination",
+                        next?.let { String.format(Locale.ROOT, " (arrive %.0f %%)", it.arrivePct) } ?: "")
+                    else ""), style = MaterialTheme.typography.bodySmall)
                 if (s.arriveLowPct != null && s.arriveHighPct != null) {
                     Text(String.format(Locale.ROOT, "arrive likely %.0f–%.0f %%%s",
                         s.arriveLowPct, s.arriveHighPct,

@@ -162,6 +162,7 @@ class Plan:
     assumptions: list[str] = field(default_factory=list)
     weather: dict | None = None       # wind kWh and temperatures, when forecast
     arrival_band: dict | None = None  # low/high arrival % and what they rest on
+    last_leg: dict | None = None      # km, kWh from the last stop (or start) to the end
 
     def as_dict(self) -> dict:
         return {
@@ -175,7 +176,7 @@ class Plan:
             else round(self.unreachable_at_km, 1),
             "cost": round(self.cost, 2), "mode": self.mode,
             "assumptions": self.assumptions, "weather": self.weather,
-            "arrival_band": self.arrival_band,
+            "arrival_band": self.arrival_band, "last_leg": self.last_leg,
         }
 
 
@@ -649,6 +650,9 @@ def _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct, car,
     energy = cap * start_pct / 100.0
     profile = [(0, energy)]
     stops, charge_total, money_total = [], 0.0, 0.0
+    # Each leg's energy is what the battery lost on it (regeneration counted,
+    # capped at a full battery), from the start or the last stop's departure.
+    leg_kwh_from, leg_km_from = energy, 0.0
     k = 0
     for j, li in path:
         cand = cands[j - 1]
@@ -676,7 +680,10 @@ def _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct, car,
             "id": c.id, "access": USAGE_LABELS.get(c.usage_type, ""),
             "preferred": cand.preferred,
             "alternatives": _alternatives(cand, cands, cum),
+            "leg_km": round(cum[cand.idx] - leg_km_from, 1),
+            "leg_kwh": round(leg_kwh_from - arrive, 2),
         })
+        leg_kwh_from, leg_km_from = depart, cum[cand.idx]
         profile.append((cand.idx, depart))      # vertical step: arrive -> depart
         energy = depart
     unreachable_at = None
@@ -698,7 +705,10 @@ def _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct, car,
         stops=stops, profile=_profile(profile, cum, cap),
         unreachable_at_km=unreachable_at, charge_s=charge_total, cost=money_total,
         mode=settings.mode, assumptions=assumptions(car, settings, *conditions),
-        weather=conditions[3])
+        weather=conditions[3],
+        last_leg=None if fail_reserve is not None else {
+            "km": round(cum[-1] - leg_km_from, 1),
+            "kwh": round(leg_kwh_from - energy, 2)})
 
 
 def _profile(points: list[tuple[int, float]], cum, cap) -> list[list[float]]:

@@ -158,6 +158,8 @@ data class Stop(
     val arriveLowPct: Double? = null,     // the leg's range (Planner.addBands)
     val arriveHighPct: Double? = null,
     val arriveLowBelowReserve: Boolean = false,
+    val legKm: Double = 0.0,              // from the start or the last stop to here
+    val legKwh: Double = 0.0,             // what the battery gave on that leg
 ) {
     val access: String get() = USAGE_LABELS[charger.usageType] ?: ""
 }
@@ -177,6 +179,8 @@ data class Plan(
     val assumptions: List<String>,
     val windKwh: Double? = null,           // what the forecast wind cost (negative: saved)
     val arrivalBand: ArrivalBand? = null,
+    val lastLegKm: Double? = null,         // the last stop (or start) to the end; null: unreachable
+    val lastLegKwh: Double? = null,
 )
 
 object Planner {
@@ -562,6 +566,9 @@ object Planner {
         val stops = mutableListOf<Stop>()
         var chargeTotal = 0.0
         var moneyTotal = 0.0
+        // Each leg's energy is what the battery lost on it (regeneration counted).
+        var legKwhFrom = energy
+        var legKmFrom = 0.0
         var k = 0
         for ((j, li) in path) {
             val cand = cands[j - 1]
@@ -586,7 +593,11 @@ object Planner {
                 cost = round(money, 2), detourKm = round(cand.offsetKm, 1),
                 preferred = cand.preferred,
                 alternatives = alternatives(cand, cands, cum),
+                legKm = round(cum[cand.idx] - legKmFrom, 1),
+                legKwh = round(legKwhFrom - arrive, 2),
             ))
+            legKwhFrom = depart
+            legKmFrom = cum[cand.idx]
             profile.add(cand.idx to depart)                  // vertical step
             energy = depart
         }
@@ -610,6 +621,8 @@ object Planner {
             profile = thin(profile.map { (k2, e) -> round(cum[k2], 2) to round(e / cap * 100.0, 1) }),
             unreachableAtKm = unreachableAt, chargeS = chargeTotal, cost = moneyTotal,
             mode = settings.mode, assumptions = assumptions(car, settings),
+            lastLegKm = if (failReserve != null) null else round(cum[n - 1] - legKmFrom, 1),
+            lastLegKwh = if (failReserve != null) null else round(legKwhFrom - energy, 2),
         )
     }
 

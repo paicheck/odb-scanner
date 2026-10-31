@@ -153,7 +153,7 @@
 {% if pl.stops %}
 <h3 class="section-h">Charging stops</h3>
 <table class="route-stops">
-  <tr><th>#</th><th>At</th><th>Charger</th><th>Power</th><th>Arrive</th><th>Leave</th><th>Charging</th><th>Price</th><th>Cost</th></tr>
+  <tr><th>#</th><th>At</th><th>Charger</th><th>Power</th><th>Arrive</th><th>Leave</th><th>Charging</th><th>Price</th><th>Cost</th><th>Leg</th></tr>
   {% for s in pl.stops %}
   <tr><td>{{ loop.index }}</td><td>{{ s.km | round | int }} km</td>
     <td><strong>{{ s.name }}</strong>{% if s.operator %} · {{ s.operator }}{% endif %}{% if s.preferred %} <span class="note">(preferred)</span>{% endif %}
@@ -167,15 +167,17 @@
     <td>{{ s.depart_pct }} %</td><td>{{ s.charge_min }} min</td>
     <td>£{{ '%.2f' | format(s.price_per_kwh) }}/kWh{% if s.fee %} + £{{ '%.2f' | format(s.fee) }}{% endif %}
       <br><span class="note">{{ s.price_source }}</span></td>
-    <td>£{{ '%.2f' | format(s.cost) }}<br><span class="note">{{ s.kwh }} kWh</span></td></tr>
+    <td>£{{ '%.2f' | format(s.cost) }}<br><span class="note">{{ s.kwh }} kWh</span></td>
+    <td>{{ s.leg_km | round | int }} km<br><span class="note">{{ s.leg_kwh }} kWh used</span></td></tr>
   {% if s.alternatives %}
-  <tr class="route-alts"><td></td><td colspan="8"><span class="note">Instead:</span>
+  <tr class="route-alts"><td></td><td colspan="9"><span class="note">Instead:</span>
     {% for a in s.alternatives %}{% if not loop.first %} · {% endif %}{{ a.name }}{% if a.operator %} ({{ a.operator }}){% endif %},
       {{ a.power_kw | round | int }} kW at {{ a.km | round | int }} km, £{{ '%.2f' | format(a.price_per_kwh) }}/kWh{% if a.access %}, {{ a.access }}{% endif %}{% if a.preferred %}, preferred{% endif %}{% if a.use_url %}
       — <a href="{{ a.use_url }}">use this</a>{% endif %}{% endfor %}</td></tr>
   {% endif %}
   {% endfor %}
 </table>
+{% if pl.last_leg %}<p class="chart-note">Then {{ pl.last_leg.km | round | int }} km to the destination, using {{ pl.last_leg.kwh }} kWh.</p>{% endif %}
 {% if form.avoid_ids or form.use_ids %}
 <p class="chart-note">Your picks for this trip: {{ form.use_ids | length }} charger(s) chosen,
   {{ form.avoid_ids | length }} avoided. <a href="{{ form.clear_picks_url }}">Clear them</a></p>

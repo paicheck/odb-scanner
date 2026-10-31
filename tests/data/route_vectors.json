@@ -327,7 +327,11 @@
      51.2,
      false
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 100.0,
+     "kwh": 17.0
+    }
    }
   },
   {
@@ -455,7 +459,11 @@
      49.7,
      false
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 100.0,
+     "kwh": 17.81
+    }
    }
   },
   {
@@ -583,7 +591,11 @@
      50.7,
      false
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 100.0,
+     "kwh": 17.27
+    }
    }
   },
   {
@@ -1101,6 +1113,8 @@
       "preferred": false,
       "arrive_low_pct": 2.1,
       "arrive_high_pct": 18.1,
+      "leg_km": 250.0,
+      "leg_kwh": 42.5,
       "alternatives": []
      }
     ],
@@ -1111,7 +1125,11 @@
      16.9,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 150.0,
+     "kwh": 25.5
+    }
    }
   },
   {
@@ -1785,6 +1803,8 @@
       "preferred": false,
       "arrive_low_pct": 9.2,
       "arrive_high_pct": 23.8,
+      "leg_km": 230.0,
+      "leg_kwh": 39.1,
       "alternatives": []
      }
     ],
@@ -1795,7 +1815,11 @@
      16.1,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 170.0,
+     "kwh": 28.9
+    }
    }
   },
   {
@@ -2219,7 +2243,8 @@
     "profile_points": 251,
     "profile_last": [250.0, 10.1],
     "arrival_band": null,
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": null
    }
   },
   {
@@ -2656,7 +2681,8 @@
     "profile_points": 251,
     "profile_last": [250.0, 10.1],
     "arrival_band": null,
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": null
    }
   },
   {
@@ -3039,6 +3065,8 @@
       "preferred": false,
       "arrive_low_pct": 18.9,
       "arrive_high_pct": 22.7,
+      "leg_km": 60.0,
+      "leg_kwh": 10.2,
       "alternatives": [
        "",
        ""
@@ -3052,7 +3080,11 @@
      30.4,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 190.0,
+     "kwh": 32.3
+    }
    }
   },
   {
@@ -3572,6 +3604,8 @@
       "preferred": false,
       "arrive_low_pct": 25.5,
       "arrive_high_pct": 39.1,
+      "leg_km": 150.0,
+      "leg_kwh": 36.0,
       "alternatives": []
      },
      {
@@ -3586,6 +3620,8 @@
       "preferred": false,
       "arrive_low_pct": 10.4,
       "arrive_high_pct": 19.4,
+      "leg_km": 100.0,
+      "leg_kwh": 24.0,
       "alternatives": []
      }
     ],
@@ -3596,7 +3632,11 @@
      19.1,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 150.0,
+     "kwh": 36.0
+    }
    }
   },
   {
@@ -4356,6 +4396,8 @@
       "preferred": false,
       "arrive_low_pct": 3.5,
       "arrive_high_pct": 19.3,
+      "leg_km": 246.0,
+      "leg_kwh": 41.82,
       "alternatives": [
        "",
        ""
@@ -4369,7 +4411,11 @@
      15.7,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 154.0,
+     "kwh": 26.18
+    }
    }
   },
   {
@@ -5129,6 +5175,8 @@
       "preferred": false,
       "arrive_low_pct": 3.5,
       "arrive_high_pct": 19.3,
+      "leg_km": 246.0,
+      "leg_kwh": 41.82,
       "alternatives": [
        "",
        ""
@@ -5142,7 +5190,11 @@
      15.7,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 154.0,
+     "kwh": 26.18
+    }
    }
   },
   {
@@ -5902,6 +5954,8 @@
       "preferred": false,
       "arrive_low_pct": 18.6,
       "arrive_high_pct": 31.6,
+      "leg_km": 203.0,
+      "leg_kwh": 34.51,
       "alternatives": [
        "",
        ""
@@ -5915,7 +5969,11 @@
      18.3,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 197.0,
+     "kwh": 33.49
+    }
    }
   },
   {
@@ -6676,6 +6734,8 @@
       "preferred": false,
       "arrive_low_pct": 3.5,
       "arrive_high_pct": 19.3,
+      "leg_km": 246.0,
+      "leg_kwh": 41.82,
       "alternatives": [
        "",
        ""
@@ -6689,7 +6749,11 @@
      15.7,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 154.0,
+     "kwh": 26.18
+    }
    }
   },
   {
@@ -7210,6 +7274,8 @@
       "preferred": false,
       "arrive_low_pct": 5.6,
       "arrive_high_pct": 21.0,
+      "leg_km": 240.0,
+      "leg_kwh": 40.8,
       "alternatives": []
      }
     ],
@@ -7220,7 +7286,11 @@
      19.0,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 160.0,
+     "kwh": 27.2
+    }
    }
   },
   {
@@ -7478,6 +7548,8 @@
       "preferred": false,
       "arrive_low_pct": 12.0,
       "arrive_high_pct": 12.0,
+      "leg_km": 0.0,
+      "leg_kwh": 0.0,
       "alternatives": []
      }
     ],
@@ -7488,7 +7560,11 @@
      17.5,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 200.0,
+     "kwh": 34.0
+    }
    }
   },
   {
@@ -7612,7 +7688,8 @@
     "profile_points": 1,
     "profile_last": [0.0, 5.0],
     "arrival_band": null,
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": null
    }
   },
   {
@@ -8370,6 +8447,8 @@
       "preferred": false,
       "arrive_low_pct": 4.2,
       "arrive_high_pct": 19.8,
+      "leg_km": 244.0,
+      "leg_kwh": 41.48,
       "alternatives": [
        "i240",
        "a240"
@@ -8383,7 +8462,11 @@
      15.1,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 156.0,
+     "kwh": 26.52
+    }
    }
   },
   {
@@ -9146,6 +9229,8 @@
       "preferred": false,
       "arrive_low_pct": 19.0,
       "arrive_high_pct": 32.0,
+      "leg_km": 202.0,
+      "leg_kwh": 34.34,
       "alternatives": []
      }
     ],
@@ -9156,7 +9241,11 @@
      18.1,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 198.0,
+     "kwh": 33.66
+    }
    }
   },
   {
@@ -9919,6 +10008,8 @@
       "preferred": true,
       "arrive_low_pct": 19.0,
       "arrive_high_pct": 32.0,
+      "leg_km": 202.0,
+      "leg_kwh": 34.34,
       "alternatives": [
        "a200"
       ]
@@ -9931,7 +10022,11 @@
      18.1,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 198.0,
+     "kwh": 33.66
+    }
    }
   },
   {
@@ -10694,6 +10789,8 @@
       "preferred": true,
       "arrive_low_pct": 5.6,
       "arrive_high_pct": 21.0,
+      "leg_km": 240.0,
+      "leg_kwh": 40.8,
       "alternatives": [
        "i240",
        "c240"
@@ -10707,7 +10804,11 @@
      19.0,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 160.0,
+     "kwh": 27.2
+    }
    }
   },
   {
@@ -11467,6 +11568,8 @@
       "preferred": false,
       "arrive_low_pct": 19.7,
       "arrive_high_pct": 32.5,
+      "leg_km": 200.0,
+      "leg_kwh": 34.0,
       "alternatives": [
        "i200"
       ]
@@ -11479,7 +11582,11 @@
      17.5,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 200.0,
+     "kwh": 34.0
+    }
    }
   },
   {
@@ -12245,6 +12352,8 @@
       "preferred": false,
       "arrive_low_pct": 19.0,
       "arrive_high_pct": 32.0,
+      "leg_km": 202.0,
+      "leg_kwh": 34.34,
       "alternatives": [
        "a200",
        "c200"
@@ -12262,6 +12371,8 @@
       "preferred": false,
       "arrive_low_pct": 25.3,
       "arrive_high_pct": 27.9,
+      "leg_km": 42.0,
+      "leg_kwh": 7.14,
       "alternatives": [
        "i240",
        "a240"
@@ -12275,7 +12386,11 @@
      15.1,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 156.0,
+     "kwh": 26.52
+    }
    }
   },
   {
@@ -12797,6 +12912,8 @@
       "preferred": false,
       "arrive_low_pct": 23.2,
       "arrive_high_pct": 32.8,
+      "leg_km": 150.0,
+      "leg_kwh": 32.97,
       "alternatives": []
      },
      {
@@ -12811,6 +12928,8 @@
       "preferred": false,
       "arrive_low_pct": 10.2,
       "arrive_high_pct": 16.6,
+      "leg_km": 100.0,
+      "leg_kwh": 19.49,
       "alternatives": []
      }
     ],
@@ -12821,7 +12940,11 @@
      16.9,
      true
     ],
-    "wind_kwh": 9.96
+    "wind_kwh": 9.96,
+    "last_leg": {
+     "km": 150.0,
+     "kwh": 25.5
+    }
    }
   },
   {
@@ -13103,7 +13226,11 @@
      32.8,
      false
     ],
-    "wind_kwh": -7.8
+    "wind_kwh": -7.8,
+    "last_leg": {
+     "km": 250.0,
+     "kwh": 34.7
+    }
    }
   },
   {
@@ -13234,7 +13361,11 @@
      49.7,
      false
     ],
-    "wind_kwh": 0.0
+    "wind_kwh": 0.0,
+    "last_leg": {
+     "km": 100.0,
+     "kwh": 17.81
+    }
    }
   },
   {
@@ -13753,6 +13884,8 @@
       "preferred": false,
       "arrive_low_pct": 0.0,
       "arrive_high_pct": 15.7,
+      "leg_km": 250.0,
+      "leg_kwh": 42.5,
       "alternatives": []
      }
     ],
@@ -13763,7 +13896,11 @@
      15.5,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 150.0,
+     "kwh": 25.5
+    }
    }
   },
   {
@@ -14042,7 +14179,11 @@
      14.8,
      true
     ],
-    "wind_kwh": null
+    "wind_kwh": null,
+    "last_leg": {
+     "km": 250.0,
+     "kwh": 42.5
+    }
    }
   }
  ]

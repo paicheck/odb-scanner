@@ -194,7 +194,8 @@ def _run(case):
                                  "unreachable_at_km", "charge_s", "cost")} | {
         "stops": [{k: s[k] for k in ("km", "name", "arrive_pct", "depart_pct",
                                      "charge_min", "kwh", "cost", "id", "preferred",
-                                     "arrive_low_pct", "arrive_high_pct")}
+                                     "arrive_low_pct", "arrive_high_pct", "leg_km",
+                                     "leg_kwh")}
                   | {"alternatives": [a["id"] for a in s["alternatives"]]}
                   for s in plan["stops"]],
         "profile_points": len(plan["profile"]),
@@ -202,6 +203,7 @@ def _run(case):
         "arrival_band": [band["low_pct"], band["high_pct"], band["below_reserve"]]
         if band else None,
         "wind_kwh": plan["weather"]["wind_kwh"] if plan["weather"] else None,
+        "last_leg": plan["last_leg"],
     }
 
 
