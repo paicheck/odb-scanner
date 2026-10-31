@@ -57,11 +57,28 @@ class HttpFailure(val sent: Boolean, cause: Throwable) : IOException(cause.messa
 /** Sends one request. Cancelling the caller aborts it. Never logs headers. */
 fun interface HttpTransport {
     suspend fun send(req: HttpRequest): HttpResponse
+
+    /**
+     * Send [req] and hand each line of a successful reply to [onLine] as it
+     * arrives (server-sent events); an error reply comes back whole, its
+     * body unread by [onLine]. The default reads the whole reply first --
+     * enough for fakes and for a service that does not stream.
+     */
+    suspend fun stream(req: HttpRequest, onLine: (String) -> Unit): HttpResponse {
+        val r = send(req)
+        if (r.status < 400) r.body.lineSequence().forEach(onLine)
+        return r
+    }
 }
 
 /** HttpURLConnection, aborted by disconnect() when the caller is cancelled. */
 object UrlTransport : HttpTransport {
-    override suspend fun send(req: HttpRequest): HttpResponse {
+    override suspend fun send(req: HttpRequest): HttpResponse = exchange(req, null)
+
+    override suspend fun stream(req: HttpRequest, onLine: (String) -> Unit): HttpResponse =
+        exchange(req, onLine)
+
+    private suspend fun exchange(req: HttpRequest, onLine: ((String) -> Unit)?): HttpResponse {
         val conn = URL(req.url).openConnection() as HttpURLConnection
         return Cancellable.blocking(abort = { conn.disconnect() }) {
             val start = System.nanoTime()
@@ -83,8 +100,15 @@ object UrlTransport : HttpTransport {
                 }
                 sent = true
                 val code = conn.responseCode
-                val text = (if (code < 400) conn.inputStream else conn.errorStream)
-                    ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                val text = if (onLine != null && code < 400) {
+                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { r ->
+                        while (true) onLine(r.readLine() ?: break)
+                    }
+                    ""
+                } else {
+                    (if (code < 400) conn.inputStream else conn.errorStream)
+                        ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                }
                 val headers = conn.headerFields.orEmpty().mapNotNull { (k, v) ->
                     k?.lowercase()?.let { it to v.joinToString(",") }
                 }.toMap()

@@ -39,6 +39,9 @@ object Assistant {
     private val words = mutableListOf<Pair<String, String>>()
     private var conversationTrip = ""
     private var warnedDay = ""
+    /** The model that answered last, for the interaction history. */
+    @Volatile var lastModel = ""
+        private set
 
     private val _transcript = MutableStateFlow<List<Line>>(emptyList())
     val transcript: StateFlow<List<Line>> = _transcript
@@ -67,13 +70,15 @@ object Assistant {
      * in the conversation, and CancellationException goes on up (it is never
      * turned into an answer).
      */
-    suspend fun answer(context: Context, text: String, driving: Boolean = false): Reply = lock.withLock {
+    suspend fun answer(context: Context, text: String, driving: Boolean = false,
+                       onText: ((String) -> Unit)? = null): Reply = lock.withLock {
         val app = context.applicationContext
         add(Line(true, text))
         _busy.value = true
         val reply = try {
             val s = sessionFor(app, driving || drivingNow())
-            val said = withTimeout(TURN_TIMEOUT_MS) { s.ask(text, AssistantTools(app)) }
+            val said = withTimeout(TURN_TIMEOUT_MS) { s.ask(text, AssistantTools(app), onText) }
+            lastModel = s.model
             turns++
             words += text to said
             (s as? FallbackChatSession)?.let {
@@ -108,13 +113,33 @@ object Assistant {
             _busy.value = false
         }
         lastUse = System.currentTimeMillis()
-        add(Line(false, reply.shown, reply.error))
+        val final = reply.error?.let { e -> local(app, text, e) } ?: reply
+        add(Line(false, final.shown, final.error))
         // Shown, not spoken: which backup answered and why the others did not.
         (session as? FallbackChatSession)?.takeNote()?.let { add(Line(false, "($it)")) }
-        reply
+        final
     }
 
     private fun failed(e: AiError) = Reply(e.spoken, e.line, e)
+
+    /**
+     * When no AI service could answer: the phone's own answer to a battery,
+     * range, next-stop, arrival, trip or fault question (LocalAnswers), from
+     * the same tools, said as such. Null when the question is not one of
+     * those, or the tools have nothing.
+     */
+    private suspend fun local(context: Context, text: String, why: AiError): Reply? {
+        if (!LocalAnswers.covers(why)) return null
+        val intent = LocalAnswers.intent(text) ?: return null
+        val data = runCatching {
+            org.json.JSONObject(AssistantTools(context).run(ToolCall("local", LocalAnswers.tool(intent),
+                org.json.JSONObject())))
+        }.getOrNull() ?: return null
+        val said = LocalAnswers.say(intent, data) ?: return null
+        _active.value = "the phone itself (no AI service)"
+        return Reply(said, "$said (answered from the phone's own data: no AI service could " +
+            "be used -- ${why.category})")
+    }
 
     /** Start the next question in a new conversation (New chat). */
     fun newConversation() {
@@ -202,7 +227,7 @@ object Assistant {
             }
             OpenAiChatSession(base, key, model, AssistantTools.prompt(style), AssistantTools.SPECS,
                 reasoningEffort = preset.reasoningEffort, provider = preset.label,
-                usageId = provider, usage = UsageLedger)
+                usageId = provider, usage = UsageLedger, streaming = s.streaming)
         }
     }
 }

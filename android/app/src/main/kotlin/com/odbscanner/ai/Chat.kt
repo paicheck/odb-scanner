@@ -43,6 +43,14 @@ interface ChatSession {
     suspend fun ask(text: String, tools: ToolRunner): String
 
     /**
+     * As ask, handing the answer's words to [onText] as they arrive where
+     * the service streams (OpenAiChatSession with streaming on). The default
+     * does not stream: [onText] is never called and the answer comes whole.
+     */
+    suspend fun ask(text: String, tools: ToolRunner, onText: ((String) -> Unit)?): String =
+        ask(text, tools)
+
+    /**
      * Start this session with the conversation so far, as plain words
      * (question, answer) -- a backup taking over, or a session rebuilt in
      * the middle of a conversation, then knows what "there" means. Called
@@ -90,17 +98,23 @@ class OpenAiChatSession(
     /** The preset id usage is counted under; "" counts nothing. */
     private val usageId: String = "",
     private val usage: UsageSink? = null,
+    /** Ask for the answer as server-sent events, so it can be spoken as it comes. */
+    private val streaming: Boolean = false,
 ) : ChatSession {
+    private var streamOk = streaming
     private val messages = JSONArray().put(JSONObject().put("role", "system").put("content", system))
     private val host = runCatching { URL(baseUrl).host }.getOrDefault(baseUrl)
     private val label = provider.ifBlank { host }
 
-    override suspend fun ask(text: String, tools: ToolRunner): String = withContext(Dispatchers.IO) {
+    override suspend fun ask(text: String, tools: ToolRunner): String = ask(text, tools, null)
+
+    override suspend fun ask(text: String, tools: ToolRunner, onText: ((String) -> Unit)?): String =
+        withContext(Dispatchers.IO) {
         val mark = messages.length()
         try {
             messages.put(JSONObject().put("role", "user").put("content", text))
             repeat(MAX_TOOL_ROUNDS) {
-                val reply = request()
+                val reply = request(onText)
                 val msg = reply.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
                     ?: throw invalid("Unexpected reply from $label")
                 messages.put(echo(msg))
@@ -130,7 +144,7 @@ class OpenAiChatSession(
     private fun invalid(message: String) =
         AiException(AiError(AiErrorCategory.INVALID_RESPONSE, label, message))
 
-    private suspend fun request(): JSONObject {
+    private suspend fun request(onText: ((String) -> Unit)?): JSONObject {
         val body = JSONObject().put("model", model).put("messages", messages)
         if (reasoningEffort.isNotBlank()) body.put("reasoning_effort", reasoningEffort)
         if (tools.isNotEmpty()) {
@@ -141,6 +155,18 @@ class OpenAiChatSession(
                         .put("parameters", t.parameters)))
                 }
             })
+        }
+        if (streamOk && onText != null) {
+            try {
+                return streamed(body.put("stream", true), onText)
+            } catch (e: AiException) {
+                // A service that will not stream is asked normally, from now on.
+                val err = e.error
+                if (err?.status != 400 && err?.status != 422) throw e
+                if ("stream" !in (err.detail + err.message).lowercase()) throw e
+                streamOk = false
+                body.remove("stream")
+            }
         }
         val text = post("$baseUrl/chat/completions", body.toString(), timeoutMs)
         return try {
@@ -153,6 +179,47 @@ class OpenAiChatSession(
         } catch (e: JSONException) {
             throw AiException(AiErrors.fromException(label, host, e), e)
         }
+    }
+
+    /** The reply as events: the words to [onText] as they come; the same shape as unstreamed. */
+    private suspend fun streamed(body: JSONObject, onText: (String) -> Unit): JSONObject {
+        val acc = SseAccumulator(onText)
+        val req = HttpRequest("POST", "$baseUrl/chat/completions", headers(key) + mapOf(
+            "Content-Type" to "application/json; charset=utf-8", "Accept" to "text/event-stream"),
+            body.toString(), readTimeoutMs = timeoutMs)
+        var attempt = 1
+        while (true) {
+            try {
+                val reply = try {
+                    transport.stream(req) { acc.line(it) }
+                } catch (e: HttpFailure) {
+                    throw AiException(AiErrors.fromException(label, host, e.cause ?: e, e.sent,
+                        (req.readTimeoutMs + 999) / 1000), e)
+                }
+                if (reply.status >= 400) {
+                    throw AiException(AiErrors.fromHttp(label, reply.status, reply.body, model,
+                        listOf(key)), retryAfterMs = RetryPolicy.retryAfterMs(reply.headers))
+                }
+                acc.error?.let { e ->
+                    throw AiException(AiErrors.fromHttp(label, e.optInt("code", 500).takeIf { it >= 400 }
+                        ?: 500, JSONObject().put("error", e).toString(), model, listOf(key)))
+                }
+                break
+            } catch (e: AiException) {
+                // Words already spoken are never asked for again.
+                val wait = if (acc.started) null
+                else RetryPolicy.delayFor(e.error, attempt, e.retryAfterMs)
+                wait ?: throw e
+                delay(wait)
+                attempt++
+            }
+        }
+        if (usageId.isNotBlank()) {
+            val u = acc.usage
+            usage?.record(usageId, u?.optInt("prompt_tokens")?.takeIf { u.has("prompt_tokens") },
+                u?.optInt("completion_tokens")?.takeIf { u.has("completion_tokens") })
+        }
+        return JSONObject().put("choices", JSONArray().put(JSONObject().put("message", acc.message())))
     }
 
     private suspend fun post(url: String, body: String, readTimeoutMs: Int): String =
@@ -280,5 +347,99 @@ class OpenAiChatSession(
                 throw AiException(AiErrors.fromException(label, host, e), e)
             }
         }
+    }
+}
+
+/**
+ * Server-sent events of a chat completion, put back together: the words
+ * handed on as they arrive, tool calls assembled from their pieces (by
+ * index; names and arguments may come in parts), an error event or usage
+ * kept. [message] is the reply in the shape an unstreamed one has. Pure.
+ */
+class SseAccumulator(private val onText: (String) -> Unit) {
+    private val text = StringBuilder()
+    private val calls = sortedMapOf<Int, JSONObject>()
+    var error: JSONObject? = null
+        private set
+    var usage: JSONObject? = null
+        private set
+    var done = false
+        private set
+    /** Some words or a call have come: the request must not be re-sent. */
+    val started: Boolean get() = text.isNotEmpty() || calls.isNotEmpty()
+
+    fun line(raw: String) {
+        val l = raw.trim()
+        if (!l.startsWith("data:")) return
+        val data = l.removePrefix("data:").trim()
+        if (data == "[DONE]") {
+            done = true
+            return
+        }
+        val o = runCatching { JSONObject(data) }.getOrNull() ?: return
+        o.optJSONObject("error")?.let { error = it; return }
+        o.optJSONObject("usage")?.let { usage = it }
+        val delta = o.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta") ?: return
+        val c = delta.opt("content")
+        if (c is String && c.isNotEmpty()) {
+            text.append(c)
+            onText(c)
+        }
+        val arr = delta.optJSONArray("tool_calls") ?: return
+        for (k in 0 until arr.length()) {
+            val d = arr.optJSONObject(k) ?: continue
+            val acc = calls.getOrPut(d.optInt("index", k)) {
+                JSONObject().put("type", "function")
+                    .put("function", JSONObject().put("name", "").put("arguments", ""))
+            }
+            d.optString("id").takeIf { it.isNotBlank() }?.let { acc.put("id", it) }
+            val f = d.optJSONObject("function") ?: continue
+            val af = acc.getJSONObject("function")
+            f.optString("name").takeIf { it.isNotEmpty() }?.let { af.put("name", af.getString("name") + it) }
+            f.optString("arguments").takeIf { it.isNotEmpty() }
+                ?.let { af.put("arguments", af.getString("arguments") + it) }
+        }
+    }
+
+    fun message(): JSONObject = JSONObject().put("role", "assistant")
+        .put("content", if (text.isEmpty()) JSONObject.NULL else text.toString())
+        .apply { if (calls.isNotEmpty()) put("tool_calls", JSONArray(calls.values.toList())) }
+}
+
+/**
+ * Streamed words into sentences fit to speak one at a time: a sentence is
+ * handed on when it ends (. ! ? or a line break, not a decimal point), and
+ * a short one waits for the next so speech does not stutter. [flush] gives
+ * what is left at the end. Pure.
+ */
+class SentenceChunker(private val minChars: Int = 24) {
+    private val buf = StringBuilder()
+
+    fun feed(delta: String): List<String> {
+        buf.append(delta)
+        val out = mutableListOf<String>()
+        var start = 0
+        for (i in buf.indices) {
+            if (!endsAt(i)) continue
+            val piece = buf.substring(start, i + 1).trim()
+            // A short one ("Sure.") waits to go with the next.
+            if (piece.length >= minChars) {
+                out += piece
+                start = i + 1
+            }
+        }
+        buf.delete(0, start)
+        return out
+    }
+
+    fun flush(): String? = buf.toString().trim().ifEmpty { null }.also { buf.clear() }
+
+    /** A sentence ends at i: a line break, or . ! ? before a space ("3.5" is not one). */
+    private fun endsAt(i: Int): Boolean {
+        val ch = buf[i]
+        if (ch == '\n') return true
+        if (ch != '.' && ch != '!' && ch != '?') return false
+        val next = buf.getOrNull(i + 1) ?: return false      // not yet known: wait
+        return next.isWhitespace()
     }
 }

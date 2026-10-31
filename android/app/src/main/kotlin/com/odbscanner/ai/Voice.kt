@@ -200,6 +200,16 @@ object Speaker {
         return Spoken(err, started?.let { it - begun }, now - begun)
     }
 
+    /**
+     * Wait until none of [turn]'s speech is left -- a streamed answer said
+     * sentence by sentence. Bounded; cancelling the caller stops waiting.
+     */
+    suspend fun drain(turn: Int, limitMs: Long = SPEECH_LIMIT_MS) {
+        withTimeoutOrNull(limitMs) {
+            while (withContext(Dispatchers.Main) { queue.has(turn) }) delay(100)
+        }
+    }
+
     /** Silence the assistant: its answer stops, and nothing of it is said later. */
     fun stopAssistant() {
         main.post { app?.let { run(it, queue.stopAssistant(), null) } }
@@ -408,13 +418,72 @@ object VoiceAssistant {
         return turn
     }
 
+    /** The last question asked, for Retry. */
+    @Volatile var lastQuestion: String? = null
+        private set
+
     /** A typed question: thinking only (and spoken if [speak]); Stop ends it too. */
     fun ask(context: Context, text: String, speak: Boolean = false): Int? {
         remember(context)
         if (!fire(VoiceEvent.Start(VoiceSource.TYPED, typed = true))) return null
         val turn = _status.value.turn
-        job = scope.launch { answerTurn(context.applicationContext, turn, text, speak) }
+        val app = context.applicationContext
+        lastQuestion = text
+        job = scope.launch {
+            val trace = Trace(VoiceSource.TYPED).also { it.question = text }
+            traced(app, trace) { answerTurn(app, turn, text, speak, trace) }
+        }
         return turn
+    }
+
+    /**
+     * Ask the last question again, after a failure -- spoken, without
+     * listening again (the words were heard; it was the answer that failed).
+     */
+    fun retry(context: Context): Int? {
+        val q = lastQuestion ?: return start(context, VoiceSource.PHONE)
+        return ask(context, q, speak = true)
+    }
+
+    /** One turn's record for the interaction history, filled in as it goes. */
+    private class Trace(val source: VoiceSource) {
+        val atMs = System.currentTimeMillis()
+        var sttMs: Long? = null
+        var firstWordMs: Long? = null
+        var aiMs: Long? = null
+        var ttsMs: Long? = null
+        var outcome = Interaction.OUTCOME_ANSWERED
+        var category: String? = null
+        var stage: String? = null
+        var interrupted = false
+        var question: String? = null
+
+        fun failed(e: AiError, at: String) {
+            outcome = Interaction.OUTCOME_FAILED
+            category = e.category.name
+            stage = at
+        }
+
+        fun build(): Interaction {
+            val who = Assistant.active.value
+            return Interaction(atMs, source.name, who?.removeSuffix(" (backup)") ?: "",
+                if (aiMs != null) Assistant.lastModel else "", sttMs, firstWordMs, aiMs, ttsMs,
+                outcome, category, stage, interrupted, who?.endsWith("(backup)") == true, question)
+        }
+    }
+
+    /** Run [block] and record its trace, however it ends (a stop included). */
+    private suspend fun traced(context: Context, trace: Trace, block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            trace.outcome = Interaction.OUTCOME_STOPPED
+            trace.interrupted = true
+            throw e
+        } finally {
+            val record = trace.build()
+            scope.launch(Dispatchers.IO) { History.add(context, record) }
+        }
     }
 
     /** End whatever the assistant is doing, at once. */
@@ -516,6 +585,11 @@ object VoiceAssistant {
     }
 
     private suspend fun voiceTurn(context: Context, turn: Int) {
+        val trace = Trace(_status.value.source ?: VoiceSource.PHONE)
+        traced(context, trace) { listenAndAnswer(context, turn, trace) }
+    }
+
+    private suspend fun listenAndAnswer(context: Context, turn: Int, trace: Trace) {
         withContext(Dispatchers.Main) { WakeWordService.pause() }   // one user of the microphone
         try {
             Speaker.stopAssistant()
@@ -524,12 +598,18 @@ object VoiceAssistant {
                 Speaker.sayAndWait(context, "Say that again.", SpeechOwner.ASSISTANT, turn)
                 beep()
             }) { fire(VoiceEvent.EndOfSpeech(turn)) }
+            trace.sttMs = r.ms
             when (r) {
-                is ListenResult.Failed -> fail(context, turn, r.error, speak = true)
+                is ListenResult.Failed -> {
+                    trace.failed(r.error, "recognition")
+                    fail(context, turn, r.error, speak = true)
+                }
                 is ListenResult.Heard -> if (fire(VoiceEvent.Heard(turn))) {
+                    trace.question = r.text
+                    lastQuestion = r.text
                     // Listening is over: the wake phrase may now cut in.
                     withContext(Dispatchers.Main) { WakeWordService.resume() }
-                    answerTurn(context, turn, r.text, speak = true)
+                    answerTurn(context, turn, r.text, speak = true, trace)
                 }
             }
         } finally {
@@ -540,13 +620,53 @@ object VoiceAssistant {
         }
     }
 
-    private suspend fun answerTurn(context: Context, turn: Int, text: String, speak: Boolean) {
+    /**
+     * Ask, and speak the answer. Where the service streams, each sentence is
+     * spoken as soon as it is complete -- in order, as the assistant's
+     * speech for this turn, so a stop or a barge-in drops whatever is left.
+     */
+    private suspend fun answerTurn(context: Context, turn: Int, text: String, speak: Boolean,
+                                   trace: Trace) {
+        val begun = SystemClock.elapsedRealtime()
+        val chunker = SentenceChunker()
+        var streamed = false
+        val onText: ((String) -> Unit)? = if (!speak) null else { delta ->
+            val sentences = chunker.feed(delta)
+            if (sentences.isNotEmpty() && isCurrentTurn(turn)) {
+                if (!streamed) {
+                    streamed = true
+                    trace.firstWordMs = SystemClock.elapsedRealtime() - begun
+                    fire(VoiceEvent.Answered(turn, speak = true))
+                }
+                sentences.forEach { Speaker.say(context, it, owner = SpeechOwner.ASSISTANT, turn = turn) }
+            }
+        }
         val reply = Assistant.answer(context, text,
-            driving = _status.value.source == VoiceSource.CAR)
-        reply.error?.let { return fail(context, turn, it, speak) }
-        if (!fire(VoiceEvent.Answered(turn, speak)) || !speak) return
-        val err = Speaker.sayAndWait(context, reply.spoken, SpeechOwner.ASSISTANT, turn)
-        if (err != null) fail(context, turn, err, speak = false) else fire(VoiceEvent.Spoken(turn))
+            driving = _status.value.source == VoiceSource.CAR, onText = onText)
+        trace.aiMs = SystemClock.elapsedRealtime() - begun
+        if (trace.firstWordMs == null) trace.firstWordMs = trace.aiMs
+        reply.error?.let {
+            trace.failed(it, "AI")
+            return fail(context, turn, it, speak)
+        }
+        if (!streamed && (!fire(VoiceEvent.Answered(turn, speak)) || !speak)) return
+        if (!speak) return
+        // What is left to say: the rest of a streamed answer, or all of it.
+        val rest = if (streamed) chunker.flush() else reply.spoken
+        val err = if (rest.isNullOrBlank()) {
+            val t0 = SystemClock.elapsedRealtime()
+            Speaker.drain(turn)
+            trace.ttsMs = SystemClock.elapsedRealtime() - t0
+            null
+        } else {
+            val spoken = Speaker.timed(context, rest, SpeechOwner.ASSISTANT, turn)
+            trace.ttsMs = spoken.totalMs
+            spoken.error
+        }
+        if (err != null) {
+            trace.failed(err, "speech")
+            fail(context, turn, err, speak = false)
+        } else fire(VoiceEvent.Spoken(turn))
     }
 
     /** End [turn] in ERROR: a few words said (unless it was the speech that failed). */

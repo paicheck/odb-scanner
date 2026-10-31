@@ -41,6 +41,10 @@ class SpeechQueue(private val isCurrent: (Int) -> Boolean) {
 
     val idle: Boolean get() = playing == null && queue.isEmpty()
 
+    /** Whether any of [turn]'s assistant speech is playing or waiting. */
+    fun has(turn: Int): Boolean = (playing?.let { it.owner == SpeechOwner.ASSISTANT && it.turn == turn } == true) ||
+        queue.any { it.owner == SpeechOwner.ASSISTANT && it.turn == turn }
+
     fun add(u: Utterance): List<SpeechAction> {
         if (u.owner == SpeechOwner.ASSISTANT && !isCurrent(u.turn)) {
             return listOf(SpeechAction.Dropped(listOf(u.id)))

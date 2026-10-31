@@ -55,7 +55,9 @@ class FallbackChatSession(
         words += turns
     }
 
-    override suspend fun ask(text: String, tools: ToolRunner): String {
+    override suspend fun ask(text: String, tools: ToolRunner): String = ask(text, tools, null)
+
+    override suspend fun ask(text: String, tools: ToolRunner, onText: ((String) -> Unit)?): String {
         val failed = mutableListOf<String>()
         var last: AiException? = null
         // Rested services are skipped -- unless every one left is resting,
@@ -74,10 +76,12 @@ class FallbackChatSession(
             index = i
             val (label, make) = members[i]
             var acted = false
+            var spoke = false
             val watched = ToolRunner { call ->
                 if (changesState(call.name)) acted = true
                 tools.run(call)
             }
+            val heard = onText?.let { f -> { words: String -> spoke = true; f(words) } }
             try {
                 limit?.invoke(ids[i], label)?.let { throw AiException(it) }
                 val session = sessions[i] ?: make().also {
@@ -86,7 +90,7 @@ class FallbackChatSession(
                     if (words.isNotEmpty()) it.seed(words.toList())
                     sessions[i] = it
                 }
-                val answer = session.ask(text, watched)
+                val answer = session.ask(text, watched, heard)
                 health?.success(ids[i])
                 words += text to answer
                 note = if (failed.isEmpty()) null
@@ -101,6 +105,9 @@ class FallbackChatSession(
                     throw AiException(err.copy(message = "${err.message} -- after it had " +
                         "already acted on that, so the backup was not asked"), e)
                 }
+                // Part of its answer was already spoken: a second answer from a
+                // backup would follow it, so the failure is reported instead.
+                if (spoke) throw e
                 failed += "$label failed (" + (e.error?.let { "${it.category}: " } ?: "") +
                     "${e.message})"
                 last = e

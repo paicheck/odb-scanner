@@ -4,6 +4,7 @@ import android.content.Context
 import com.odbscanner.db.AppDatabase
 import com.odbscanner.db.MeasurementEntity
 import com.odbscanner.route.ActiveTrip
+import com.odbscanner.route.CarEnergy
 import com.odbscanner.route.MapsHandoff
 import com.odbscanner.route.NavSpeech
 import com.odbscanner.route.Navigator
@@ -58,6 +59,7 @@ class AssistantTools(private val context: Context) : ToolRunner {
             "get_history" -> history(call.args.optString("key"),
                 call.args.optInt("count", 60).coerceIn(2, 500))
             "get_route_changes" -> routeChanges()
+            "get_charging_history" -> chargingHistory(call.args.optInt("count", 5).coerceIn(1, 20))
             "answer_suggestion" -> answerSuggestion(call.args.optBoolean("switch"))
             "avoid_stop" -> avoidStop(call.args.optInt("stop", 1), call.args.optBoolean("confirm"))
             "use_alternative" -> useAlternative(call.args.optInt("stop", 1),
@@ -193,7 +195,49 @@ class AssistantTools(private val context: Context) : ToolRunner {
         val (km, off) = where(t.result)
         return summary(t.result, km).put("watch_status", t.note).put("replans", t.replans)
             .apply { off?.let { if (it > Replan.OFF_ROUTE_KM) put("off_route", dist(it)) } }
+            .apply { t.assessment?.let { put("live_check", liveCheck(it)) } }
     }
+
+    /**
+     * The app's own check of the plan against the car's battery now
+     * (EnRoute, as the trip watch runs it): the answer to "will I make it?".
+     * The AI explains it; it never works out its own figures.
+     */
+    private suspend fun liveCheck(a: com.odbscanner.route.EnRoute.Assessment): JSONObject {
+        val car = CarEnergy.load(context)
+        return JSONObject()
+            .put("level", a.level)
+            .put("summary", a.action)
+            .put("battery_now_pct", a.actualPct?.let { round1(it) } ?: JSONObject.NULL)
+            .put("battery_reading_age", age(car.startTs))
+            .put("plan_expected_here_pct", a.expectedPct?.let { round1(it) } ?: JSONObject.NULL)
+            .put("planned_at_next_pct", a.plannedTargetPct?.let { round1(it) } ?: JSONObject.NULL)
+            .put("projected_at_next_pct", a.projectedTargetPct?.let { round1(it) } ?: JSONObject.NULL)
+            .put("using_times_the_plan", a.ratio?.let { round2(it) } ?: JSONObject.NULL)
+            .put("reach_before_reserve", a.reachKm?.let { dist(it) } ?: JSONObject.NULL)
+            .put("source", "the app's own en-route check (EnRoute), from the car's battery reading")
+    }
+
+    /** Recent charging sessions the phone recorded: when, AC or DC, from and to what charge. */
+    private suspend fun chargingHistory(count: Int): JSONObject = withContext(Dispatchers.IO) {
+        val vid = vehicleId() ?: return@withContext err("no readings stored yet")
+        val sessions = AppDatabase.get(context).chargingSessionDao().getAll(vid)
+            .filter { it.status == "completed" }.take(count)
+        if (sessions.isEmpty()) return@withContext err("no completed charging session recorded")
+        JSONObject().put("sessions", JSONArray().apply {
+            sessions.forEach { s ->
+                put(JSONObject().put("type", s.chargeType ?: "unknown")
+                    .put("started", age(s.startedAt))
+                    .put("minutes", minutesBetween(s.startedAt, s.endedAt) ?: JSONObject.NULL)
+                    .put("from_pct", s.startSoc?.let { round1(it) } ?: JSONObject.NULL)
+                    .put("to_pct", s.endSoc?.let { round1(it) } ?: JSONObject.NULL))
+            }
+        }).put("source", "charging sessions the phone recorded from the car (display charge)")
+    }
+
+    private fun minutesBetween(a: String?, b: String?): Long? = runCatching {
+        Duration.between(Instant.parse(a), Instant.parse(b)).toMinutes()
+    }.getOrNull()
 
     // -- the route's revisions and the driver's changes -------------------------------
 
@@ -503,6 +547,8 @@ class AssistantTools(private val context: Context) : ToolRunner {
                 else -> round2(v) to m.unit
             }
             return JSONObject().put("value", value).put("unit", unit).put("age", age(m.ts))
+                // Where it came from: the car's own report, a calculation, a simulation.
+                .put("source", m.provenance)
         }
 
         private val VIN = Regex("\\b[A-HJ-NPR-Z0-9]{17}\\b")
@@ -559,6 +605,9 @@ class AssistantTools(private val context: Context) : ToolRunner {
                 "hand trips to Google Maps, send the current plan (after a re-plan too) to Google " +
                 "Maps. Only when the driver asks to navigate, for directions, or to update or " +
                 "send the route to Google Maps."),
+            spec("get_charging_history", "Recent charging sessions the phone recorded: AC or " +
+                "DC, how long ago, how long, from and to what charge.",
+                "count" to JSONObject().put("type", "integer").put("description", "1 to 20")),
             spec("get_route_changes", "What has changed with the route and why: the plan's " +
                 "latest revisions (reason, charging stops, arrival charge), a suggested plan " +
                 "waiting for the driver, whether Google Maps has the current plan, and the " +
@@ -646,6 +695,9 @@ class AssistantTools(private val context: Context) : ToolRunner {
               reading. Mention a reading's age when it is over an hour old.
             - Never ask the driver to read or type anything.
             - If a tool says the data is not there, say so in a few words.
+            - Never work out battery, range, arrival or charging figures yourself: the tools give
+              the app's own calculations (get_trip's live_check answers "will I make it?").
+              Explain them; if they are missing or old, say so rather than estimate.
         """.trimIndent()
     }
 }

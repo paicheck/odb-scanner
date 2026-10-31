@@ -89,6 +89,9 @@ data class AiSettings(
     val language: String = "en-GB",            // en-GB | en-US: recognition and speech
     val limits: UsageLimits = UsageLimits(),
     val prices: Map<String, Price> = emptyMap(),   // yours, per million tokens; never assumed
+    val historyDays: Int = 30,                 // interaction history kept; 0 keeps none
+    val historyText: Boolean = false,          // keep the question's words in it
+    val streaming: Boolean = true,             // speak answers as they arrive, where it can
 ) {
     val preset: AiPreset get() = AiPresets.byId(provider)
     val effectiveModel: String
@@ -128,6 +131,9 @@ object AiPrefs {
             limits = UsageLimits(p.getInt("limit_requests", 0).coerceAtLeast(0),
                 p.getFloat("limit_spend", 0f).toDouble().coerceAtLeast(0.0)),
             prices = decodePrices(p.getString("prices", "") ?: ""),
+            historyDays = p.getInt("history_days", 30).coerceIn(0, 365),
+            historyText = p.getBoolean("history_text", false),
+            streaming = p.getBoolean("streaming", true),
         )
     }
 
@@ -162,6 +168,9 @@ object AiPrefs {
             .putInt("limit_requests", s.limits.requestsPerDay.coerceAtLeast(0))
             .putFloat("limit_spend", s.limits.spendPerDay.toFloat().coerceAtLeast(0f))
             .putString("prices", encodePrices(s.prices))
+            .putInt("history_days", s.historyDays.coerceIn(0, 365))
+            .putBoolean("history_text", s.historyText)
+            .putBoolean("streaming", s.streaming)
             .apply()
         // A changed key or setting is a fresh start for the services' health.
         AiPresets.ALL.forEach { ProviderHealth.breaker.reset(it.id) }
