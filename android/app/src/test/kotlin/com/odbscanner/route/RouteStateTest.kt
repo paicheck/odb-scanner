@@ -160,5 +160,17 @@ class RouteStateTest {
         assertEquals(RouteRevisions.Action.PROPOSE, RouteRevisions.decide(declined, 1, planB, false, true))
         assertEquals(RouteRevisions.Action.APPLY, RouteRevisions.decide(declined, 1, planB, true, false))
     }
+
+    @Test
+    fun choosingAnotherChargerKeepsOffTheOneItReplaces() {
+        val p = Picks().avoid("101")
+        assertEquals(setOf("101"), p.avoidChargers)
+        val swapped = Picks(useChargers = setOf("101")).insteadOf("101", "303")
+        assertEquals(setOf("303"), swapped.useChargers)
+        assertEquals(setOf("101"), swapped.avoidChargers)
+        // Changing your mind: a charger avoided earlier can be chosen again.
+        assertEquals(emptySet<String>(), p.insteadOf("", "101").avoidChargers)
+        assertEquals(setOf("101"), p.insteadOf("", "101").useChargers)
+    }
 }
 

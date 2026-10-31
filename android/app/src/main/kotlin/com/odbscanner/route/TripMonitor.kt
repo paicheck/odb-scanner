@@ -101,8 +101,8 @@ object TripMonitor {
      * Drive [result]: watch it and navigate it in the app. False when Route
      * settings say Google Maps navigates instead -- the caller opens it.
      */
-    fun drive(context: Context, result: TripResult): Boolean {
-        if (_state.value?.result !== result) start(context, result)
+    fun drive(context: Context, result: TripResult, picks: Picks = Picks()): Boolean {
+        if (_state.value?.result !== result) start(context, result, picks)
         if (!RoutePrefs.load(context).navigateInApp) return false
         Navigator.start(context, result)
         return true
@@ -122,6 +122,17 @@ object TripMonitor {
         return _state.value
     }
 
+    /**
+     * The driver changed the trip's charger choices: keep them for the rest of
+     * the trip and re-plan from here. They asked, so the new plan applies.
+     */
+    suspend fun changePicks(context: Context, picks: Picks, why: String): ActiveTrip? {
+        if (_state.value == null) return null
+        update { it.copy(route = it.route.copy(picks = picks)) }
+        runCatching { check(context.applicationContext, force = true, why = why) }
+        return _state.value
+    }
+
     /** Re-plan now, from here, on the driver's tap. */
     fun replanNow(context: Context) {
         val app = context.applicationContext
@@ -132,7 +143,8 @@ object TripMonitor {
         _state.value?.let { _state.value = f(it) }
     }
 
-    private suspend fun check(context: Context, force: Boolean = false) = lock.withLock {
+    private suspend fun check(context: Context, force: Boolean = false,
+                              why: String? = null) = lock.withLock {
         val trip = _state.value ?: return@withLock
         val now = System.currentTimeMillis()
         // Approximate location is ~2 km off and refreshed every ~10 min: not
@@ -176,7 +188,7 @@ object TripMonitor {
         }
         val stopIdx = Replan.atStop(plan.stops.map { it.km }, at.kmAlong)
         val reason = when {
-            force -> "re-planned on request"
+            force -> why ?: "re-planned on request"
             trip.charging -> "charging finished at " + String.format(Locale.ROOT, "%.0f %%", actual)
             stopIdx != null -> null                 // at a planned charger: wait for it
             else -> Replan.reason(expected, actual, at.offRouteKm)

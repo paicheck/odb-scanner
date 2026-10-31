@@ -54,6 +54,7 @@ import com.odbscanner.route.Navigator
 import com.odbscanner.route.PhoneLocation
 import com.odbscanner.route.Place
 import com.odbscanner.route.RoutePrefs
+import com.odbscanner.route.Picks
 import com.odbscanner.route.RouteRevisions
 import com.odbscanner.route.RoutingException
 import com.odbscanner.route.TripMonitor
@@ -139,6 +140,9 @@ fun RouteDialog(onDismiss: () -> Unit) {
     var result by remember { mutableStateOf<TripResult?>(null) }
     var showSettings by remember { mutableStateOf(settings.missingKeys.isNotEmpty()) }
     var mode by remember { mutableStateOf(settings.mode) }
+    // Chargers avoided or chosen for the trip being planned; once it is
+    // driven they live in its RouteState.
+    var picks by remember { mutableStateOf(Picks()) }
     val active by TripMonitor.state.collectAsState()
 
     LaunchedEffect(Unit) {
@@ -164,7 +168,7 @@ fun RouteDialog(onDismiss: () -> Unit) {
                     ?: throw RoutingException("No place found for “${to.trim()}”.")
                 result = TripPlanner.plan(context, dest, origin,
                     startPct.toDoubleOrNull()?.takeIf { it in 1.0..100.0 }, mode,
-                    avoid = ways?.avoid, ways = ways?.routes, choice = choice)
+                    avoid = ways?.avoid, ways = ways?.routes, choice = choice, picks = picks)
                 RoutePrefs.remember(context, dest)        // offered on the car screen
             } catch (e: RoutingException) {
                 error = e.message
@@ -246,9 +250,21 @@ fun RouteDialog(onDismiss: () -> Unit) {
                     else -> if (driven.madeAtMs > mine.madeAtMs) driven else mine   // the newer
                 }
                 shown?.let { r ->
+                    val driving = active?.takeIf { it.result === r }
                     TripResultView(r, busy = busy,
                         onChoose = { i -> plan(ways = r, choice = i) },
-                        onNavigate = onDismiss)          // the directions take the screen
+                        onNavigate = onDismiss,          // the directions take the screen
+                        picks = driving?.route?.picks ?: picks,
+                        onPicks = { chosen, why ->
+                            if (driving != null) scope.launch {
+                                busy = true
+                                try { TripMonitor.changePicks(context, chosen, why) }
+                                finally { busy = false }
+                            } else {
+                                picks = chosen
+                                plan(ways = r, choice = r.chosen)
+                            }
+                        })
                 }
             }
         },
@@ -308,8 +324,8 @@ private fun ActiveTripBanner(t: ActiveTrip) {
 }
 
 /** Watch the trip and navigate it here -- or, by setting, in Google Maps. */
-private fun beginTrip(context: Context, r: TripResult, onNavigate: () -> Unit) {
-    if (TripMonitor.drive(context, r)) {
+private fun beginTrip(context: Context, r: TripResult, picks: Picks, onNavigate: () -> Unit) {
+    if (TripMonitor.drive(context, r, picks)) {
         Navigator.showOnPhone.value = true
         onNavigate()
     } else {
@@ -343,13 +359,14 @@ private fun tripPermissionsMissing(context: Context): List<String> = buildList {
 
 @Composable
 private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit,
-                           onNavigate: () -> Unit) {
+                           onNavigate: () -> Unit, picks: Picks = Picks(),
+                           onPicks: (Picks, String) -> Unit = { _, _ -> }) {
     val context = LocalContext.current
     val inApp = remember { RoutePrefs.load(context).navigateInApp }
     // Asked once, on Start navigation; the trip starts whatever the answer.
     val askTrip = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { beginTrip(context, r, onNavigate) }
+    ) { beginTrip(context, r, picks, onNavigate) }
     val p = r.plan
     Column(modifier = Modifier.padding(top = 8.dp)) {
         HorizontalDivider()
@@ -388,7 +405,7 @@ private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit
             Button(onClick = {
                 // Watch this trip against the battery while it is driven.
                 val missing = tripPermissionsMissing(context)
-                if (missing.isEmpty()) beginTrip(context, r, onNavigate)
+                if (missing.isEmpty()) beginTrip(context, r, picks, onNavigate)
                 else askTrip.launch(missing.toTypedArray())
             }, modifier = Modifier.fillMaxWidth()) {
                 Text(when (p.stops.size) {
@@ -399,7 +416,7 @@ private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit
             }
             if (inApp) {
                 TextButton(onClick = {
-                    if (TripMonitor.state.value?.result !== r) TripMonitor.start(context, r)
+                    if (TripMonitor.state.value?.result !== r) TripMonitor.start(context, r, picks)
                     startTrip(context, r)
                 }) { Text("Open in Google Maps instead") }
             }
@@ -446,14 +463,40 @@ private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit
                 if (s.charger.address.isNotBlank()) {
                     Text(s.charger.address, style = MaterialTheme.typography.bodySmall)
                 }
-                if (s.alternatives.isNotEmpty()) {
-                    Text("Also near: " + s.alternatives.joinToString("; ") { a ->
-                        String.format(Locale.ROOT, "%s%s, %.0f kW, %+.0f km, £%.2f/kWh",
-                            a.charger.name,
-                            if (a.charger.operator.isNotBlank()) " (${a.charger.operator})" else "",
-                            a.charger.powerKw, a.km - s.km, a.pricePerKwh)
-                    }, style = MaterialTheme.typography.bodySmall)
+                if (s.charger.id.isNotBlank()) {
+                    TextButton(enabled = !busy, onClick = {
+                        onPicks(picks.avoid(s.charger.id), "you chose to avoid ${s.charger.name}")
+                    }) { Text("Avoid this charger") }
                 }
+                if (s.alternatives.isNotEmpty()) {
+                    Text("Also near:", style = MaterialTheme.typography.bodySmall)
+                    s.alternatives.forEach { a ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(String.format(Locale.ROOT, "%s%s, %.0f kW, %+.0f km, £%.2f/kWh",
+                                a.charger.name,
+                                if (a.charger.operator.isNotBlank()) " (${a.charger.operator})" else "",
+                                a.charger.powerKw, a.km - s.km, a.pricePerKwh),
+                                style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                            if (a.charger.id.isNotBlank()) {
+                                TextButton(enabled = !busy, onClick = {
+                                    // Instead of this stop: use the other, keep off this one.
+                                    onPicks(picks.insteadOf(s.charger.id, a.charger.id),
+                                        "you chose ${a.charger.name} instead of ${s.charger.name}")
+                                }) { Text("Use") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (picks.avoidChargers.isNotEmpty() || picks.useChargers.isNotEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Your charger choices: avoiding ${picks.avoidChargers.size}, " +
+                    "using ${picks.useChargers.size}", style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f))
+                TextButton(enabled = !busy, onClick = {
+                    onPicks(Picks(), "you cleared your charger choices")
+                }) { Text("Clear") }
             }
         }
         Text("Assumptions", fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))

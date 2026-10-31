@@ -54,8 +54,17 @@ data class ProviderSync(
     val message: String = "",
 )
 
+/** The driver's charger choices for the trip, by Open Charge Map id. */
 data class Picks(val avoidChargers: Set<String> = emptySet(),
-                 val useChargers: Set<String> = emptySet())
+                 val useChargers: Set<String> = emptySet()) {
+    /** Never this charger (and no longer "use" it). */
+    fun avoid(id: String) = Picks(avoidChargers + id, useChargers - id)
+
+    /** [altId] in place of the stop at [stopId]: use the one, keep off the other. */
+    fun insteadOf(stopId: String, altId: String) = Picks(
+        avoidChargers - altId + listOfNotNull(stopId.takeIf { it.isNotBlank() }),
+        useChargers - stopId + altId)
+}
 
 /** A re-plan waiting for the driver: worked out against revision [basedOn]. */
 data class Proposal(val basedOn: Int, val reason: String, val change: String, val atMs: Long,
