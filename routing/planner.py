@@ -78,6 +78,10 @@ USAGE_LABELS = {1: "public", 4: "public, membership required",
 # Search-only cost of NOT using a charger the driver chose: large enough that
 # the plan uses it whenever it can be reached. Never part of a shown cost.
 PIN_BONUS = 1e6
+# A charger the driver chose counts up to this far from the route (an "add
+# this stop" near a town off the way); others only within search_radius_km.
+# The detour is still costed as time, both ways.
+PIN_MAX_OFFSET_KM = 30.0
 ALT_WINDOW_KM = 30.0              # alternatives: this far either side of a stop
 ALT_MAX = 4
 
@@ -149,6 +153,10 @@ class Charger:
     usage_cost: str = ""                  # Open Charge Map's price text, as listed
     id: str = ""                          # Open Charge Map ID, for avoid / use
     usage_type: int | None = None         # Open Charge Map UsageTypeID
+    # How far to trust the listing (shown by routing/charger_search.py; the
+    # plan does not use them): when it was last checked, and its points.
+    checked: str = ""                     # ISO date, Open Charge Map's last check
+    points: int | None = None             # NumberOfPoints
 
 
 @dataclass
@@ -472,7 +480,9 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
         if c.power_kw < settings.min_charger_kw or not usable(c, settings):
             continue
         idx, off = nearest_point(points, c.lat, c.lon)
-        if off > settings.search_radius_km or idx == n - 1:
+        pinned = bool(c.id) and c.id in settings.use_chargers
+        if off > (PIN_MAX_OFFSET_KM if pinned else settings.search_radius_km) \
+                or idx == n - 1:
             continue
         table = tables.setdefault(c.power_kw, charge_table(car, c.power_kw))
         price = c.price_per_kwh if c.price_per_kwh is not None \
@@ -483,7 +493,7 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
         choice = price * (1.0 - settings.prefer_discount) if preferred else price
         detour_s = 2 * off * DETOUR_ROAD_FACTOR / DETOUR_SPEED_KMH * 3600.0
         fixed = c.fee + tv * (settings.stop_overhead_min * 60.0 + detour_s) / 3600.0
-        if c.id and c.id in settings.use_chargers:
+        if pinned:
             fixed -= PIN_BONUS
         cands.append(_Candidate(
             idx, off, c, price, table,

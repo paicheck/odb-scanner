@@ -308,6 +308,17 @@ class OpenChargeMap:
                          headers={"X-API-Key": self.key})
         return [c for c in map(_charger, data if isinstance(data, list) else []) if c]
 
+    def near(self, lat: float, lon: float, radius_km: float) -> list[Charger]:
+        """Every fast CCS charger within radius_km of one place (the start,
+        the destination, a town the driver names)."""
+        params = {"output": "json", "latitude": round(lat, 5), "longitude": round(lon, 5),
+                  "distance": radius_km, "distanceunit": "KM",
+                  "maxresults": OCM_MAX_RESULTS, "connectiontypeid": CCS2,
+                  "minpowerkw": self.min_kw, "verbose": "false", "key": self.key}
+        data = _get_json("GET", OCM_BASE, params=params,
+                         headers={"X-API-Key": self.key})
+        return [c for c in map(_charger, data if isinstance(data, list) else []) if c]
+
 
 def thin_line(points: list[tuple], limit: int = POLYLINE_MAX_POINTS) -> list[tuple]:
     """Every n-th point and the last, so the polyline fits in a URL."""
@@ -349,11 +360,15 @@ def _charger(poi: dict) -> Charger | None:
             return None
         street = ", ".join(x for x in (addr.get("AddressLine1"), addr.get("Town")) if x)
         usage = poi.get("UsageTypeID")
+        points = poi.get("NumberOfPoints")
         return Charger(name=addr.get("Title") or "Charger",
                        lat=float(addr["Latitude"]), lon=float(addr["Longitude"]),
                        power_kw=max(powers), operator=op,
                        address=street, usage_cost=str(poi.get("UsageCost") or ""),
                        id=str(poi.get("ID") or ""),
-                       usage_type=int(usage) if usage is not None else None)
+                       usage_type=int(usage) if usage is not None else None,
+                       checked=str(poi.get("DateLastVerified")
+                                   or poi.get("DateLastStatusUpdate") or ""),
+                       points=int(points) if isinstance(points, (int, float)) else None)
     except (KeyError, TypeError, ValueError):
         return None

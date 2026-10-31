@@ -53,6 +53,10 @@ val USAGE_LABELS = mapOf(1 to "public", 4 to "public, membership required",
 // Search-only cost of NOT using a charger the driver chose: large enough that
 // the plan uses it whenever it can be reached. Never part of a shown cost.
 const val PIN_BONUS = 1e6
+// A charger the driver chose counts up to this far from the route (an "add
+// this stop" near a town off the way); others only within searchRadiusKm.
+// The detour is still costed as time, both ways.
+const val PIN_MAX_OFFSET_KM = 30.0
 const val ALT_WINDOW_KM = 30.0             // alternatives: this far either side of a stop
 const val ALT_MAX = 4
 // Weather (routing/planner.py): air at 15 °C, and a 10 m forecast wind is about
@@ -368,7 +372,9 @@ object Planner {
         for (c in chargers) {
             if (c.powerKw < settings.minChargerKw || !usable(c, settings)) continue
             val (idx, off) = nearestPoint(points, c.lat, c.lon)
-            if (off > settings.searchRadiusKm || idx == n - 1) continue
+            val pinned = c.id.isNotEmpty() && c.id in settings.useChargers
+            if (off > (if (pinned) PIN_MAX_OFFSET_KM else settings.searchRadiusKm) ||
+                idx == n - 1) continue
             val table = tables.getOrPut(c.powerKw) { chargeTable(car, c.powerKw) }
             val price = c.pricePerKwh ?: settings.defaultPricePerKwh
             // Preferences change what the search weighs, never a shown cost:
@@ -377,7 +383,7 @@ object Planner {
             val choice = if (preferred) price * (1.0 - settings.preferDiscount) else price
             val detourS = 2 * off * DETOUR_ROAD_FACTOR / DETOUR_SPEED_KMH * 3600.0
             var fixed = c.fee + tv * (settings.stopOverheadMin * 60.0 + detourS) / 3600.0
-            if (c.id.isNotEmpty() && c.id in settings.useChargers) fixed -= PIN_BONUS
+            if (pinned) fixed -= PIN_BONUS
             found.add(Candidate(
                 idx, off, c, price, table,
                 DoubleArray(levels.size) { li ->

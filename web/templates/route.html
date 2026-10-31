@@ -196,6 +196,45 @@
   per network under <code>routing.prices</code> in <code>config.local.yaml</code> and it is used instead.{% endif %}</p>
 {% endif %}
 
+<h3 class="section-h">Find a charging stop</h3>
+<form method="get" action="/route" class="route-find">
+  {% for k, v in request.query_params.multi_items() if k not in ('find', 'within', 'find_place') %}
+  <input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+  <label>Look <select name="find">
+    {% for value, text in (('route', 'along the route'), ('start', 'near the start'),
+                           ('destination', 'near the destination'), ('place', 'near a place')) %}
+    <option value="{{ value }}"{% if search and search.area == value %} selected{% endif %}>{{ text }}</option>{% endfor %}
+  </select></label>
+  <label>within <input type="number" name="within" min="0.5" max="25" step="0.5"
+    value="{{ search.within_km if search and search.within_km else 10 }}"> km</label>
+  <label>place <input type="text" name="find_place" maxlength="200"
+    value="{{ request.query_params.get('find_place', '') }}" placeholder="a town, for 'near a place'"></label>
+  <button type="submit">Find</button>
+</form>
+{% if search %}
+<p class="chart-note">{{ search.found | length }} charger(s){% if search.label %} near {{ search.label }}{% endif %},
+  judged for this car against the plan above: the charge on arrival, minutes to {{ form.charge_to | round | int }} %
+  on its charging curve (capped by the charger) and the average power that gives, and — for the most promising —
+  the whole trip planned again with that stop.{% for n in search.notes %} {{ n }}{% endfor %}</p>
+{% if search.found %}
+<table class="route-search">
+  <tr><th>Charger</th><th>Where</th><th>Arrive</th><th>Charging</th><th>Price</th><th>With this stop</th><th></th></tr>
+  {% for f in search.found %}
+  <tr><td>{{ f.name }}{% if f.operator %}<br><span class="note">{{ f.operator }}</span>{% endif %}{% if f.preferred %}<br><span class="note">preferred</span>{% endif %}{% if f.picked %}<br><span class="note">already chosen</span>{% endif %}</td>
+    <td>{{ f.km | round | int }} km along, {{ f.off_route_km }} km off ({{ f.detour_min }} min there and back)</td>
+    <td>{% if f.arrive_pct is not none %}{{ f.arrive_pct }} %{% else %}—{% endif %}</td>
+    <td>{% if f.charge_min is not none %}{{ f.charge_min }} min to {{ f.to_pct | round | int }} %, about {{ f.average_kw | int }} kW{% endif %}
+      <br><span class="note">{{ f.power_kw | round | int }} kW listed</span></td>
+    <td>£{{ '%.2f' | format(f.price_per_kwh) }}/kWh{% if f.cost is not none %}<br>£{{ '%.2f' | format(f.cost) }}{% endif %}</td>
+    <td>{% if f.with_stop %}{% if f.with_stop.used %}{{ '%+d' | format(f.with_stop.extra_min) }} min, {{ '%+.2f' | format(f.with_stop.extra_cost) }} £,
+      arrive {{ f.with_stop.arrival_pct if f.with_stop.arrival_pct is not none else '—' }} %{% else %}the planner could not use it{% endif %}{% endif %}</td>
+    <td>{% if f.add_url %}<a href="{{ f.add_url }}">add this stop</a>{% endif %}{% if f.instead_url %}<br><a href="{{ f.instead_url }}">instead of {{ f.instead_of.name }}</a>{% endif %}</td></tr>
+  {% if f.notes %}<tr class="route-search-notes"><td colspan="7" class="note">{{ f.notes | join('; ') }}</td></tr>{% endif %}
+  {% endfor %}
+</table>
+{% endif %}
+{% endif %}
+
 <h3 class="section-h">Assumptions</h3>
 <ul class="route-assumptions">
   {% for a in pl.assumptions %}<li>{{ a }}</li>{% endfor %}

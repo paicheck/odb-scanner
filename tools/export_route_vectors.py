@@ -98,6 +98,16 @@ def _cases():
     yield {"name": "charger too far from the route", "points": long, "drive_s": 15000,
            "start_pct": 90,
            "chargers": [_charger_at(long, 200, "Far", 150, offset_km=8.0)]}
+    yield {"name": "picks: a chosen charger off the search radius is used",
+           "points": long, "drive_s": 15000, "start_pct": 90,
+           "settings": {"use_chargers": ["far8"]},
+           "chargers": [_charger_at(long, 200, "Far", 150, offset_km=8.0, id="far8"),
+                        _charger_at(long, 220, "Near", 150, id="near")]}
+    yield {"name": "picks: a chosen charger beyond 30 km is still ignored",
+           "points": long, "drive_s": 15000, "start_pct": 90,
+           "settings": {"use_chargers": ["far35"]},
+           "chargers": [_charger_at(long, 200, "Far35", 150, offset_km=35.0, id="far35"),
+                        _charger_at(long, 220, "Near", 150, id="near")]}
     yield {"name": "low start, high reserve, charge to 90",
            "points": _line(250), "drive_s": 9000, "start_pct": 40,
            "settings": {"reserve_pct": 20, "charge_to_pct": 90},

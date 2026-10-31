@@ -92,6 +92,53 @@ def _add_pick_links(params, plan: dict, avoid_ids, use_ids) -> None:
                     [i for i in use_ids if i != sid] + [aid])
 
 
+def _find(p, ocm, ors, route, origin, dest, plan, model, settings, start_pct,
+          prices_args, plan_kw):
+    """The charger search (routing/charger_search.py) the form asked for, with
+    an add / instead-of link for each charger found."""
+    from routing import prices
+    from routing.charger_search import AREAS, MAX_WITHIN_KM, search
+    area = p.get("find")
+    if area not in AREAS:
+        return None
+    within = _num(p, "within", 0.5, MAX_WITHIN_KM) or 10.0
+    near, label = None, None
+    if area == "start":
+        near, label = (origin.lat, origin.lon), origin.label
+    elif area == "destination":
+        near, label = (dest.lat, dest.lon), dest.label
+    elif area == "place":
+        text = (p.get("find_place") or "").strip()[:200]
+        places = ors.geocode(text, near=(origin.lat, origin.lon)) if text else []
+        if not places:
+            return {"area": area, "found": [], "within_km": within, "label": text,
+                    "notes": [f"No place found for “{text}”." if text
+                              else "Name a place to search near."]}
+        near, label = (places[0].lat, places[0].lon), places[0].label
+    chargers = (ocm.along(route.points, within) if area == "route"
+                else ocm.near(near[0], near[1], within))
+    own, default_price = prices_args
+    for c in chargers:
+        c.price_per_kwh, c.fee, c.price_source = prices.price_for(
+            c.operator, c.usage_cost, own, default_price)
+    got = search(route.points, route.duration_s, start_pct, model, settings, chargers,
+                 plan, area=area, near=near, within_km=within, **plan_kw)
+    got["label"] = label
+    avoid_ids, use_ids = list(settings.avoid_chargers), list(settings.use_chargers)
+    for f in got["found"]:
+        fid = f["id"]
+        if not fid or f["at"] == "destination":
+            continue
+        f["add_url"] = _with_picks(p, [i for i in avoid_ids if i != fid],
+                                   [i for i in use_ids if i != fid] + [fid])
+        inst = f.get("instead_of")
+        if inst:
+            f["instead_url"] = _with_picks(
+                p, [i for i in avoid_ids if i != fid] + [inst["id"]],
+                [i for i in use_ids if i not in (fid, inst["id"])] + [fid])
+    return got
+
+
 def _cfg_num(cfg, key, default, lo, hi):
     """A bounded number from config; the default when absent or unusable."""
     try:
@@ -205,7 +252,10 @@ def register(app, ctx) -> None:
         context = dict(car=car, fix=fix, form=form, plan=None, error=None,
                        origin=None, destination=None, alternatives=[],
                        avoid_names=providers.AVOID, ways=[], traffic_note=None,
-                       weather_note=None, maps_link=None,
+                       weather_note=None, maps_link=None, search=None,
+                       find_query=urlencode([(k, v) for k, v in p.multi_items()
+                                             if k not in ("find", "within",
+                                                          "find_place")]),
                        traffic_lines=[], live_traffic=bool(token),
                        way_query=urlencode([(k, v) for k, v in p.multi_items()
                                             if k != "way"]),
@@ -318,6 +368,15 @@ def register(app, ctx) -> None:
                              [(s["lat"], s["lon"]) for s in planned["stops"]],
                              (dest.lat, dest.lon), {a: True for a in form["avoid"]})
             context.update(plan=planned, route_line=line, maps_link=maps)
+            if p.get("find"):
+                try:
+                    context["search"] = _find(
+                        p, ocm, ors, route, origin, dest, plan, model, settings,
+                        form["start_pct"], (own, default_price),
+                        dict(avg_speed_kmh=speed, weather=forecast, rate_error=None))
+                except providers.RoutingError as exc:
+                    context["search"] = {"area": p.get("find"), "found": [],
+                                         "notes": [f"Charger search failed: {exc}"]}
         except providers.RoutingError as exc:
             context["error"] = str(exc)
         except Exception as exc:              # a planner bug must not 500
