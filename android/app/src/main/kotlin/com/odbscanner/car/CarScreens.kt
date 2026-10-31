@@ -33,6 +33,7 @@ import com.odbscanner.route.Navigator
 import com.odbscanner.route.PhoneLocation
 import com.odbscanner.route.Place
 import com.odbscanner.route.RoutePrefs
+import com.odbscanner.route.RouteRevisions
 import com.odbscanner.route.RoutingException
 import com.odbscanner.route.TripMonitor
 import com.odbscanner.route.TripPlanner
@@ -312,8 +313,12 @@ class NavScreen(carContext: CarContext) : Screen(carContext) {
             val clock = java.time.LocalTime.now().plusSeconds(end.toLong())
                 .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
             "$clock · ${fmtDuration(end)}" + (s.target?.stop?.let { st ->
-                " · charge at ${st.charger.name} in ${NavText.distance(it.remainingKm)}"
-            } ?: " · ${NavText.distance(it.remainingKm)}")
+                " · charge at ${st.charger.name} in ${NavText.distance(it.remainingKm)}" +
+                    " (arrive about ${st.arrivePct.toInt()} %, charge to ${st.departPct.toInt()} %)"
+            } ?: (" · ${NavText.distance(it.remainingKm)}" + (s.trip.plan.arrivalPct?.let { pct ->
+                " · arrive about ${pct.toInt()} %" + (s.trip.plan.arrivalBand?.let { b ->
+                    " (${b.lowPct.toInt()}–${b.highPct.toInt()})" } ?: "")
+            } ?: "")))
         } ?: s.trip.destination.label
         return listOf("Next" to turn, "Lanes" to lanes, "Traffic" to traffic, "Arrive" to arrive)
     }
@@ -409,6 +414,9 @@ class TripScreen(carContext: CarContext, private val dest: Place) : Screen(carCo
     private var result: TripResult? = null
     private var error: String? = null
     private var note: String? = null
+    // The stop last handed to the car's navigation app (one place at a time):
+    // when a new revision moves the next stop, the screen says so.
+    private var navigatedTo: String? = null
 
     init {
         val active = TripMonitor.state.value
@@ -428,6 +436,7 @@ class TripScreen(carContext: CarContext, private val dest: Place) : Screen(carCo
     }
 
     private fun drive(r: TripResult, lat: Double, lon: Double) {
+        navigatedTo = RouteRevisions.key("", lat, lon)
         fun go() {
             // In the app: the whole trip, stop by stop. Else the car's own
             // navigation app, to the tapped place.
@@ -470,18 +479,46 @@ class TripScreen(carContext: CarContext, private val dest: Place) : Screen(carCo
         error?.let { return message("Route planner", it) }
         val r = result ?: return loading(dest.label)
         val p = r.plan
+        val active = TripMonitor.state.value?.takeIf { it.destination == dest }
+        // A suggested plan takes the screen until answered: two actions, no reading.
+        active?.route?.proposal?.let { proposal ->
+            return MessageTemplate.Builder(proposal.change)
+                .setTitle(if (proposal.urgent) "Your plan no longer works" else "New plan suggested")
+                .setHeaderAction(Action.BACK)
+                .addAction(Action.Builder().setTitle("Switch").setOnClickListener {
+                    lifecycleScope.launch {
+                        val said = TripMonitor.accept(carContext)
+                        CarToast.makeText(carContext, said, CarToast.LENGTH_LONG).show()
+                    }
+                }.build())
+                .addAction(Action.Builder().setTitle("Keep my plan").setOnClickListener {
+                    CarToast.makeText(carContext, TripMonitor.decline(), CarToast.LENGTH_SHORT).show()
+                }.build())
+                .build()
+        }
         val list = ItemList.Builder()
         list.addItem(Row.Builder().setTitle(r.headline())
             .addText(String.format(Locale.ROOT, "%.0f km · ", p.distanceKm) +
                 fmtDuration(p.driveS + p.chargeS) +
                 if (p.chargeS > 0) " incl. ${fmtDuration(p.chargeS)} charging" else "")
             .apply { if (p.stops.isNotEmpty()) addText(r.costLine()) }
+            .apply {
+                active?.let { a -> addText("Plan revision ${a.route.revision}: ${a.route.current.reason}") }
+            }
             .build())
+        val next = p.stops.firstOrNull()
+        val moved = navigatedTo != null && next != null &&
+            navigatedTo != RouteRevisions.key("", next.charger.lat, next.charger.lon)
         p.stops.take(carContext.listLimit() - 2).forEachIndexed { i, s ->
-            list.addItem(Row.Builder().setTitle("${i + 1}. ${s.charger.name}")
+            list.addItem(Row.Builder().setTitle("${i + 1}. ${s.charger.name}" +
+                    if (i == 0 && moved) " (new next stop: tap to navigate)" else "")
                 .addText(String.format(Locale.ROOT,
                     "%.0f km · %.0f kW · %.0f → %.0f %% · %d min · £%.2f",
                     s.km, s.charger.powerKw, s.arrivePct, s.departPct, s.chargeMin, s.cost))
+                .apply {
+                    if (s.arriveLowPct != null && s.arriveHighPct != null) addText(String.format(
+                        Locale.ROOT, "Likely %.0f–%.0f %% on arrival", s.arriveLowPct, s.arriveHighPct))
+                }
                 .setOnClickListener { drive(r, s.charger.lat, s.charger.lon) }
                 .build())
         }
