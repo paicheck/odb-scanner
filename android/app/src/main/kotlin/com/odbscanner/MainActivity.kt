@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.odbscanner.ai.VoiceAssistant
 import com.odbscanner.ai.WakeWordService
 import com.odbscanner.collect.Reading
 import com.odbscanner.db.AppDatabase
@@ -64,6 +65,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+
+    /**
+     * Out of sight: a question asked from the phone screen that is still
+     * listening lets go of the microphone (Android would take it anyway);
+     * an answer being thought or spoken carries on.
+     */
+    override fun onStop() {
+        super.onStop()
+        VoiceAssistant.onAppBackground()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

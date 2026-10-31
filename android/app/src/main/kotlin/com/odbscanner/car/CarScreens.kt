@@ -21,6 +21,8 @@ import androidx.lifecycle.lifecycleScope
 import com.odbscanner.ai.Assistant
 import com.odbscanner.ai.Speaker
 import com.odbscanner.ai.VoiceAssistant
+import com.odbscanner.ai.VoiceSource
+import com.odbscanner.ai.VoiceState
 import com.odbscanner.db.AppDatabase
 import com.odbscanner.db.DtcEntity
 import com.odbscanner.db.MeasurementEntity
@@ -135,7 +137,9 @@ class AssistantScreen(carContext: CarContext) : Screen(carContext) {
 
     private fun speak() {
         fun go() {
-            lifecycleScope.launch { VoiceAssistant.converse(carContext) }
+            // Over a long answer (or a slow one), Speak talks over it.
+            if (VoiceAssistant.status.value.active) VoiceAssistant.bargeIn(carContext, VoiceSource.CAR)
+            else VoiceAssistant.start(carContext, VoiceSource.CAR)
         }
         if (ContextCompat.checkSelfPermission(carContext, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
@@ -155,9 +159,13 @@ class AssistantScreen(carContext: CarContext) : Screen(carContext) {
         val lines = Assistant.transcript.value
         val asked = lines.lastOrNull { it.fromDriver }?.text ?: "Nothing yet"
         val last = lines.lastOrNull { !it.fromDriver }?.text
-        val answer = when (VoiceAssistant.state.value) {
-            VoiceAssistant.State.LISTENING -> "Listening…"
-            VoiceAssistant.State.THINKING -> "Thinking…"
+        val status = VoiceAssistant.status.value
+        val answer = when (status.state) {
+            VoiceState.LISTENING -> "Listening…"
+            VoiceState.TRANSCRIBING -> "Recognising…"
+            VoiceState.THINKING -> "Thinking…"
+            VoiceState.INTERRUPTED -> "Stopped"
+            VoiceState.ERROR -> status.error?.message ?: "That didn't work"
             else -> last ?: "Tap Speak and ask about the battery, your trip, the next " +
                 "charging stop or chargers nearby."
         }
@@ -165,10 +173,18 @@ class AssistantScreen(carContext: CarContext) : Screen(carContext) {
             .addItem(Row.Builder().setTitle("You asked").addText(asked).build())
             .addItem(Row.Builder().setTitle("Answer").addText(answer).build())
             .build()
-        val actions = ActionStrip.Builder().addAction(Action.Builder().setTitle("Speak")
-            .setOnClickListener { if (VoiceAssistant.state.value == VoiceAssistant.State.IDLE) speak() }
+        val actions = ActionStrip.Builder().addAction(Action.Builder()
+            .setTitle(if (status.active) "Interrupt" else "Speak")
+            .setOnClickListener {
+                val s = VoiceAssistant.status.value.state
+                if (s != VoiceState.LISTENING && s != VoiceState.TRANSCRIBING) speak()
+            }
             .build())
-        if (last != null) {
+        if (status.active) {
+            // Stop instead of Repeat while it runs (an action strip holds few).
+            actions.addAction(Action.Builder().setTitle("Stop")
+                .setOnClickListener { VoiceAssistant.stop() }.build())
+        } else if (last != null) {
             actions.addAction(Action.Builder().setTitle("Repeat")
                 .setOnClickListener { Speaker.say(carContext, last) }.build())
         }

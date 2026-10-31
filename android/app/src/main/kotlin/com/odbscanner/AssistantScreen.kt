@@ -46,6 +46,8 @@ import com.odbscanner.ai.Assistant
 import com.odbscanner.ai.ClaudeChatSession
 import com.odbscanner.ai.OpenAiChatSession
 import com.odbscanner.ai.VoiceAssistant
+import com.odbscanner.ai.VoiceSource
+import com.odbscanner.ai.VoiceState
 import com.odbscanner.ai.WakeMatch
 import com.odbscanner.ai.WakeModel
 import com.odbscanner.ai.WakeWordService
@@ -63,12 +65,13 @@ fun AssistantDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val lines by Assistant.transcript.collectAsState()
-    val busy by Assistant.busy.collectAsState()
-    val voice by VoiceAssistant.state.collectAsState()
+    val status by VoiceAssistant.status.collectAsState()
+    val active by Assistant.active.collectAsState()
+    val voice = status.state
     // The microphone is asked for on the first Speak; then it listens at once.
     val askMic = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted -> if (granted) scope.launch { VoiceAssistant.converse(context) } }
+    ) { granted -> if (granted) VoiceAssistant.start(context, VoiceSource.PHONE) }
     var question by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(!Assistant.ready(context)) }
     val settings = remember(showSettings) { AiPrefs.load(context) }
@@ -80,9 +83,20 @@ fun AssistantDialog(onDismiss: () -> Unit) {
 
     fun send() {
         val q = question.trim()
-        if (q.isEmpty() || busy) return
+        if (q.isEmpty() || !status.free) return
         question = ""
-        scope.launch { Assistant.ask(context, q) }
+        VoiceAssistant.ask(context, q)
+    }
+
+    fun speak() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED) {
+            askMic.launch(Manifest.permission.RECORD_AUDIO)
+        } else if (status.active) {
+            VoiceAssistant.bargeIn(context, VoiceSource.PHONE)   // talk over it
+        } else {
+            VoiceAssistant.start(context, VoiceSource.PHONE)
+        }
     }
 
     AlertDialog(
@@ -90,7 +104,8 @@ fun AssistantDialog(onDismiss: () -> Unit) {
         title = { Text("Assistant") },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                Text("${settings.preset.label} · ${settings.effectiveModel.ifBlank { "no model" }}",
+                Text("${settings.preset.label} · ${settings.effectiveModel.ifBlank { "no model" }}" +
+                    (active?.takeIf { it.endsWith("(backup)") }?.let { " · now answering: $it" } ?: ""),
                     style = MaterialTheme.typography.bodySmall)
                 if (lines.isEmpty()) {
                     Text("Ask about the battery, fault codes, your trip, the next charging " +
@@ -101,32 +116,41 @@ fun AssistantDialog(onDismiss: () -> Unit) {
                 lines.forEach { line ->
                     Text(line.text,
                         fontWeight = if (line.fromDriver) FontWeight.Medium else FontWeight.Normal,
-                        color = if (line.fromDriver) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurface,
+                        color = when {
+                            line.error != null -> MaterialTheme.colorScheme.error
+                            line.fromDriver -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.onSurface
+                        },
                         modifier = Modifier.padding(top = 6.dp))
                 }
-                val status = when (voice) {
-                    VoiceAssistant.State.LISTENING -> "Listening…"
-                    VoiceAssistant.State.SPEAKING -> "Speaking…"
-                    else -> if (busy) "Thinking…" else null
+                val showing = when (voice) {
+                    VoiceState.LISTENING -> "Listening…"
+                    VoiceState.TRANSCRIBING -> "Recognising…"
+                    VoiceState.THINKING -> "Thinking…"
+                    VoiceState.SPEAKING -> "Speaking… (tap Stop, or Speak to talk over it)"
+                    VoiceState.INTERRUPTED -> "Stopped"
+                    VoiceState.ERROR -> status.error?.let { "${it.category}: ${it.message}" }
+                    VoiceState.IDLE -> null
                 }
-                status?.let {
+                showing?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall,
+                        color = if (voice == VoiceState.ERROR) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(top = 6.dp))
                 }
                 OutlinedTextField(question, { question = it.take(500) },
                     label = { Text("Ask") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        enabled = !busy && voice == VoiceAssistant.State.IDLE,
-                        onClick = {
-                            if (ContextCompat.checkSelfPermission(context,
-                                    Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                            ) scope.launch { VoiceAssistant.converse(context) }
-                            else askMic.launch(Manifest.permission.RECORD_AUDIO)
-                        },
-                    ) { Text("Speak") }
-                    Button(onClick = { send() }, enabled = !busy && question.isNotBlank()) {
+                        enabled = voice != VoiceState.INTERRUPTED &&
+                            voice != VoiceState.LISTENING && voice != VoiceState.TRANSCRIBING,
+                        onClick = { speak() },
+                    ) { Text(if (status.active) "Interrupt" else "Speak") }
+                    // Always there while anything is under way: nothing waits it out.
+                    Button(onClick = { VoiceAssistant.stop() }, enabled = status.active) {
+                        Text("Stop")
+                    }
+                    Button(onClick = { send() }, enabled = status.free && question.isNotBlank()) {
                         Text("Send")
                     }
                 }

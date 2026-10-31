@@ -11,6 +11,7 @@ import androidx.core.location.LocationManagerCompat
 import androidx.core.location.LocationRequestCompat
 import com.odbscanner.ai.Speaker
 import com.odbscanner.ai.VoiceAssistant
+import com.odbscanner.ai.VoiceState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -475,10 +476,10 @@ object Navigator {
         val ctx = app ?: return
         if (_state.value?.muted != false) return
         said.value = (said.value + text).takeLast(10)
-        if (VoiceAssistant.state.value == VoiceAssistant.State.LISTENING) {
+        if (VoiceAssistant.state.value == VoiceState.LISTENING) {
             scope.launch {
                 withTimeoutOrNull(15_000L) {
-                    VoiceAssistant.state.first { it != VoiceAssistant.State.LISTENING }
+                    VoiceAssistant.state.first { it != VoiceState.LISTENING }
                 }
                 if (_state.value?.muted == false) Speaker.say(ctx, text, interrupt = urgent)
             }

@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -166,6 +167,7 @@ internal class Spotter(
 
     private fun run() {
         var recorder: AudioRecord? = null
+        var echo: AcousticEchoCanceler? = null
         try {
             val rate = WakeWordService.SAMPLE_RATE.toInt()
             val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO,
@@ -175,6 +177,12 @@ internal class Spotter(
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, 8192) * 2)
             recorder = r
             if (r.state != AudioRecord.STATE_INITIALIZED) return fail("Microphone unavailable")
+            // Where the phone has one, cancel the assistant's own voice out of
+            // the microphone: the wake phrase can then be heard over it.
+            echo = runCatching {
+                if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(r.audioSessionId)
+                    ?.apply { enabled = true } else null
+            }.getOrNull()
             r.startRecording()
             if (r.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
                 return fail("Microphone in use by another app")
@@ -194,6 +202,7 @@ internal class Spotter(
             Log.w("WakeWord", "listening failed", e)
             fail("Listening stopped (${e.message ?: e.javaClass.simpleName})")
         } finally {
+            echo?.let { runCatching { it.release() } }
             recorder?.let { runCatching { it.stop() }; it.release() }
             recognizer.close()
         }
@@ -292,14 +301,16 @@ class WakeWordService : Service() {
         }
     }
 
-    /** The phrase was heard: take the question and answer it (converse pauses spotting). */
+    /**
+     * The phrase was heard: take the question (the turn pauses spotting) --
+     * or, said over the assistant while it thinks or talks, interrupt it
+     * and take the new question instead.
+     */
     private fun wake() {
         pauseSpotting()
-        scope.launch {
-            _status.value = "Heard \"$phrase\""
-            notify("Listening…")
-            runCatching { VoiceAssistant.converse(this@WakeWordService) }
-        }
+        _status.value = "Heard \"$phrase\""
+        notify("Listening…")
+        if (VoiceAssistant.wake(this) == null) resumeSpotting()
     }
 
     /** Give up the microphone (a question is being taken). */

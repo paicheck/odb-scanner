@@ -7,12 +7,9 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import com.odbscanner.ai.AiPrefs
-import com.odbscanner.ai.Listener
 import com.odbscanner.ai.Speaker
 import com.odbscanner.ai.VoiceAssistant
-import com.odbscanner.ai.WakeWordService
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 /**
@@ -117,17 +114,10 @@ object MapsHandoff {
      */
     suspend fun askYes(context: Context, question: String): Boolean? {
         if (!AiPrefs.load(context).speakAlerts) return null
-        if (VoiceAssistant.state.value != VoiceAssistant.State.IDLE) return null
-        withContext(Dispatchers.Main) { WakeWordService.pause() }
-        try {
-            Speaker.sayAndWait(context, question)
-            VoiceAssistant.beep()
-            val heard = runCatching { Listener.listenOnce(context, LISTEN_MS) }.getOrNull()
-                ?: return null
-            return isYes(heard)
-        } finally {
-            withContext(Dispatchers.Main + NonCancellable) { WakeWordService.resume() }
-        }
+        // A voice turn of its own (VoiceAssistant.question): never over another
+        // conversation, and the driver's Stop ends it.
+        val heard = VoiceAssistant.question(context, question, LISTEN_MS) ?: return null
+        return isYes(heard)
     }
 
     /** Ask out loud whether to send [r] to Google Maps, and do it on a yes. */
