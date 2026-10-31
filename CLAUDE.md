@@ -197,3 +197,11 @@ measured on a 2.6M-row month of synthetic readings:
   with confirmation, Android Auto proposals. Handover:
   `review_output/navigation_handover.md`. The Navigation SDK (NV13) is on
   hold while the owner weighs it up.
+- Navigation intelligence, 2026-10-31 (branch `navigation-intelligence` on
+  `navigation`; not pushed): physics consumption model judged against the
+  flat rate on the car's own drives, per-leg arrival ranges with confidence,
+  charger search, measured DC curve, Trips "What this car has shown", phone
+  GPS gate / restore that keeps stops / evidence for route changes. The
+  owner tests the `navigation` APK meanwhile (`tested-apk-20261031c`, copy
+  in `~/odb-scanner-tested/`): never run `assembleRelease` on this branch
+  until they say. Handover: `review_output/intelligence_handover.md`.

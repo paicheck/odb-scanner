@@ -34,3 +34,43 @@
 - Full suite after IN05: **1,643 passed**, ruff clean; the 100-entry
   snapshot of `~/odb_data` and `data/` identical before and after.
 - Route speeds measured, not changed (review §5).
+
+## IN06–IN07: charging
+
+- `4a82084` charger search. Tests found and fixed:
+  - a planned stop read its own departure charge (a 0.0000001 km rounding);
+  - a stop "after" itself gave −32 %;
+  - chargers just past a stop showed the charge after it;
+  - "instead of" was only set for re-planned chargers.
+
+  My own test assumptions were also wrong: every charger can be added; a
+  one-charger trip that cannot finish; a 50 kW gap of 10 min where it is 7.
+- Both planners: a chosen charger up to 30 km off the route; 2 new route
+  vectors. Kotlin 170 JVM tests, 0 failures; tested APK unchanged
+  (`a4b5d207`).
+- `af75c92` measured DC curve, and `routing.charge_curve` read at last.
+
+## IN08: planned against actual, profile
+
+- `d2df68b` profile on the Trips page and `/api/vehicle-profile`. Reading
+  it on synthetic data showed a −0.32 kWh cold start, so `88d220b` holds
+  any coefficient at zero rather than below. Scenarios: same or better.
+- Full suite: **1,664 passed**, snapshot identical.
+
+## IN09–IN10: resilience, evidence
+
+- `c6a8dc6` GpsGate (stale, vague, rough, jump), restore note, markSent
+  guard. Kotlin 178, 0 failures.
+- `95afe0c` Evidence on revisions and suggestions (saved, read by the
+  assistant); restore keeps the driver's stops still on the way. Kotlin
+  180, 0 failures. Tested APK unchanged.
+- `e1dfa7e` Route page: the start position's age, and the start charge
+  checked against the displayed charge.
+
+## IN11–IN12
+
+- Architecture review, review §10. Docs: README, REGRESSION_GUARDS,
+  CLAUDE.md, handover.
+- Final: **1,666 Python tests passed**, ruff clean, smoke test 26 passed / 0
+  failed / 1 skipped (simulator, scratch database), snapshot identical; Kotlin
+  180 JVM tests, 0 failures; tested APK sha256 `a4b5d207…` unchanged.

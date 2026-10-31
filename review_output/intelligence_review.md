@@ -226,3 +226,180 @@ the routing service are not worth a provider change on this evidence. They
 would matter for a route that is half town and half motorway, which is rare
 for a trip that needs planning. The change is left in the backlog with this
 measurement.
+
+## 6. Charging intelligence (IN06, IN07)
+
+**Before.** The planner picked stops among chargers within 5 km of the route.
+The driver could avoid a stop, or take one of up to four alternatives within
+30 km of it, but could not search for a charger or add one. Stops were timed
+on the published curve only. The planner said `routing.charge_curve`
+overrides that curve, but nothing read the setting.
+
+**Search** (`routing/charger_search.py`, `4a82084`). The search covers along
+the route, near the start, near the destination, or near a named place,
+within 0.5–25 km. Each charger is judged against the current plan:
+- **Arrival:** the plan's charge when passing, less the drive off the
+  route (which the planner leaves out). Just past a planned stop it is
+  counted as if that stop were not made.
+- **Charging:** minutes to the charge-to level on this car's curve, capped by
+  the charger, and the average power that gives. A 350 kW and a 150 kW
+  charger take the same time for a car that takes 110 kW (test), and the
+  page says "350 kW listed; this car takes at most 110".
+- **Cost:** the cost, and whether the price is known.
+- **Choices:** preference and picks.
+- **Listing:** its age (over two years is flagged) and whether it has a
+  single point.
+- **Not usable:** "too full to add 10 % under your limit" says why the
+  planner cannot use a charger.
+
+The best eight are planned again with the charger pinned. "Add this stop"
+then shows the real extra minutes, cost and arrival before the driver
+chooses it, and a charger near a planned stop also offers "instead of" that
+stop. Both go through the existing picks, so the planner stays the one place
+a plan is made, and the route revision and confirmation design on the phone
+is untouched.
+
+**One shared change.** A charger the driver chose may be up to 30 km off the
+route (others still 5 km), in both planners, with two new shared vectors.
+Without this, "add the charger in that town" would have done nothing.
+
+**The curve** (`analysis/charge_curve.py`, `af75c92`). A DC session's power at
+a given charge is the lesser of what the car takes and what the charger
+gives, so a 50 kW session reads 50 kW at 20 % whatever the car could take.
+A reading is the car's limit only where it is clearly below that session's
+own peak. At the peak it is only a lower bound. Two sessions are needed per
+point; elsewhere the published figure stays (tests: a slower car is found
+where it tapers; 50 kW sessions never make the car look like a 50 kW car;
+one session is not enough; spikes and the current's sign are ignored).
+`routing.charge_curve` is now read and wins.
+
+**Not done.** There is no live availability (Open Charge Map has none, and
+none is claimed), and prices are only as good as `routing.prices` or the
+listing. The phone has no search: that would be a new phone screen, and the
+planner logic it would need is shared and ready. The phone keeps the
+published curve.
+
+## 7. Planned against actual, and this car's profile (IN08)
+
+There is no table of planned trips, and none was added. Plans made on the
+dashboard are rarely driven as planned, and the phone's trips are not sent to
+the PC. Instead every recorded drive is set against what the method in use
+*would have predicted for it beforehand*: the backtest's chronological,
+outing-excluded prediction. That is planned against actual for every drive,
+with no leakage and no schema change.
+
+`analysis/vehicle_profile.py` (`d2df68b`, Trips page, `/api/vehicle-profile`)
+keeps three kinds of statement apart:
+
+- **measured:** kWh/100 km by average speed and outside temperature, with
+  drives and km, "too few to say" under 3 drives or 30 km; what the cold
+  costs when both ends are measured; the DC curve points sessions showed;
+- **inferred:** steady 80/100/120 km/h at 15 and 0 °C with the range,
+  heating at 0 °C, a cold start, auxiliaries. Each is given ± the
+  coefficients' own uncertainty, and flagged "mostly assumed" while the
+  drives have narrowed its prior by less than 30 %, or "held at zero". It
+  is shown as "not used for planning" when the backtest did not pick it;
+- **predicted before, measured after:** each drive's prediction and outcome
+  and its arrival error as % of the battery, with the mean, worst and bias.
+
+Hills are said not to be measured: the drives carry no height.
+
+**Found by it:** the fit let a coefficient go negative (a cold start of −0.32
+kWh on drives without one). Every term is energy spent, and a negative one
+makes winter or the motorway look cheaper. They are now held at zero and
+the rest refitted (`88d220b`); the synthetic results were the same or
+better.
+
+## 8. Navigation resilience (IN09)
+
+Read on the phone (`Navigator.kt`, `Nav.kt`, `TripMonitor.kt`, `RouteState.kt`):
+
+| Failure | What happened | Now (`c6a8dc6`, `95afe0c`) |
+|---|---|---|
+| A cached or replayed fix | timed by arrival, so it looked fresh, and "GPS lost" was reset by it | timed by when it was measured (monotonic clock); over 10 s late, or older than the last good fix: ignored |
+| Fixes at ±80 m | three 60 m off the road counted as off-route and re-routed | over 60 m: may move the car along, cannot count towards off-route; over 100 m: shown, guidance waits |
+| A multipath jump | the cues in between were marked spoken and skipped; near the end, "arrived" | over 250 km/h from the last good fix: held until the next fix agrees; after a tunnel, a far fix is plausible and used |
+| Restart mid-trip | re-planned from scratch, so other chargers could be chosen silently; the position up to 10 min old was "your location" | plans with the driver's stops pinned where still on the way; says the position's age; says what changed if anything did |
+| A hand-off of a replaced revision | guarded inline in TripMonitor | `RouteRevisions.markSent(..., revision)`, tested |
+
+Already covered and re-checked: every revision has a reason; older revisions
+cannot overwrite newer ones; duplicates are ignored; a declined proposal is
+not offered again unless urgent; provider failure leaves the plan as it was
+("Could not re-plan … keeping the plan").
+
+Not changed, because they are screens or the Google Maps hand-off the owner
+is testing:
+- **Google Maps origin:** `MapsHandoff.open` uses `PhoneLocation.lastKnown`,
+  however old it is. A stale fix would make Google Maps preview the route
+  from the wrong place. A three-minute limit would fix it; it is in the
+  backlog.
+- **Waiting suggestions:** these are still not kept across a restart. The
+  restore keeps the stops and the monitor suggests again.
+
+## 9. Explainable route changes (IN10)
+
+A revision or suggestion said why in a few words; what it rested on was not
+kept. Each now carries an **Evidence** record (`RouteState.kt`), saved with
+the trip:
+- the time and the revision judged;
+- the battery reading and its age, or that none was fresh and the plan's
+  charge was assumed;
+- the plan's charge for the point, km along and off the road;
+- the position's age and accuracy;
+- the consumption the new plan used and its basis;
+- the en-route level and projected arrival;
+- the arrival before and after;
+- plain caveats.
+
+The assistant's `get_route_changes` returns it with "explain from these
+figures only", so a spoken explanation rests on recorded numbers. The
+existing citation check on the PC's AI reports is unchanged. The PC's
+en-route assessment (`analysis/enroute.py`) already returns its
+measurements, and its shared vectors are unchanged.
+
+## 10. Architecture review (IN11)
+
+- **One planner, one energy calculation.** `planner.segment_kwh` stays the
+  only place a plan's energy is worked out. The models only give it a rate.
+  The charger search, the ranges and the profile all call the planner or
+  the model, never a copy.
+- **Parity.** All shared vectors pass: route (29 cases, two new ones), hand-off
+  and en-route. PC-only, and said so:
+  - the physics model and its ranges;
+  - the measured charging curve;
+  - the charger search.
+
+  The phone plans with its flat figure, `RateError` and the published curve,
+  as before. Porting the model needs the phone to fit it from its own drives
+  or receive it (IN14).
+- **Route state.** The phone's RouteState stays the single source of truth;
+  the evidence and the restore pinning extend it rather than add another.
+- **Providers.** Kept apart from routing logic:
+  - `providers.py` gained `OpenChargeMap.near` and the listing fields;
+  - `charger_search.py` is pure;
+  - `route.py` orchestrates.
+
+  No new cloud dependency. Weather and routing are as before.
+- **AI.** Outside the vehicle layer and out of control of the car, as before.
+  It reads evidence; it does not make it.
+- **Found, not changed:**
+  - `analysis/journey_intelligence.py`: used only by its own test, and it
+    averages per-drive rates unweighted. The Trips page and the profile
+    supersede it. Removing it is the owner's call.
+  - The three `_series` helpers (`analysis/trips.py`, `routing/car.py`,
+    `analysis/journey_intelligence.py`): near-duplicates that predate this
+    work.
+  - The linear model is now only a candidate the physics one beats on every
+    synthetic scenario. It stays, because the backtest on real drives
+    decides.
+
+## 11. Open, and why
+
+- **Real data.** Nothing here has seen the car's drives. Run
+  `tools/backtest_consumption.py --db ~/odb_data/odb_scanner.db` (read-only)
+  and look at the Trips page.
+- **Per-segment route speeds** (IN13): measured as not worth it on this
+  evidence (§5).
+- **Phone port of the model and ranges** (IN14).
+- **The Google Maps hand-off origin age** (§8): after the owner's test.
+- **Charger search on the phone:** a new screen, after the owner's test.

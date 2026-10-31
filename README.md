@@ -419,7 +419,7 @@ the scheme.
 | `python tools/import_carscanner.py "export.csv"` | Import a Car Scanner CSV as evidence labelled `imported` (`--dry-run` previews) |
 | `python tools/build_observations_db.py` | Build the normalised SQL analysis copy `data/observations.db` (`--force` rebuilds; see [docs/OBSERVATIONS_DB.md](docs/OBSERVATIONS_DB.md)) |
 | `python main.py seed` | Load the example 30-day dataset into its own database (`seed.db_path`) |
-| `python tools/backtest_consumption.py --db PATH` | Read-only: does this car's own consumption model predict its drives better than the flat rate? The check the Route page makes before using it (`--drives` lists each) |
+| `python tools/backtest_consumption.py --db PATH` | Read-only: do this car's own consumption models (physics, linear) predict its drives better than the flat rate? The check the Route page makes before using one, with errors by temperature, speed and length and how often each range held (`--drives` lists each; `--synthetic` judges the methods on a simulated year with a known truth) |
 | `python tools/purge_synthetic_data.py` | Report (then remove) simulator/demo rows that got into the car's database (`--apply`) |
 | `python main.py guard-test` | Verify the read-only UDS guard |
 | `python main.py doctor` | **Work out why the adapter is not connecting** |
@@ -446,18 +446,59 @@ returns the same as JSON.
 
 ### What the planner knows about this car
 
-* **Its own consumption model** (`analysis/consumption_model.py`): how the
-  car's use changes with outside temperature, speed and heating, learned from
-  the same drives -- used only once it has earned it. Each recent drive is
-  predicted from the drives before it (`analysis/consumption_backtest.py`);
-  the Route page uses the model only when it beat the flat rate by 5 % over at
-  least 10 such drives, and says why either way.
-  `python tools/backtest_consumption.py --db PATH` runs that check read-only.
+* **Its own consumption model**, one of two, used only once it has earned
+  it:
+  * **Physics** (`analysis/energy_model.py`). The terms an EV's energy is
+    made of: drag by mean speed², auxiliaries and heating as power per hour
+    driven, a cold pack, a cold start. Each starts from ID.3 physics as a
+    prior, so a few town drives cannot invent a motorway figure. No term can
+    go below zero, and bad drives are down-weighted.
+  * **Linear** (`analysis/consumption_model.py`). Straight lines in
+    temperature and speed.
+
+  Each recent drive is predicted from the drives before it, never from its
+  own outing (`analysis/consumption_backtest.py`). The Route page uses the
+  best model only when it beat the flat rate by 5 % over at least 10 such
+  drives, and says why either way.
+
+  `python tools/backtest_consumption.py --db PATH` runs that check read-only,
+  with errors by temperature, speed and length and how often each range held.
+  `--synthetic` runs it on a simulated year with a known truth
+  (`analysis/synthetic_journeys.py`), which shows whether a method works, not
+  how this car drives.
 * **The weather:** each stretch's forecast wind costs or saves drag energy;
   the temperature counts only through the car's own model.
-* **How sure it is:** every stop and the arrival carry a likely range -- the
-  10th to 90th percentile of how far the car's recent drives were from their
-  predictions, or an assumed 10 % when there are too few, labelled as such.
+* **How sure it is:** every stop and the arrival carry a likely range.
+  * **With the physics model** (`routing/uncertainty.py`), each leg gets its
+    own 80 % range. The journey part grows with distance (wind with speed²),
+    the rest with √distance, and the forecast temperature's error and the
+    model's own uncertainty are added. The range is calibrated on drives
+    predicted beforehand, with a confidence (low / moderate / good) and the
+    reasons: colder or faster than anything driven, legs longer than any
+    drive, an old battery reading.
+  * **Otherwise** it is the 10th to 90th percentile of how far the car's
+    recent drives were from their predictions, or an assumed 10 % when there
+    are too few, labelled as such.
+* **Charging stops:** "Find a charging stop" (`routing/charger_search.py`)
+  looks along the route, near the start, the destination or a named place.
+  Each charger is judged for this car: the arrival charge there, minutes to
+  the charge-to level on its own curve (a 350 kW listing is "this car takes
+  at most 110"), the cost, and how old the listing is. The best are planned
+  again with that stop, so "add this stop" or "instead of …" shows the
+  trip's extra minutes and cost first.
+* **Its charging curve** (`analysis/charge_curve.py`): stops are timed on the
+  car's own DC curve where its sessions show it, else the published one. A
+  reading counts as the car's limit only below that session's own peak, so a
+  slow charger is never taken for a slow car. Set
+  `routing.charge_curve: [[soc, kW], ...]` to override it.
+* **What it has shown:** the Trips page (and `/api/vehicle-profile`) keeps
+  three things apart:
+  * **measured:** kWh/100 km by speed and temperature, "too few to say"
+    where it is;
+  * **inferred:** steady-speed consumption, heating, range, each ± its
+    uncertainty and flagged "mostly assumed" until the drives pin it down;
+  * **predicted against actual:** each recent drive against what was
+    predicted for it beforehand, as % of the battery at arrival.
 * **The car's state:** `/api/twin?as_of=2026-10-31T08:00:00Z` gives each value
   as observed, inferred or unknown, with its age, as it stood at that moment
   (nothing recorded later is read); the overview shows what the car is doing.

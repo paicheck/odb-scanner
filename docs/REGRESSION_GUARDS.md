@@ -26,6 +26,11 @@ These guards close that gap. They fall into two kinds:
 | No network in tests | `tests/conftest.py` (`_no_network`) | A test reaching Open-Meteo, a routing provider or an AI service by accident: any real HTTP request through `requests` outside loopback fails as offline. |
 | Decoder containment | `tests/test_decoder_fuzz.py` | A short, empty or garbage response raising out of a decoder into the collector, or decoding to NaN/infinity. |
 | Shared route vectors | `tests/data/route_vectors.json`, `tools/export_route_vectors.py`, `android/.../PlannerTest.kt` | The phone and the dashboard planning differently -- stops, charger choice, wind energy and arrival ranges are compared case by case. |
+| No leakage in the backtest | `tests/test_consumption_backtest.py` | A drive predicted from itself, a later drive or a drive of its own outing, which would flatter any model. |
+| A physical consumption model | `tests/test_energy_model.py` | A term going below zero (winter or the motorway looking cheaper), a few drives overriding the physics, a bad reading moving the fit. |
+| Methods judged on a known truth | `tests/test_synthetic_journeys.py`, `tools/backtest_consumption.py --synthetic` | The synthetic truth drifting into the shape of a model (it must stay richer than any), or glitches changing the driving. |
+| A slow charger is not a slow car | `tests/test_charge_curve.py` | Sessions on a 50 kW charger making the measured curve say the car takes only 50 kW. |
+| GPS fixes that may steer | `android/.../GpsGateTest.kt` | A late, vague or jumping fix skipping cues, re-routing or declaring arrival. |
 
 ## Changing the wire form is a deliberate act
 
