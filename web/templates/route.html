@@ -55,9 +55,19 @@
     <label>Prefer networks
       <input name="prefer" value="{{ form.prefer | join(', ') }}" maxlength="400"
              placeholder="e.g. Ionity, Gridserve" autocomplete="off"></label>
+    {% if networks %}<select class="net-pick" data-add-to="prefer" data-take-from="avoid_nets"
+            aria-label="Add a network to prefer">
+      <option value="">Add a network (most locations first)…</option>
+      {% for n, c in networks %}<option value="{{ n }}">{{ n }} ({{ c }})</option>{% endfor %}
+    </select>{% endif %}
     <label>Never use networks
       <input name="avoid_nets" value="{{ form.avoid_nets | join(', ') }}" maxlength="400"
              placeholder="e.g. Shell Recharge" autocomplete="off"></label>
+    {% if networks %}<select class="net-pick" data-add-to="avoid_nets" data-take-from="prefer"
+            aria-label="Add a network never to use">
+      <option value="">Add a network (most locations first)…</option>
+      {% for n, c in networks %}<option value="{{ n }}">{{ n }} ({{ c }})</option>{% endfor %}
+    </select>{% endif %}
     <label class="rf-check"><input type="checkbox" name="public_only" value="1"{% if form.public_only %} checked{% endif %}>
       Public access only (no membership or notice needed)</label>
     {% if form.avoid_ids %}<input type="hidden" name="avoid_ids" value="{{ form.avoid_ids | join(',') }}">{% endif %}

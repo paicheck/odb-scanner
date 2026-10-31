@@ -1332,6 +1332,36 @@
     });
   }
 
+  // Route page: picking a network from a list adds it to one comma-separated
+  // box (Prefer, Never use) and takes it out of the other.
+  function initNetworkPickers() {
+    var picks = document.querySelectorAll("select.net-pick");
+    function names(box) {
+      return box.value.split(",").map(function (s) { return s.trim(); })
+        .filter(function (s) { return s; });
+    }
+    picks.forEach(function (sel) {
+      sel.addEventListener("change", function () {
+        var name = sel.value;
+        var form = sel.form;
+        if (!name || !form) return;
+        var into = form.elements[sel.dataset.addTo];
+        var other = form.elements[sel.dataset.takeFrom];
+        var have = names(into);
+        if (!have.some(function (s) { return s.toLowerCase() === name.toLowerCase(); })) {
+          have.push(name);
+        }
+        into.value = have.join(", ");
+        if (other) {
+          other.value = names(other).filter(function (s) {
+            return s.toLowerCase() !== name.toLowerCase();
+          }).join(", ");
+        }
+        sel.value = "";
+      });
+    });
+  }
+
   function boot() {
     if (window.Chart) {
       Chart.defaults.font.family = "'Segoe UI', Arial, sans-serif";
@@ -1344,6 +1374,7 @@
     initProgress();
     initMap();
     initRoute();
+    initNetworkPickers();
   }
 
   if (document.readyState === "loading") {

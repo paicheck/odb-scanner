@@ -31,6 +31,8 @@ OCM_BASE = "https://api.openchargemap.io/v3/poi/"
 TIMEOUT_S = 20.0
 CCS2 = 33            # OpenChargeMap ConnectionTypeID: CCS (Type 2)
 OCM_MAX_RESULTS = 500     # chargers along one route
+OCM_COUNTRY_MAX = 20000   # every fast CCS location in one country (networks.py)
+OCM_REFERENCE = "https://api.openchargemap.io/v3/referencedata/"
 POLYLINE_MAX_POINTS = 300  # route points sent to OCM (URL length)
 # OCM UsageTypeID: 2 private (restricted), 3 privately owned (notice
 # required), 6 private (staff, visitors or customers) -- not for a passing car.
@@ -307,6 +309,21 @@ class OpenChargeMap:
         data = _get_json("GET", OCM_BASE, params=params,
                          headers={"X-API-Key": self.key})
         return [c for c in map(_charger, data if isinstance(data, list) else []) if c]
+
+    def locations_in(self, country: str) -> list[dict]:
+        """Every fast CCS location Open Charge Map lists in one country, compact
+        (reference data as ids only): for counting networks (routing/networks.py)."""
+        params = {"output": "json", "countrycode": country, "maxresults": OCM_COUNTRY_MAX,
+                  "compact": "true", "verbose": "false", "connectiontypeid": CCS2,
+                  "minpowerkw": self.min_kw, "key": self.key}
+        data = _get_json("GET", OCM_BASE, params=params, headers={"X-API-Key": self.key})
+        return data if isinstance(data, list) else []
+
+    def reference_data(self) -> dict:
+        """Open Charge Map's reference data: the operators' names by id among it."""
+        data = _get_json("GET", OCM_REFERENCE, params={"output": "json", "key": self.key},
+                         headers={"X-API-Key": self.key})
+        return data if isinstance(data, dict) else {}
 
     def near(self, lat: float, lon: float, radius_km: float) -> list[Charger]:
         """Every fast CCS charger within radius_km of one place (the start,

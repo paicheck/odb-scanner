@@ -9,6 +9,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,8 +22,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -38,10 +44,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.PopupProperties
 import androidx.core.content.ContextCompat
 import com.odbscanner.route.ActiveTrip
 import com.odbscanner.route.CarEnergy
@@ -50,9 +58,12 @@ import com.odbscanner.route.MODES
 import com.odbscanner.route.MapsHandoff
 import com.odbscanner.route.NavRoute
 import com.odbscanner.route.NavText
+import com.odbscanner.route.NetworkList
+import com.odbscanner.route.Networks
 import com.odbscanner.route.Navigator
 import com.odbscanner.route.PhoneLocation
 import com.odbscanner.route.Place
+import com.odbscanner.route.Planner
 import com.odbscanner.route.RoutePrefs
 import com.odbscanner.route.Picks
 import com.odbscanner.route.RouteRevisions
@@ -512,6 +523,10 @@ private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit
 @Composable
 fun RouteSettingsDialog(onDone: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var networks by remember { mutableStateOf(Networks.cached(context)) }
+    var counting by remember { mutableStateOf(false) }
+    var networkNote by remember { mutableStateOf<String?>(null) }
     val s = remember { RoutePrefs.load(context) }
     var ors by remember { mutableStateOf(s.orsKey) }
     var ocm by remember { mutableStateOf(s.ocmKey) }
@@ -615,13 +630,44 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                     "network's name.", style = MaterialTheme.typography.bodySmall)
                 Text("Charging networks", fontWeight = FontWeight.Medium,
                     modifier = Modifier.padding(top = 8.dp))
-                OutlinedTextField(prefer, { prefer = it.take(400) },
-                    label = { Text("Prefer (comma-separated)") },
-                    placeholder = { Text("Ionity, Gridserve") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(avoidNets, { avoidNets = it.take(400) },
-                    label = { Text("Never use (comma-separated)") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth())
+                fun countNetworks(refresh: Boolean) {
+                    if (counting) return
+                    counting = true
+                    networkNote = null
+                    scope.launch {
+                        networks = try {
+                            Networks.load(context, s.copy(ocmKey = ocm.trim(),
+                                countries = countries), refresh)
+                        } catch (e: RoutingException) {
+                            networkNote = e.message
+                            networks
+                        }
+                        counting = false
+                    }
+                }
+                val list = networks
+                Text(when {
+                    counting -> "Counting the networks' charging locations on Open Charge Map…"
+                    list == null -> "Pick from the networks with the most fast charging locations: " +
+                        "list them from Open Charge Map (one larger download, kept for a month)."
+                    else -> "${list.networks.size} networks with fast CCS chargers in " +
+                        "${list.countries}, most locations first (Open Charge Map, " +
+                        "${ageText(list.fetchedAtMs)})."
+                }, style = MaterialTheme.typography.bodySmall)
+                networkNote?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                }
+                TextButton(enabled = !counting && ocm.isNotBlank(),
+                    onClick = { countNetworks(refresh = list != null) }) {
+                    Text(if (list == null) "List the networks" else "Count again")
+                }
+                NetworkPicker("Prefer", prefer, list,
+                    onAdd = { n -> Networks.choose(n, prefer, avoidNets).let { (a, b) -> prefer = a; avoidNets = b } },
+                    onRemove = { n -> prefer = Networks.remove(n, prefer) })
+                NetworkPicker("Never use", avoidNets, list,
+                    onAdd = { n -> Networks.choose(n, avoidNets, prefer).let { (a, b) -> avoidNets = a; prefer = b } },
+                    onRemove = { n -> avoidNets = Networks.remove(n, avoidNets) })
                 toggle("Public chargers only (no members-only sites)", publicOnly) { publicOnly = it }
                 Text("A preferred network wins a close choice; the price shown is still its " +
                     "real price, and it never adds a stop the trip does not need.",
@@ -660,4 +706,60 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
         },
         dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
     )
+}
+
+/**
+ * One list of networks (Prefer, or Never use): the ones chosen, each a chip
+ * that takes it off when tapped, and a box that lists the networks with the
+ * most charging locations first, narrowing as you type. A network not in the
+ * list can still be added as typed (the planner matches on part of the name).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NetworkPicker(label: String, chosen: String, list: NetworkList?,
+                          onAdd: (String) -> Unit, onRemove: (String) -> Unit) {
+    val names = Planner.names(chosen)
+    var query by remember { mutableStateOf("") }
+    var open by remember { mutableStateOf(false) }
+    Text(label, modifier = Modifier.padding(top = 6.dp))
+    if (names.isNotEmpty()) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            names.forEach { n ->
+                AssistChip(onClick = { onRemove(n) }, label = { Text("$n  ✕") })
+            }
+        }
+    }
+    val options = (list?.networks ?: emptyList())
+        .filter { o -> names.none { it.equals(o.name, ignoreCase = true) } }
+        .filter { query.isBlank() || query.trim().lowercase() in it.name.lowercase() }
+        .take(40)
+    Box {
+        OutlinedTextField(query, { query = it.take(60); open = true },
+            label = { Text(if (list == null) "Type a network to add" else "Add a network") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) open = true })
+        DropdownMenu(expanded = open && (options.isNotEmpty() || query.isNotBlank()),
+            onDismissRequest = { open = false },
+            properties = PopupProperties(focusable = false)) {
+            if (query.isNotBlank() && options.none { it.name.equals(query.trim(), ignoreCase = true) }) {
+                DropdownMenuItem(text = { Text("Add “${query.trim()}” as typed") }, onClick = {
+                    onAdd(query.trim()); query = ""; open = false
+                })
+            }
+            options.forEach { o ->
+                DropdownMenuItem(text = { Text("${o.name} (${o.locations})") }, onClick = {
+                    onAdd(o.name); query = ""; open = false
+                })
+            }
+        }
+    }
+}
+
+private fun ageText(atMs: Long): String {
+    val days = (System.currentTimeMillis() - atMs) / 86_400_000L
+    return when {
+        days < 1 -> "today"
+        days == 1L -> "yesterday"
+        else -> "$days days ago"
+    }
 }

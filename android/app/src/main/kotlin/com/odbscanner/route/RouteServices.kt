@@ -149,6 +149,34 @@ class RouteServices(
         return parseChargers(JSONArray(request("GET", q, headers = mapOf("X-API-Key" to ocmKey))))
     }
 
+    /**
+     * Every fast CCS charging location Open Charge Map lists in one country
+     * ([countryCode], ISO), compact (reference data as ids only): for
+     * counting the networks (Networks.kt). One large request; the caller
+     * keeps the result.
+     */
+    fun locationsIn(countryCode: String): JSONArray {
+        requireOcm()
+        val q = "$OCM_BASE?output=json&countrycode=${enc(countryCode)}" +
+            "&maxresults=$OCM_COUNTRY_MAX&compact=true&verbose=false" +
+            "&connectiontypeid=$CCS2&minpowerkw=$minChargerKw&key=${enc(ocmKey)}"
+        return JSONArray(request("GET", q, headers = mapOf("X-API-Key" to ocmKey),
+            readTimeoutMs = 90_000))
+    }
+
+    /** Open Charge Map's reference data: the networks' (operators') names by id. */
+    fun referenceData(): JSONObject {
+        requireOcm()
+        return JSONObject(request("GET", "$OCM_REFERENCE?output=json&key=${enc(ocmKey)}",
+            headers = mapOf("X-API-Key" to ocmKey), readTimeoutMs = 60_000))
+    }
+
+    private fun requireOcm() {
+        if (ocmKey.isBlank()) throw RoutingException(
+            "No OpenChargeMap key. Get a free key at openchargemap.org and enter " +
+                "it under Route settings.")
+    }
+
     private fun requireOrs() {
         if (orsKey.isBlank()) throw RoutingException(
             "No OpenRouteService key. Get a free key at openrouteservice.org and " +
@@ -157,14 +185,14 @@ class RouteServices(
 
     private fun request(
         method: String, url: String, body: String? = null,
-        headers: Map<String, String> = emptyMap(),
+        headers: Map<String, String> = emptyMap(), readTimeoutMs: Int = timeoutMs,
     ): String {
         val host = URL(url).host
         val conn = (URL(url).openConnection() as HttpURLConnection)
         try {
             conn.requestMethod = method
             conn.connectTimeout = timeoutMs
-            conn.readTimeout = timeoutMs
+            conn.readTimeout = readTimeoutMs
             // The route comes back as application/geo+json; accepting only
             // application/json gets HTTP 406 (ORS error 2007) from OpenRouteService.
             conn.setRequestProperty("Accept", "application/json, application/geo+json")
@@ -196,6 +224,8 @@ class RouteServices(
         const val OCM_BASE = "https://api.openchargemap.io/v3/poi/"
         const val CCS2 = 33          // OpenChargeMap ConnectionTypeID: CCS (Type 2)
         const val OCM_MAX_RESULTS = 500
+        const val OCM_COUNTRY_MAX = 20_000   // every fast CCS location in a country
+        const val OCM_REFERENCE = "https://api.openchargemap.io/v3/referencedata/"
         const val POLYLINE_MAX_POINTS = 300
         // OCM UsageTypeID: private (restricted), privately owned (notice
         // required), private (staff, visitors or customers).

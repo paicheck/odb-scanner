@@ -269,7 +269,7 @@ def register(app, ctx) -> None:
         context = dict(car=car, fix=fix, form=form, plan=None, error=None,
                        origin=None, destination=None, alternatives=[],
                        avoid_names=providers.AVOID, ways=[], traffic_note=None,
-                       weather_note=None, maps_link=None, search=None,
+                       weather_note=None, maps_link=None, search=None, networks=[],
                        find_query=urlencode([(k, v) for k, v in p.multi_items()
                                              if k not in ("find", "within",
                                                           "find_place")]),
@@ -280,6 +280,16 @@ def register(app, ctx) -> None:
                        time_value=time_value, own_prices=own,
                        keys_missing=[n for n, k in (("OpenRouteService", ors_key),
                                                     ("OpenChargeMap", ocm_key)) if not k])
+        # The networks to pick from, most locations first (routing/networks.py):
+        # fetched once a month; the page works without them.
+        if ocm_key:
+            try:
+                from routing import networks
+                context["networks"] = networks.networks(
+                    providers.OpenChargeMap(ocm_key, min_kw=min_kw),
+                    providers.countries(cfg), min_kw)
+            except providers.RoutingError as exc:
+                log.info("networks not listed: %s", exc)
         if not form["to"]:
             return render("route.html", request, **context)
 
