@@ -100,6 +100,14 @@ data class AiSettings(
 
     /** The services asked, in order: the chosen one, then the backups, none turned off. */
     val chain: List<String> get() = (listOf(provider) + backups).filter { it !in disabled }
+
+    /**
+     * What [id] is asked with: the chosen service's model, address and effort
+     * can be set; the others run on their defaults.
+     */
+    fun askedWith(id: String): List<String> =
+        if (id == provider) listOf(effectiveModel, effectiveBaseUrl, effort)
+        else AiPresets.byId(id).let { listOf(it.defaultModel, it.baseUrl.trimEnd('/')) }
 }
 
 object AiPrefs {
@@ -147,6 +155,7 @@ object AiPrefs {
             .distinct()
 
     fun save(context: Context, s: AiSettings) {
+        val before = load(context)
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
             .putString("provider", AiPresets.byId(s.provider).id)
             .putString("model", s.model.trim())
@@ -172,9 +181,20 @@ object AiPrefs {
             .putBoolean("history_text", s.historyText)
             .putBoolean("streaming", s.streaming)
             .apply()
-        // A changed key or setting is a fresh start for the services' health.
-        AiPresets.ALL.forEach { ProviderHealth.breaker.reset(it.id) }
+        healthResets(before, load(context)).forEach { ProviderHealth.breaker.reset(it) }
     }
+
+    /**
+     * The services whose health starts afresh when [old] becomes [new]: those
+     * now asked with another model, address or effort, and those turned back
+     * on. Anything else -- speech speed, history, limits -- leaves a refused
+     * key or a rest where it was, so a dead service is not asked again just
+     * because a setting was touched. (A new key resets its service: setKey.)
+     */
+    fun healthResets(old: AiSettings, new: AiSettings): Set<String> =
+        AiPresets.ALL.map { it.id }.filter { id ->
+            old.askedWith(id) != new.askedWith(id) || (id in old.disabled && id !in new.disabled)
+        }.toSet()
 
     val STYLES = listOf("auto", "brief", "normal", "detailed")
     val LANGUAGES = listOf("en-GB", "en-US")

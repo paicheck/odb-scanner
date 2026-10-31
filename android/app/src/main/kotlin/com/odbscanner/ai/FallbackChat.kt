@@ -60,19 +60,9 @@ class FallbackChatSession(
     override suspend fun ask(text: String, tools: ToolRunner, onText: ((String) -> Unit)?): String {
         val failed = mutableListOf<String>()
         var last: AiException? = null
-        // Rested services are skipped -- unless every one left is resting,
-        // when the one whose rest ends first is tried anyway (its trial).
-        val left = (index until members.size).toList()
-        val allowed = left.filter { health == null || health.allow(ids[it]) }
-        val order = allowed.ifEmpty {
-            listOfNotNull(health?.soonest(left.map { ids[it] })?.let { ids.indexOf(it) })
-        }
-        for (i in left) if (i !in order) {
-            val s = health?.status(ids[i])
-            failed += "${members[i].first} skipped (${s?.state?.name?.lowercase() ?: "resting"}" +
-                (s?.lastError?.let { ": ${it.category}" } ?: "") + ")"
-        }
-        for (i in order) {
+
+        /** Ask member [i]: its answer, or null when it failed (recorded) and the next may try. */
+        suspend fun attempt(i: Int): String? {
             index = i
             val (label, make) = members[i]
             var acted = false
@@ -96,21 +86,61 @@ class FallbackChatSession(
                 note = if (failed.isEmpty()) null
                 else "Answered by $label: ${failed.joinToString("; ")}."
                 return answer
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Stopped: neither a success nor a failure, and never handed
+                // to a backup -- but a trial it was on must be let go.
+                health?.release(ids[i])
+                throw e
             } catch (e: AiException) {
-                // (A CancellationException is not an AiException: a stopped
-                // turn is never handed to a backup, nor counted against it.)
-                e.error?.let { if (it.reason != "local_limit") health?.failure(ids[i], it) }
+                val err = e.error
+                if (err != null && err.reason != "local_limit") health?.failure(ids[i], err)
+                else health?.release(ids[i])
                 if (acted) {
-                    val err = e.error ?: AiError(e.category, label, e.message ?: "failed")
-                    throw AiException(err.copy(message = "${err.message} -- after it had " +
+                    val a = err ?: AiError(e.category, label, e.message ?: "failed")
+                    throw AiException(a.copy(message = "${a.message} -- after it had " +
                         "already acted on that, so the backup was not asked"), e)
                 }
                 // Part of its answer was already spoken: a second answer from a
                 // backup would follow it, so the failure is reported instead.
                 if (spoke) throw e
-                failed += "$label failed (" + (e.error?.let { "${it.category}: " } ?: "") +
+                failed += "$label failed (" + (err?.let { "${it.category}: " } ?: "") +
                     "${e.message})"
                 last = e
+                return null
+            } catch (e: Throwable) {
+                health?.release(ids[i])
+                throw e
+            }
+        }
+
+        // Each service in turn, asking the breaker only just before trying it
+        // (asking reserves a trial): a resting one is skipped.
+        val left = (index until members.size).toList()
+        var tried = false
+        for (i in left) {
+            if (health != null && !health.allow(ids[i])) {
+                val st = health.status(ids[i])
+                failed += "${members[i].first} skipped (${st.state.name.lowercase()}" +
+                    (st.lastError?.let { ": ${it.category}" } ?: "") + ")"
+                continue
+            }
+            tried = true
+            attempt(i)?.let { return it }
+        }
+        // Every one left is resting: the one whose rest ends first is tried
+        // anyway. One that needs attention (a refused key, a spent quota) is
+        // not: asking again would be refused again -- say so instead.
+        if (!tried && health != null) {
+            val resting = left.filter { health.status(ids[it]).state == Health.RESTING }
+            val pick = health.soonest(resting.map { ids[it] })?.let { ids.indexOf(it) }
+            val stuck = left.map { health.status(ids[it]) }
+                .firstOrNull { it.state == Health.NEEDS_ATTENTION }?.lastError
+            if (pick != null && pick >= 0) {
+                attempt(pick)?.let { return it }
+            } else if (stuck != null) {
+                index = members.size - 1
+                throw AiException(stuck.copy(message = "${stuck.message} -- not asked again " +
+                    "for now: check its key, model or quota in AI & Voice Setup"))
             }
         }
         index = members.size - 1

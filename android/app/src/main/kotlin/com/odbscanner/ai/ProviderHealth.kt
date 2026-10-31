@@ -99,6 +99,16 @@ class CircuitBreaker(
         states[id] = next.copy(probing = false)
     }
 
+    /**
+     * A trial (or any request) that ended without an answer either way --
+     * stopped by the driver, or held back by your daily limit: [id] may be
+     * tried again, its rest unchanged.
+     */
+    @Synchronized
+    fun release(id: String) {
+        states[id]?.let { if (it.probing) states[id] = it.copy(probing = false) }
+    }
+
     /** The key or the settings changed: start afresh. */
     @Synchronized
     fun reset(id: String) {

@@ -222,4 +222,81 @@ class ReliabilityTest {
         assertTrue(AssistantTools.prompt("brief").startsWith(AssistantTools.SYSTEM_PROMPT))
         assertFalse(JSONObject().has("x"))
     }
+
+    @Test
+    fun aStoppedTrialIsLetGoSoTheServiceCanBeTriedAgain() = runBlocking {
+        val b = CircuitBreaker(threshold = 1, baseCooldownMs = 60_000, clock = { now })
+        b.failure("main", net)
+        now += 60_000                                           // its rest is over: a trial
+        val stopped = object : ChatSession {
+            override val model = "m"
+            override suspend fun ask(text: String, tools: ToolRunner): String =
+                throw CancellationException("the driver pressed Stop")
+        }
+        val chain = FallbackChatSession(listOf("Main" to { stopped }), changesState = { false },
+            ids = listOf("main"), health = b)
+        try {
+            chain.ask("q", ToolRunner { "" }); fail("a stop goes on up")
+        } catch (_: CancellationException) {}
+        // Neither a success nor a failure, and its trial is not left out for ever.
+        assertEquals(Health.TRIAL, b.status("main").state)
+        assertTrue(b.allow("main"))
+    }
+
+    @Test
+    fun aDailyLimitReachedOnATrialDoesNotLeaveItStuck() = runBlocking {
+        val b = CircuitBreaker(threshold = 1, baseCooldownMs = 60_000, clock = { now })
+        b.failure("main", net)
+        now += 60_000
+        val main = Fake("from main")
+        val backup = Fake("from backup")
+        val limit = { id: String, label: String ->
+            if (id == "main") AiError(AiErrorCategory.QUOTA_EXCEEDED, label, "your limit",
+                reason = "local_limit") else null
+        }
+        val chain = FallbackChatSession(listOf("Main" to { main }, "Backup" to { backup }),
+            changesState = { false }, ids = listOf("main", "backup"), health = b, limit = limit)
+        assertEquals("from backup", chain.ask("q", ToolRunner { "" }))
+        assertTrue(main.asked.isEmpty())
+        assertTrue(b.allow("main"))                             // still free for its trial
+    }
+
+    @Test
+    fun servicesThatNeedAttentionAreNotAskedAgainAndTheReasonIsGiven() = runBlocking {
+        val b = CircuitBreaker(clock = { now })
+        b.failure("main", key)
+        b.failure("backup", AiError(AiErrorCategory.QUOTA_EXCEEDED, "B", "used up"))
+        val main = Fake("from main")
+        val backup = Fake("from backup")
+        val chain = FallbackChatSession(listOf("Main" to { main }, "Backup" to { backup }),
+            changesState = { false }, ids = listOf("main", "backup"), health = b)
+        try {
+            chain.ask("q", ToolRunner { "" }); fail("nothing could be asked")
+        } catch (e: AiException) {
+            assertEquals(AiErrorCategory.INVALID_CREDENTIALS, e.category)
+            assertTrue(e.message!!.contains("AI & Voice Setup"))
+        }
+        assertTrue(main.asked.isEmpty() && backup.asked.isEmpty())
+        // A resting backup is still tried while the main one needs attention.
+        b.reset("backup")
+        b.failure("backup", net); b.failure("backup", net); b.failure("backup", net)
+        assertEquals(Health.RESTING, b.status("backup").state)
+        // (A fresh chain, as the assistant makes after a failed turn.)
+        val again = FallbackChatSession(listOf("Main" to { main }, "Backup" to { backup }),
+            changesState = { false }, ids = listOf("main", "backup"), health = b)
+        assertEquals("from backup", again.ask("q2", ToolRunner { "" }))
+        assertTrue(main.asked.isEmpty())
+    }
+
+    @Test
+    fun onlyAServiceWhoseSettingsChangedStartsAfresh() {
+        val s = AiSettings(provider = "groq", backups = listOf("gemini"), disabled = setOf("mistral"))
+        assertEquals(emptySet<String>(), AiPrefs.healthResets(s, s.copy(speechRate = 1.2f,
+            historyDays = 7, limits = UsageLimits(requestsPerDay = 3), style = "brief")))
+        assertEquals(setOf("groq"), AiPrefs.healthResets(s, s.copy(model = "llama-3.1-8b-instant")))
+        assertEquals(setOf("mistral"), AiPrefs.healthResets(s, s.copy(disabled = emptySet())))
+        // A new main service: it and the old one are asked differently now.
+        assertEquals(setOf("groq", "gemini"), AiPrefs.healthResets(s, s.copy(provider = "gemini",
+            backups = listOf("groq"))))
+    }
 }
