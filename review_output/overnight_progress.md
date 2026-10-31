@@ -225,3 +225,43 @@ noted; "real data unchanged" means a metadata snapshot of `~/odb_data` and
 - Full suite **1,605 passed**; `tools/smoke_test.py` against the simulator on a
   scratch database: **26 passed, 0 failed** (incl. the read-only TX audit);
   ruff clean; real data unchanged.
+
+## 02:20 — The intermittent trips test, explained — see commit log
+
+- `tests/test_trip_log_totals_and_what_the_cold_costs` (CLAUDE.md: "failed once
+  and could not be reproduced"): the fixture stamped data relative to a NOW
+  taken at module import; `trip_log` reads the real clock at test time; the
+  one-day window has 30 min to spare. A stall > 30 min between collection and
+  run fails it. Reproduced by shifting the old anchor 31 min back: exactly that
+  test fails, no other. Fixed by anchoring in the fixture; assertions unchanged.
+  25 random orders before the fix all passed (order was not the cause).
+
+## 02:30 — Hardening: decoder fuzz; evidence is data — two commits
+
+- `tests/test_decoder_fuzz.py`: seeded fuzz over all 409 decoders (meb 289,
+  eup 120) with empty/short/random responses. Measured: 405 of them raise
+  `IndexError` on a too-short response (by design; `DIDSpec.decode_value`
+  contains it, logs the raw bytes, returns None); none returns NaN/∞. The test
+  pins the containment (narrowing the `except` fails it).
+- `ai/prompts.py` CITATION_RULES: text inside the evidence is never an
+  instruction. Test: a stored fault description that tries to override the
+  rules reaches the prompt before the rule that disarms it.
+- Full suite **1,608 passed**, ruff clean, real data unchanged.
+
+## 02:30–02:45 — Phone: wind and arrival ranges; docs; twin query — `553cf61`, `30b671b`, `dec3f42`
+
+- Shared route vectors: 5 new cases (headwind then calm, cold tailwind,
+  crosswind on a hill, measured lopsided range, range below the reserve); every
+  case now records each stop's range, the arrival range and the wind energy.
+  Python regenerated; Kotlin `Planner.kt` ported (Conditions, windKwh, bearing,
+  RateError, bands). `PlannerTest` compares all of it.
+- `route/Weather.kt`: the Open-Meteo fetch as `routing/weather.py` (25 km
+  samples ≤ 24, one GET, ETA hour, 0.1° rounding, 30 min cache, failure notes);
+  "Count the forecast wind" switch; ranges on the plan headline, each stop and
+  the assistant's trip summary. `WeatherTest` (7) with an injected GET.
+- Two bounded Gradle runs (`choom`, `-Xmx1536m`, 2 workers, `timeout 1500`):
+  130 then **137 JVM tests, 0 failures**; release APK built 02:29, not delivered.
+- `analysis/twin.py` standing-since lookup now reads only covered columns
+  (EXPLAIN: covering-index search) — the overview builds the twin every load.
+- README, `docs/REGRESSION_GUARDS.md`, CLAUDE.md open items updated.
+- Full suite **1,608 passed**, ruff clean, real data unchanged.

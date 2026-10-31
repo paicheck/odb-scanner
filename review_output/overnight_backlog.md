@@ -22,4 +22,9 @@ Status: `done` · `in progress` · `blocked` · `pending` · `dropped`
 | N08 | 6 | En-route assessment: projection from the consumption ratio, levels, alternatives; align with the phone's TripMonitor/Replan | done `7d22acc` |
 | N09 | 8 | Dashboard: health card and twin state on the overview | done `67303d4` |
 | N10 | 7 | Investigations: evidence citations the AI cannot invent | done `9762ae5` |
-| N11 | — | Handover: `review_output/overnight_handover.md` | pending |
+| N11 | — | Handover: `review_output/overnight_handover.md` | done |
+| N12 | — | Intermittent `test_trips` failure: diagnosed (test clock) and fixed | done `6b53b4f` |
+| N13 | — | Hardening: decoder fuzz; evidence-is-data rule | done `8b762b9`, `1706d24` |
+| N14 | — | Phone parity: wind, arrival ranges, Open-Meteo fetch, shared vectors | done `553cf61` |
+| N15 | next | Phone en-route levels: port `analysis/enroute.assess` to Kotlin with shared vectors | pending |
+| N16 | owner | Prediction ledger (needs a new table: schema change for the owner to approve) | blocked |
