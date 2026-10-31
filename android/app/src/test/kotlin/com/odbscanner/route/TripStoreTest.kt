@@ -61,4 +61,16 @@ class TripStoreTest {
         assertTrue(note, note.contains("Hub C"))
         assertTrue(note, note.endsWith("Google Maps has an older plan: tap to send this one."))
     }
+
+    @Test
+    fun aRestoreKeepsTheStopsStillOnTheWayNotThoseBehind() {
+        // Oxford to Leeds, stops near Coventry (52.4) and Sheffield (53.38).
+        val rev = Revision(2, 0L, "planned", listOf(
+            Waypoint("ocm:11", "Coventry", 52.40, -1.50, true),
+            Waypoint("ocm:22", "Sheffield", 53.38, -1.47, true),
+            Waypoint("ll:53.8000,-1.5500", "Leeds", 53.80, -1.55, false)), 12.0, "with_stops", 270.0)
+        assertEquals(listOf("11", "22"), TripStore.stopsToKeep(rev, 51.75, -1.26))   // at Oxford
+        assertEquals(listOf("22"), TripStore.stopsToKeep(rev, 52.90, -1.48))       // past Coventry
+        assertEquals(emptyList<String>(), TripStore.stopsToKeep(rev, 53.38, -1.47)) // at Sheffield
+    }
 }

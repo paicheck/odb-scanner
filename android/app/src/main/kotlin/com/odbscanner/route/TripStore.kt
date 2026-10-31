@@ -83,6 +83,27 @@ object TripStore {
 
     const val FRESH_POSITION_MS = 2 * 60_000L
 
+    /**
+     * The charging stops of [rev] (Open Charge Map ids) still roughly on the
+     * way from here to its destination: going by them costs at most
+     * ON_THE_WAY_FACTOR of the direct distance (plus ON_THE_WAY_KM), and the
+     * car is not already at them. A stop behind the car is not kept -- that
+     * would send it back.
+     */
+    fun stopsToKeep(rev: Revision, lat: Double, lon: Double): List<String> {
+        val dest = rev.waypoints.lastOrNull { !it.isStop } ?: return emptyList()
+        val direct = Planner.haversineKm(lat, lon, dest.lat, dest.lon)
+        return rev.waypoints.filter { it.isStop && it.key.startsWith("ocm:") }.filter { w ->
+            val to = Planner.haversineKm(lat, lon, w.lat, w.lon)
+            to > AT_STOP_KM && to + Planner.haversineKm(w.lat, w.lon, dest.lat, dest.lon) <=
+                direct * ON_THE_WAY_FACTOR + ON_THE_WAY_KM
+        }.map { it.key.removePrefix("ocm:") }
+    }
+
+    const val ON_THE_WAY_FACTOR = 1.25
+    const val ON_THE_WAY_KM = 5.0
+    const val AT_STOP_KM = 1.0
+
     fun clear(context: Context) {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().remove(KEY).apply()
     }

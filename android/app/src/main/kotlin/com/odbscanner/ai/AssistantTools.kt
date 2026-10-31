@@ -207,14 +207,19 @@ class AssistantTools(private val context: Context) : ToolRunner {
                     put(JSONObject().put("revision", v.number).put("why", v.reason)
                         .put("minutes_ago", (System.currentTimeMillis() - v.atMs) / 60_000)
                         .put("charging_stops", JSONArray(v.waypoints.filter { it.isStop }.map { it.name }))
-                        .put("arrival_charge_pct", v.arrivalPct?.let { round1(it) } ?: JSONObject.NULL))
+                        .put("arrival_charge_pct", v.arrivalPct?.let { round1(it) } ?: JSONObject.NULL)
+                        .apply { v.evidence?.let { put("evidence", RouteRevisions.evidenceJson(it)) } })
                 }
             })
         r.proposal?.let { p ->
             out.put("suggestion_waiting", JSONObject().put("change", p.change).put("why", p.reason)
                 .put("urgent", p.urgent)
+                .apply { p.evidence?.let { put("evidence", RouteRevisions.evidenceJson(it)) } }
                 .put("next", "ask the driver; answer_suggestion with their answer"))
         }
+        // Explain from these figures only: they are what the app measured.
+        out.put("explain_from", "the evidence objects: readings, their age and caveats; " +
+            "say a figure only if it is there")
         if (r.sync.provider == RouteRevisions.GOOGLE_MAPS) {
             out.put("google_maps", when {
                 !r.needsHandoff -> "has the current plan (revision ${r.sync.sentRevision})"

@@ -186,4 +186,31 @@ class RouteStateTest {
         assertEquals(SyncStatus.CURRENT, now.sync.status)
         assertEquals(2, now.sync.sentRevision)
     }
+
+    @Test
+    fun aChangeCarriesTheEvidenceItWasMadeOnAndItsCaveats() {
+        val ev = RouteRevisions.evidence(2_000L, 1, batteryPct = null, batteryAgeS = null,
+            plannedPctHere = 41.0, kmAlong = 120.0, offRouteKm = 0.8, positionAgeS = 90,
+            positionAccuracyM = 70f, consumption = 19.5,
+            consumptionBasis = "corrected from what this drive has used so far",
+            level = "adjust", projectedPct = 12.0, arrivalBeforePct = 6.0, arrivalAfterPct = 14.0)
+        assertEquals(4, ev.caveats.size)
+        assertTrue(ev.caveats[0].startsWith("No fresh battery reading"))
+        assertTrue(ev.caveats.any { it.contains("±70 m") })
+        assertTrue(ev.caveats.any { it.contains("0.8 km from the planned road") })
+
+        val revised = (RouteRevisions.revise(started(), 1, planB, "cheaper", 2_000L, ev)
+            as RouteRevisions.Outcome.Revised).state
+        assertEquals(ev, revised.current.evidence)
+        val waiting = RouteRevisions.propose(started(), 1, planB, "tight", 2_000L, false, ev)!!
+        assertEquals(ev, waiting.proposal!!.evidence)
+        // Kept with the trip, and read back exactly.
+        val back = RouteRevisions.fromJson(RouteRevisions.toJson(revised))
+        assertEquals(ev, back.current.evidence)
+        assertNull(back.history.first().evidence)
+
+        val clean = RouteRevisions.evidence(2_000L, 1, 55.0, 30, 54.0, 50.0, 0.01, 2, 6f, 17.0,
+            "the plan's own figure", "normal", 20.0, 18.0, 18.5)
+        assertTrue(clean.caveats.isEmpty())
+    }
 }

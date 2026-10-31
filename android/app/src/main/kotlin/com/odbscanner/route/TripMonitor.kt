@@ -146,9 +146,18 @@ object TripMonitor {
         }
         val here = PhoneLocation.current(app, maxAgeMs = 10 * 60_000L)
             ?: return "No position yet to restore the trip to ${saved.destination.label}."
+        // The stops the driver had are kept where they are still on the way:
+        // a restore is not a reason to choose other chargers. Only if the
+        // plan cannot keep them is it planned afresh (and the note says so).
+        val from = Place("Your location", here.latitude, here.longitude)
+        val keep = TripStore.stopsToKeep(saved.route.current, here.latitude, here.longitude)
         val fresher = try {
-            TripPlanner.plan(app, saved.destination, Place("Your location", here.latitude,
-                here.longitude), null, saved.mode, avoid = saved.avoid, picks = saved.route.picks)
+            val kept = if (keep.isEmpty()) null else TripPlanner.plan(app, saved.destination, from,
+                null, saved.mode, avoid = saved.avoid,
+                picks = saved.route.picks.copy(useChargers = saved.route.picks.useChargers + keep))
+            kept?.takeIf { k -> keep.all { id -> k.plan.stops.any { it.charger.id == id } } }
+                ?: TripPlanner.plan(app, saved.destination, from, null, saved.mode,
+                    avoid = saved.avoid, picks = saved.route.picks)
         } catch (e: Exception) {
             return "Could not restore the trip to ${saved.destination.label}: " +
                 (e.message ?: e.javaClass.simpleName)
@@ -314,16 +323,22 @@ object TripMonitor {
         update { it.copy(replanAtMs = now, lastPct = seen, charging = false) }
         val basedOn = trip.route.revision
         val urgent = judged?.level == "critical" || fresher.plan.status == "unreachable"
+        val evidence = RouteRevisions.evidence(now, basedOn, if (fresh) actual else null,
+            readMs?.let { (now - it) / 1000 }, expected, at.kmAlong, at.offRouteKm,
+            max(0L, now - here.time) / 1000, if (here.hasAccuracy()) here.accuracy else null,
+            consumption, if (consumption != trip.result.consumptionKwhPer100km)
+                "corrected from what this drive has used so far" else "the plan's own figure",
+            judged?.level, judged?.projectedTargetPct, plan.arrivalPct, fresher.plan.arrivalPct)
         when (RouteRevisions.decide(trip.route, basedOn, fresher, force, urgent)) {
             RouteRevisions.Action.REFRESH -> {
-                applyPlan(fresher, basedOn, reason, now)
+                applyPlan(fresher, basedOn, reason, now, evidence)
                 if (!force && actual < expected - Replan.DRIFT_PCT) {
                     speak(context, Replan.stillOkSpeech(actual, expected, fresher.plan.arrivalPct))
                 }
                 return@withLock
             }
             RouteRevisions.Action.APPLY -> {
-                val out = applyPlan(fresher, basedOn, reason, now)
+                val out = applyPlan(fresher, basedOn, reason, now, evidence)
                 if (out is RouteRevisions.Outcome.Revised) announceApplied(context, fresher, out.change)
                 return@withLock
             }
@@ -333,8 +348,8 @@ object TripMonitor {
             }
             RouteRevisions.Action.PROPOSE -> Unit
         }
-        val proposed = RouteRevisions.propose(trip.route, basedOn, fresher, reason, now, urgent)
-            ?: return@withLock
+        val proposed = RouteRevisions.propose(trip.route, basedOn, fresher, reason, now, urgent,
+            evidence) ?: return@withLock
         val p = proposed.proposal!!
         val asked = trip.route.proposal?.keys == p.keys      // already waiting: do not nag
         update { it.copy(route = proposed, proposed = fresher,
@@ -351,10 +366,10 @@ object TripMonitor {
      * plan.
      */
     private fun applyPlan(fresher: TripResult, basedOn: Int, reason: String,
-                          now: Long): RouteRevisions.Outcome {
+                          now: Long, evidence: Evidence? = null): RouteRevisions.Outcome {
         val trip = _state.value ?: return RouteRevisions.Outcome.Stale(
             RouteRevisions.start("", fresher, RouteRevisions.IN_APP, now), basedOn)
-        val out = RouteRevisions.revise(trip.route, basedOn, fresher, reason, now)
+        val out = RouteRevisions.revise(trip.route, basedOn, fresher, reason, now, evidence)
         val next = when (out) {
             is RouteRevisions.Outcome.Stale -> return out
             is RouteRevisions.Outcome.Same -> out.state
