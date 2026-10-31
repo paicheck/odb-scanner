@@ -34,6 +34,7 @@ data class RouteSettings(
     val preferNetworks: String = "",       // "Ionity, Gridserve": favoured, real price shown
     val avoidNetworks: String = "",        // never used
     val publicOnly: Boolean = false,       // leave out members-only chargers
+    val weather: Boolean = true,           // the forecast wind, from Open-Meteo (Weather.kt)
 ) {
     val missingKeys: List<String>
         get() = listOfNotNull(
@@ -69,6 +70,7 @@ object RoutePrefs {
             preferNetworks = p.getString("prefer_networks", "") ?: "",
             avoidNetworks = p.getString("avoid_networks", "") ?: "",
             publicOnly = p.getBoolean("public_only", false),
+            weather = p.getBoolean("weather", true),
         )
     }
 
@@ -94,6 +96,7 @@ object RoutePrefs {
             .putString("prefer_networks", Planner.names(s.preferNetworks).joinToString(", "))
             .putString("avoid_networks", Planner.names(s.avoidNetworks).joinToString(", "))
             .putBoolean("public_only", s.publicOnly)
+            .putBoolean("weather", s.weather)
             .apply()
     }
 
@@ -276,10 +279,15 @@ object TripPlanner {
                 settings.defaultPricePerKwh)
             c.copy(pricePerKwh = price, fee = fee, priceSource = source)
         }
+        val forecast = if (s.weather) {
+            val (conditions, note) = Weather.along(points, nav.durationS)
+            notes += note
+            conditions ?: emptyList()
+        } else emptyList()
         val plan = Planner.planTrip(
             points, nav.durationS, startPct ?: car.startPct,
             CarModel(usableKwh = car.usableKwh, consumptionKwhPerKm = consumption / 100.0),
-            settings, chargers,
+            settings, chargers, weather = forecast,
         )
         TripResult(origin, to, plan, car, consumption, MapMath.thinLine(nav.points), nav.steps(),
             routes, pick, keepOff, notes)

@@ -42,6 +42,13 @@ class PlannerTest {
         useChargers = strings(o.optJSONArray("use_chargers")).toSet(),
     )
 
+    private fun conditions(a: JSONArray?): List<Conditions> =
+        if (a == null) emptyList() else (0 until a.length()).map { i ->
+            val w = a.getJSONArray(i)
+            fun num(k: Int) = if (w.isNull(k)) null else w.getDouble(k)
+            Conditions(w.getDouble(0), num(1), num(2), num(3))
+        }
+
     private fun strings(a: JSONArray?) =
         if (a == null) emptyList() else (0 until a.length()).map { a.getString(it) }
 
@@ -91,6 +98,9 @@ class PlannerTest {
                 points(c.getJSONArray("points")), c.getDouble("drive_s"),
                 c.getDouble("start_pct"), car(c.getJSONObject("car")),
                 settings(c.getJSONObject("settings")), chargers(c.getJSONArray("chargers")),
+                weather = conditions(c.optJSONArray("weather")),
+                rateError = c.optJSONArray("rate_error")?.let {
+                    RateError(it.getDouble(0), it.getDouble(1), "vector") },
             )
             val want = c.getJSONObject("expect")
 
@@ -119,7 +129,18 @@ class PlannerTest {
                 assertEquals("$name stop $k", s.getBoolean("preferred"), got.preferred)
                 assertEquals("$name stop $k alternatives", strings(s.getJSONArray("alternatives")),
                     got.alternatives.map { it.charger.id })
+                assertEquals("$name stop $k low", s.getDouble("arrive_low_pct"), got.arriveLowPct!!, 0.051)
+                assertEquals("$name stop $k high", s.getDouble("arrive_high_pct"), got.arriveHighPct!!, 0.051)
             }
+            if (want.isNull("arrival_band")) assertNull(name, plan.arrivalBand)
+            else {
+                val band = want.getJSONArray("arrival_band")
+                assertEquals("$name band low", band.getDouble(0), plan.arrivalBand!!.lowPct, 0.051)
+                assertEquals("$name band high", band.getDouble(1), plan.arrivalBand!!.highPct, 0.051)
+                assertEquals("$name below reserve", band.getBoolean(2), plan.arrivalBand!!.belowReserve)
+            }
+            if (want.isNull("wind_kwh")) assertNull(name, plan.windKwh)
+            else assertEquals("$name wind", want.getDouble("wind_kwh"), plan.windKwh!!, 0.011)
             assertEquals(name, want.getInt("profile_points"), plan.profile.size)
             val last = want.getJSONArray("profile_last")
             assertEquals(name, last.getDouble(0), plan.profile.last().first, 0.011)

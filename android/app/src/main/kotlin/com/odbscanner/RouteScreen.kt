@@ -90,12 +90,18 @@ private fun pct(v: Double) = String.format(Locale.ROOT, "%.0f %%", v)
 
 /** Plain-language one-line summary of a plan, shared with the car screen. */
 fun TripResult.headline(): String = when (plan.status) {
-    "direct" -> "Arrive with ${pct(plan.arrivalPct!!)} — no charging needed"
-    "with_stops" -> "Arrive with ${pct(plan.arrivalPct!!)} after ${plan.stops.size} " +
+    "direct" -> "Arrive with ${pct(plan.arrivalPct!!)}${range()} — no charging needed"
+    "with_stops" -> "Arrive with ${pct(plan.arrivalPct!!)}${range()} after ${plan.stops.size} " +
         "charging stop${if (plan.stops.size == 1) "" else "s"}"
     else -> "Not reachable: below the reserve at about " +
         "${Math.round(plan.unreachableAtKm ?: 0.0)} km and no fast charger found before it"
 }
+
+/** " (likely 12–19 %)", with a warning when the low end is below the reserve. */
+private fun TripResult.range(): String = plan.arrivalBand?.let { b ->
+    String.format(Locale.ROOT, " (likely %.0f–%.0f %%%s)", b.lowPct, b.highPct,
+        if (b.belowReserve) ", could be below your reserve" else "")
+} ?: ""
 
 val MODE_LABELS = mapOf("fastest" to "Fastest", "balanced" to "Balanced", "cheapest" to "Cheapest")
 
@@ -385,6 +391,14 @@ private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit
                     "at %.0f km · %.0f kW · %.0f %% → %.0f %% · %d min",
                     s.km, s.charger.powerKw, s.arrivePct, s.departPct, s.chargeMin),
                     style = MaterialTheme.typography.bodySmall)
+                if (s.arriveLowPct != null && s.arriveHighPct != null) {
+                    Text(String.format(Locale.ROOT, "arrive likely %.0f–%.0f %%%s",
+                        s.arriveLowPct, s.arriveHighPct,
+                        if (s.arriveLowBelowReserve) " — could be below your reserve" else ""),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (s.arriveLowBelowReserve) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Text(String.format(Locale.ROOT, "%.1f kWh at £%.2f/kWh%s = £%.2f · %s",
                     s.kwh, s.pricePerKwh,
                     if (s.charger.fee > 0) String.format(Locale.ROOT, " + £%.2f", s.charger.fee) else "",
@@ -432,6 +446,7 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
     var prefer by remember { mutableStateOf(s.preferNetworks) }
     var avoidNets by remember { mutableStateOf(s.avoidNetworks) }
     var publicOnly by remember { mutableStateOf(s.publicOnly) }
+    var weather by remember { mutableStateOf(s.weather) }
     AlertDialog(
         onDismissRequest = onDone,
         title = { Text("Route settings") },
@@ -513,6 +528,12 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                 Text("A preferred network wins a close choice; the price shown is still its " +
                     "real price, and it never adds a stop the trip does not need.",
                     style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Count the forecast wind", modifier = Modifier.weight(1f))
+                    Switch(checked = weather, onCheckedChange = { weather = it })
+                }
+                Text("From Open-Meteo (free, no key): points along the route, rounded to " +
+                    "about 11 km, are sent to it.", style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {
@@ -534,6 +555,7 @@ fun RouteSettingsDialog(onDone: () -> Unit) {
                     preferNetworks = prefer,
                     avoidNetworks = avoidNets,
                     publicOnly = publicOnly,
+                    weather = weather,
                 ))
                 onDone()
             }) { Text("Save") }

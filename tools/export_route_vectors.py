@@ -28,7 +28,9 @@ sys.path.insert(0, ROOT)
 from routing.planner import (  # noqa: E402
     CarModel,
     Charger,
+    Conditions,
     PlanSettings,
+    RateError,
     charge_power_kw,
     charge_seconds,
     leave_levels,
@@ -156,6 +158,23 @@ def _cases():
            "start_pct": 90,
            "settings": {"avoid_chargers": ["c120", "a120"], "use_chargers": ["i200"]},
            "chargers": nets}
+    # Weather: [km from, temp C or None, wind km/h at 10 m or None, from deg].
+    # The road runs due north, so wind from 0 is a headwind.
+    yield {"name": "weather: headwind, then calm", "points": long, "drive_s": 15000,
+           "start_pct": 90, "chargers": every50,
+           "weather": [[0, 4.0, 35.0, 10.0], [200, 6.0, 0.0, None]]}
+    yield {"name": "weather: tailwind, cold air", "points": _line(250),
+           "drive_s": 9000, "start_pct": 90, "chargers": [],
+           "weather": [[0, -8.0, 30.0, 180.0], [120, None, 30.0, 225.0]]}
+    yield {"name": "weather: crosswind on a hill", "points": _line(100, _hill),
+           "drive_s": 3600, "start_pct": 80, "chargers": [],
+           "weather": [[0, 12.0, 40.0, 90.0]]}
+    # Arrival ranges: kWh/km more (high) or less (low) than planned.
+    yield {"name": "range: measured, lopsided", "points": long, "drive_s": 15000,
+           "start_pct": 90, "chargers": every50, "rate_error": [-0.012, 0.031]}
+    yield {"name": "range: wide enough to reach below the reserve", "points": _line(250),
+           "drive_s": 9000, "start_pct": 90, "chargers": [],
+           "rate_error": [-0.01, 0.05]}
 
 
 def _run(case):
@@ -164,16 +183,25 @@ def _run(case):
         setattr(car, k, v)
     settings = PlanSettings(**(case.get("settings") or {}))
     chargers = [Charger(**c) for c in case["chargers"]]
+    weather = [Conditions(*w) for w in case.get("weather") or []] or None
+    err = case.get("rate_error")
     plan = plan_trip([tuple(p) for p in case["points"]], case["drive_s"],
-                     case["start_pct"], car, settings, chargers).as_dict()
+                     case["start_pct"], car, settings, chargers, weather=weather,
+                     rate_error=RateError(err[0], err[1], "vector") if err else None
+                     ).as_dict()
+    band = plan["arrival_band"]
     return {k: plan[k] for k in ("status", "distance_km", "arrival_pct",
                                  "unreachable_at_km", "charge_s", "cost")} | {
         "stops": [{k: s[k] for k in ("km", "name", "arrive_pct", "depart_pct",
-                                     "charge_min", "kwh", "cost", "id", "preferred")}
+                                     "charge_min", "kwh", "cost", "id", "preferred",
+                                     "arrive_low_pct", "arrive_high_pct")}
                   | {"alternatives": [a["id"] for a in s["alternatives"]]}
                   for s in plan["stops"]],
         "profile_points": len(plan["profile"]),
         "profile_last": plan["profile"][-1],
+        "arrival_band": [band["low_pct"], band["high_pct"], band["below_reserve"]]
+        if band else None,
+        "wind_kwh": plan["weather"]["wind_kwh"] if plan["weather"] else None,
     }
 
 

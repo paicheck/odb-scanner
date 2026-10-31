@@ -2,6 +2,7 @@ package com.odbscanner.route
 
 import kotlin.math.abs
 import kotlin.math.asin
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -54,6 +55,13 @@ val USAGE_LABELS = mapOf(1 to "public", 4 to "public, membership required",
 const val PIN_BONUS = 1e6
 const val ALT_WINDOW_KM = 30.0             // alternatives: this far either side of a stop
 const val ALT_MAX = 4
+// Weather (routing/planner.py): air at 15 °C, and a 10 m forecast wind is about
+// this share of itself at a car's height in open country.
+const val AIR_DENSITY = 1.225
+const val WIND_AT_ROAD = 0.7
+// Without a measured spread, consumption is taken to be within this share of
+// the planned rate either way, and the plan says it is an assumption.
+const val ASSUMED_RATE_ERROR = 0.10
 
 data class CarModel(
     val usableKwh: Double,
@@ -62,7 +70,22 @@ data class CarModel(
     val drivetrainEff: Double = 0.90,
     val regenEff: Double = 0.60,
     val chargeCurve: List<Pair<Double, Double>> = ID3_58_CURVE,
+    val dragAreaM2: Double = 0.63,        // Cd x frontal area: ID.3 0.267 x 2.36 m²
 )
+
+/** The forecast from [km] along the route until the next one (routing/weather.py). */
+data class Conditions(
+    val km: Double,
+    val tempC: Double? = null,
+    val windKmh: Double? = null,       // at 10 m
+    val windFromDeg: Double? = null,   // where it blows from, clockwise from north
+)
+
+/** How far real consumption may be from the plan, kWh/km: [low] (negative: less) to [high]. */
+data class RateError(val low: Double, val high: Double, val basis: String)
+
+data class ArrivalBand(val lowPct: Double, val highPct: Double, val basis: String,
+                       val belowReserve: Boolean)
 
 data class PlanSettings(
     val reservePct: Double = 10.0,
@@ -132,6 +155,9 @@ data class Stop(
     val detourKm: Double,
     val preferred: Boolean = false,
     val alternatives: List<Alternative> = emptyList(),
+    val arriveLowPct: Double? = null,     // the leg's range (Planner.addBands)
+    val arriveHighPct: Double? = null,
+    val arriveLowBelowReserve: Boolean = false,
 ) {
     val access: String get() = USAGE_LABELS[charger.usageType] ?: ""
 }
@@ -149,6 +175,8 @@ data class Plan(
     val cost: Double,
     val mode: String,
     val assumptions: List<String>,
+    val windKwh: Double? = null,           // what the forecast wind cost (negative: saved)
+    val arrivalBand: ArrivalBand? = null,
 )
 
 object Planner {
@@ -295,6 +323,8 @@ object Planner {
         car: CarModel,
         settings: PlanSettings,
         chargers: List<Charger>,
+        weather: List<Conditions> = emptyList(),
+        rateError: RateError? = null,
     ): Plan {
         require(points.size >= 2) { "a route needs at least two points" }
         val n = points.size
@@ -303,15 +333,28 @@ object Planner {
         val reserve = cap * settings.reservePct / 100.0
         val tv = settings.timeValue()
 
+        // The forecast by km. The phone plans with a flat figure, which has no
+        // temperature to adjust, so only the wind counts (and the air density).
+        val forecast = weather.sortedBy { it.km }
+        val aeroKmh = if (driveS > 0) cum[n - 1] / (driveS / 3600.0) else null
+        var windTotal = 0.0
         val seg = DoubleArray(n)
         val net = DoubleArray(n)
         for (i in 1 until n) {
             val a = points[i - 1]
             val b = points[i]
             val dh = if (a.ele != null && b.ele != null) b.ele - a.ele else 0.0
-            seg[i] = segmentKwh(cum[i] - cum[i - 1], dh, car)
+            val dist = cum[i] - cum[i - 1]
+            seg[i] = segmentKwh(dist, dh, car)
+            if (forecast.isNotEmpty()) {
+                val here = forecast[max(0, forecast.indexOfLast { it.km <= cum[i - 1] })]
+                val w = windKwh(dist, aeroKmh, headwindKmh(here, bearingDeg(a, b)), here.tempC, car)
+                seg[i] += w
+                windTotal += w
+            }
             net[i] = net[i - 1] + seg[i]
         }
+        val wind = if (forecast.isNotEmpty()) round(windTotal, 2) else null
 
         val levels = leaveLevels(settings)
         val levelKwh = levels.map { cap * it / 100.0 }
@@ -390,8 +433,9 @@ object Planner {
         }
 
         if (finalNode >= 0) {
-            return simulate(points, cum, seg, cands, path(best, finalNode, finalLevel), levels,
-                driveS, startPct, car, settings, null)
+            return addBands(simulate(points, cum, seg, cands, path(best, finalNode, finalLevel),
+                levels, driveS, startPct, car, settings, null).copy(windKwh = wind),
+                car, settings, rateError)
         }
         // Unreachable: follow the plan that gets furthest, and say where it fails.
         var farKm = -1.0
@@ -408,8 +452,8 @@ object Planner {
                 farKm = km; farCost = cost; farNode = j; farLevel = li
             }
         }
-        return simulate(points, cum, seg, cands, path(best, farNode, farLevel), levels,
-            driveS, startPct, car, settings, reserve)
+        return addBands(simulate(points, cum, seg, cands, path(best, farNode, farLevel), levels,
+            driveS, startPct, car, settings, reserve).copy(windKwh = wind), car, settings, rateError)
     }
 
     /** Later candidates reachable from node j while the dip stays in [budget]; then the destination. */
@@ -567,6 +611,75 @@ object Planner {
             unreachableAtKm = unreachableAt, chargeS = chargeTotal, cost = moneyTotal,
             mode = settings.mode, assumptions = assumptions(car, settings),
         )
+    }
+
+    /** Initial compass bearing from [a] to [b]. */
+    fun bearingDeg(a: RoutePoint, b: RoutePoint): Double {
+        val p1 = Math.toRadians(a.lat)
+        val p2 = Math.toRadians(b.lat)
+        val dl = Math.toRadians(b.lon - a.lon)
+        val y = sin(dl) * cos(p2)
+        val x = cos(p1) * sin(p2) - sin(p1) * cos(p2) * cos(dl)
+        return (Math.toDegrees(atan2(y, x)) % 360.0 + 360.0) % 360.0
+    }
+
+    /** The forecast wind against the direction of travel (negative: from behind), at 10 m. */
+    fun headwindKmh(c: Conditions, bearing: Double): Double {
+        val w = c.windKmh ?: return 0.0
+        val from = c.windFromDeg ?: return 0.0
+        return w * cos(Math.toRadians(from - bearing))
+    }
+
+    /**
+     * The energy a wind adds over a stretch (negative: saves) against calm air.
+     * Drag goes with the square of the speed through the air, so a headwind
+     * costs more than the same tailwind saves; cold air is denser.
+     */
+    fun windKwh(distKm: Double, speedKmh: Double?, headwind: Double, tempC: Double?,
+                car: CarModel): Double {
+        if (headwind == 0.0 || speedKmh == null || speedKmh == 0.0) return 0.0
+        val v = speedKmh / 3.6
+        val va = v + headwind * WIND_AT_ROAD / 3.6
+        val rho = if (tempC == null) AIR_DENSITY else 101325.0 / (287.05 * (tempC + 273.15))
+        val force = 0.5 * rho * car.dragAreaM2 * (abs(va) * va - v * v)
+        return force * distKm * 1000.0 / 3.6e6 / car.drivetrainEff
+    }
+
+    /**
+     * Each arrival's range, if the car uses [err] low to high kWh/km more than
+     * planned over the leg that leads there (routing/planner.py _add_bands).
+     */
+    private fun addBands(plan: Plan, car: CarModel, s: PlanSettings, rateError: RateError?): Plan {
+        val l = java.util.Locale.ROOT
+        val rate = car.consumptionKwhPerKm
+        val err = rateError ?: RateError(-ASSUMED_RATE_ERROR * rate, ASSUMED_RATE_ERROR * rate,
+            "assumed: consumption within %.0f %% of the plan either way (not measured on this car)"
+                .format(l, ASSUMED_RATE_ERROR * 100))
+        val cap = car.usableKwh
+        fun band(pct: Double, legKm: Double) =
+            round(max(0.0, pct - legKm * err.high / cap * 100.0), 1) to
+                round(min(100.0, pct - legKm * err.low / cap * 100.0), 1)
+        var prev = 0.0
+        val stops = plan.stops.map { st ->
+            val (lo, hi) = band(st.arrivePct, st.km - prev)
+            prev = st.km
+            st.copy(arriveLowPct = lo, arriveHighPct = hi, arriveLowBelowReserve = lo < s.reservePct)
+        }
+        val arrival = plan.arrivalPct?.let { pct ->
+            val (lo, hi) = band(pct, plan.distanceKm - prev)
+            ArrivalBand(lo, hi, err.basis, lo < s.reservePct)
+        }
+        val notes = mutableListOf("Arrival ranges: %s; that is %+.1f to %+.1f kWh/100 km against the plan over each leg."
+            .format(l, err.basis, err.low * 100, err.high * 100))
+        plan.windKwh?.let { w ->
+            notes += ("Weather: the forecast for when you pass each point; the wind " +
+                (if (w > 0.05) "costs about %.1f kWh over the trip".format(l, w)
+                 else if (w < -0.05) "saves about %.1f kWh over the trip".format(l, -w)
+                 else "makes no real difference") +
+                " (a headwind costs more than the same tailwind saves). Temperature is not " +
+                "counted: the flat consumption figure has none to adjust.")
+        }
+        return plan.copy(stops = stops, arrivalBand = arrival, assumptions = plan.assumptions + notes)
     }
 
     /** Keep the chart payload bounded; never drop the charging steps. */

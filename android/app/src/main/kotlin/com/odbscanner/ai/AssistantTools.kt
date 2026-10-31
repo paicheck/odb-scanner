@@ -135,6 +135,8 @@ class AssistantTools(private val context: Context) : ToolRunner {
             .put("status", p.status)
             .put("total", dist(p.distanceKm))
             .put("arrival_charge_pct", p.arrivalPct?.let { round1(it) } ?: JSONObject.NULL)
+            .put("arrival_likely_range_pct", p.arrivalBand?.let {
+                JSONArray().put(round1(it.lowPct)).put(round1(it.highPct)) } ?: JSONObject.NULL)
             .put("charging_cost_gbp", round2(p.cost))
             .put("driving_min", Math.round(p.driveS / 60))
             .put("charging_min", Math.round(p.chargeS / 60))
