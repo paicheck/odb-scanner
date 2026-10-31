@@ -226,7 +226,7 @@ noted; "real data unchanged" means a metadata snapshot of `~/odb_data` and
   scratch database: **26 passed, 0 failed** (incl. the read-only TX audit);
   ruff clean; real data unchanged.
 
-## 02:20 — The intermittent trips test, explained — see commit log
+## 02:17 — The intermittent trips test, explained — `6b53b4f`
 
 - `tests/test_trip_log_totals_and_what_the_cold_costs` (CLAUDE.md: "failed once
   and could not be reproduced"): the fixture stamped data relative to a NOW
@@ -236,7 +236,7 @@ noted; "real data unchanged" means a metadata snapshot of `~/odb_data` and
   test fails, no other. Fixed by anchoring in the fixture; assertions unchanged.
   25 random orders before the fix all passed (order was not the cause).
 
-## 02:30 — Hardening: decoder fuzz; evidence is data — two commits
+## 02:22 — Hardening: decoder fuzz; evidence is data — `8b762b9`, `1706d24`
 
 - `tests/test_decoder_fuzz.py`: seeded fuzz over all 409 decoders (meb 289,
   eup 120) with empty/short/random responses. Measured: 405 of them raise
@@ -248,7 +248,7 @@ noted; "real data unchanged" means a metadata snapshot of `~/odb_data` and
   rules reaches the prompt before the rule that disarms it.
 - Full suite **1,608 passed**, ruff clean, real data unchanged.
 
-## 02:30–02:45 — Phone: wind and arrival ranges; docs; twin query — `553cf61`, `30b671b`, `dec3f42`
+## 02:32 — Phone: wind and arrival ranges; docs; twin query — `553cf61`, `30b671b`, `dec3f42`
 
 - Shared route vectors: 5 new cases (headwind then calm, cold tailwind,
   crosswind on a hill, measured lopsided range, range below the reserve); every
@@ -266,7 +266,7 @@ noted; "real data unchanged" means a metadata snapshot of `~/odb_data` and
 - README, `docs/REGRESSION_GUARDS.md`, CLAUDE.md open items updated.
 - Full suite **1,608 passed**, ruff clean, real data unchanged.
 
-## 02:56 — N15 Phone en-route level, held by shared vectors — `5bec3b2`
+## 02:40 — N15 Phone en-route level, held by shared vectors — `5bec3b2`
 
 - `tools/export_enroute_vectors.py` → `tests/data/enroute_vectors.json`: 14 cases
   on a hand-made plan and a real planner plan, covering all four levels, stale
