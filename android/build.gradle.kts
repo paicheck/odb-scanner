@@ -6,4 +6,6 @@ plugins {
 }
 
 // Redirect root build directory outside OneDrive to prevent file locking issues
-layout.buildDirectory.set(file(System.getProperty("user.home") + "/odb-scanner-build/root"))
+// -PodbBuildDir=<dir> moves it (and the app's) elsewhere: see app/build.gradle.kts.
+layout.buildDirectory.set(file(((findProperty("odbBuildDir") as String?)
+    ?: (System.getProperty("user.home") + "/odb-scanner-build")) + "/root"))

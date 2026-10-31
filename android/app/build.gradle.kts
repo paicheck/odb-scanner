@@ -129,4 +129,8 @@ dependencies {
 // holds locks on files in build/ while Gradle rewrites them, which surfaces as
 // "Unable to delete directory ... cacheable". Point the build output at a
 // non-synced directory under the user home instead.
-layout.buildDirectory.set(file(System.getProperty("user.home") + "/odb-scanner-build/app"))
+// -PodbBuildDir=<dir> builds somewhere else -- a release candidate beside the
+// APK being tested, never over it (review_output/ai_assistant_device_tests.md).
+val odbBuildDir = (findProperty("odbBuildDir") as String?)
+    ?: (System.getProperty("user.home") + "/odb-scanner-build")
+layout.buildDirectory.set(file("$odbBuildDir/app"))
