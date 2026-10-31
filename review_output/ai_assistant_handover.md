@@ -12,8 +12,8 @@ The work being tested is untouched:
   `~/odb-scanner-build/app/outputs/apk/release/` and `~/odb-scanner-tested/`.
 
 The candidate was built beside it with `-PodbBuildDir=$HOME/odb-scanner-build-rc`:
-`~/odb-scanner-tested/odb-scanner-0.2.0-release-rc-9cab53b2.apk`
-(sha256 `9cab53b2…8e1270`). It is a release build, not debuggable, signed with the
+`~/odb-scanner-tested/odb-scanner-0.2.0-release-rc-7aedf52b.apk`
+(sha256 `7aedf52b…963944`). It is a release build, not debuggable, signed with the
 usual key `d6967d0e…37feee`.
 
 | Commit | What |
@@ -25,14 +25,27 @@ usual key `d6967d0e…37feee`.
 | `35fbc66` | Offline: old readings said as old; no "from here" without a position; an honest reply to anything else |
 | `1be9fb7` | Setup: today's usage shown before the first question |
 | `48b9a0f` | Retry stays until the next turn, never the question before |
-| the next one | Review §6–9, the device test plan, this handover |
+| `f675f0f` | Groq: its default model was shut down; `openai/gpt-oss-120b` now (the car failure, below) |
+| `b42186c` | Backups: a model the service no longer has needs attention |
+| `b3984f3`, and the next one | Review §6–10, the device test plan, this handover |
 
-There are 17 defects in all. Each one, why it mattered, and what was found
+There are 19 defects in all. Each one, why it mattered, and what was found
 sound: `ai_assistant_review.md` §7–8.
 
+**In the car on 2026-10-31** (details in review §10):
+- **Chat:** the phone said "That AI model isn't available." twice. Groq
+  shut down the app's default Groq model on 2026-08-16. It is fixed in this
+  candidate. To confirm the service involved, open Ask AI on the Pixel: the
+  failure line names the service and the reason.
+- **Android Auto:** the app was installed from Files, and Android Auto
+  hides such apps unless **Unknown sources** is on. To turn it on: Android
+  Auto settings → tap Version ten times → Developer settings → Unknown
+  sources. No code change is needed.
+
 **Verified:**
-- 259 phone unit tests, 0 failures (13 new);
-- each commit built and tested on its own;
+- 260 phone unit tests, 0 failures (14 new), and the PC's 1,670;
+- each commit up to `48b9a0f` built and tested on its own; the last two
+  were tested together;
 - `lintVitalRelease` passes;
 - the certificate checked.
 

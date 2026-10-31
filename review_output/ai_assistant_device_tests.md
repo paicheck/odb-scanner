@@ -1,13 +1,13 @@
 # AI assistant — Pixel 7 device tests, release candidate
 
-Branch `ai-assistant-rc` at `48b9a0f`, on `main` (`9fc7a2f`). What was fixed
-for this candidate, and why: `ai_assistant_review.md` §6–8.
+Branch `ai-assistant-rc` at `b42186c`, on `main` (`9fc7a2f`). What was fixed
+for this candidate, and why: `ai_assistant_review.md` §6–8 and §10.
 
 ## The build
 
 | | |
 |---|---|
-| Candidate | `~/odb-scanner-tested/odb-scanner-0.2.0-release-rc-9cab53b2.apk`, sha256 `9cab53b2…8e1270` |
+| Candidate | `~/odb-scanner-tested/odb-scanner-0.2.0-release-rc-7aedf52b.apk`, sha256 `7aedf52b…963944` |
 | Kind | release, not debuggable, signed with the usual key (`d6967d0e…37feee`) |
 | Installs as | an update over 20261031e: the app's data, keys and settings stay |
 | Under test now | 20261031e, `7f94cf57…`, untouched in `~/odb-scanner-build/app/outputs/apk/release/` and `~/odb-scanner-tested/odb-scanner-0.2.0-release-20261031e.apk`. Installing it again goes back. |
@@ -18,16 +18,23 @@ waits for your OK.
 
 ## Before you start
 
-1. **Services.** In Ask AI → Setup & tests, set up two services with keys,
+1. **Android Auto.** The app is not from the Play Store, so Android Auto
+   shows it only with **Unknown sources** on:
+   - On the phone: Android Auto settings → tap **Version** ten times →
+     Developer settings → **Unknown sources** on.
+   - Then Android Auto settings → **Customise launcher**: make sure
+     ODB Scanner is ticked.
+   - That is the likely reason the app was missing in the car on 2026-10-31.
+2. **Services.** In Ask AI → Setup & tests, set up two services with keys,
    for example Groq as main and Gemini as backup. Run each one's **Key** and
    **AI test**; both should pass.
-2. **Answers.** Leave "Speak as it arrives" on.
-3. **History.** Set it to keep 7 days, and turn "keep the questions' words"
+3. **Answers.** Leave "Speak as it arrives" on.
+4. **History.** Set it to keep 7 days, and turn "keep the questions' words"
    **on** for this session, so the records show what was asked. E2 turns it
    off again.
-4. **Trip.** Plan a trip of about an hour in Route. Start navigation for the
+5. **Trip.** Plan a trip of about an hour in Route. Start navigation for the
    car tests.
-5. **Times.** Note the phone's time when you start each group: the history
+6. **Times.** Note the phone's time when you start each group: the history
    shows times.
 
 ## How to report a failure
@@ -64,6 +71,7 @@ Do not delete the history or the app's data before you report.
 
 | ID | Do | Expected |
 |---|---|---|
+| B0 | With a Groq key, and no model typed for it: in Setup, run Groq's **Key** and **AI test**. | The Key test lists `openai/gpt-oss-120b`, and the AI test answers. The old default, `llama-3.3-70b-versatile`, was shut down by Groq; that was the in-car failure on 2026-10-31. If you typed a model for Groq in Settings, clear it. |
 | B1 | In Settings, give the main service a wrong key (`xxx`), then ask something. | The backup answers. A line says "(Answered by Gemini: Groq failed (INVALID_CREDENTIALS…))". Groq's Health in Setup: "needs attention: INVALID_CREDENTIALS". |
 | B2 | Ask a follow-up: "And how much will I have there?" | The backup answers knowing what "there" was. |
 | B3 | Tap **New chat** and ask again. | Groq is skipped with no wait: "(… Groq skipped (needs_attention…))". |

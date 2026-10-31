@@ -231,6 +231,8 @@ defects were fixed, each with a regression test.
 | Usage | After a restart, Setup showed no usage for today until a question had been asked. | Setup loads the stored usage itself. | `1be9fb7` |
 | Retry | Retry showed only while the error did, which is 6 s: too short for a driver. | Retry stays until the next turn starts, on the phone and on the car. | `48b9a0f` |
 | Retry | After a recognition failure, Retry asked the previous turn's question. | A voice turn starts with nothing to retry until its words are heard. | `48b9a0f` |
+| Fallback | Groq shut its default model, `llama-3.3-70b-versatile`, down on 2026-08-16. Every Groq request failed, as "That AI model isn't available." That is always so for Groq as a backup, which runs on its default. Found in the car on 2026-10-31 (§10). | The default is `openai/gpt-oss-120b`, Groq's listed replacement, which calls tools, with `reasoning_effort` "low". The PC's preset changed too. | `f675f0f` |
+| Fallback | A retired or misnamed model was treated as a passing failure, and asked again on every question. | It needs attention, as a refused key does. An overloaded service still only rests. | `b42186c` |
 
 ## 8. Checked and found sound
 
@@ -283,17 +285,64 @@ defects were fixed, each with a regression test.
 
 ## 9. Results
 
-- **Phone unit tests:** 259, 0 failures. 13 are new; `main` had 246. They
+- **Phone unit tests:** 260, 0 failures. 14 are new; `main` had 246. They
   ran against simulated services with a fake clock.
 - **Each commit on its own:** built and passed the AI tests in a temporary
   worktree with its own build directory.
 - **`lintVitalRelease`:** passes.
 - **Release APK:** built into `~/odb-scanner-build-rc`. A copy is
-  `~/odb-scanner-tested/odb-scanner-0.2.0-release-rc-9cab53b2.apk`
-  (sha256 `9cab53b2…8e1270`).
+  `~/odb-scanner-tested/odb-scanner-0.2.0-release-rc-7aedf52b.apk`
+  (sha256 `7aedf52b…963944`).
   - Certificate SHA-256 `d6967d0e…37feee`, the usual key.
   - Not debuggable.
   - Version 0.2.0 (200), as 20261031e, so it installs as an update.
   - Not installed.
 - **No PC code changed.**
 - **The device test plan:** `ai_assistant_device_tests.md`.
+
+## 10. In the car, 2026-10-31 (20261031e on the Pixel 7)
+
+You reported two problems: the assistant failed to chat, and the app was
+not on Android Auto. The evidence came from the phone over USB, read-only:
+its log, its package and permission state, and Android Auto's process
+events. The app's own log lines from the drive had rotated out; the
+system's event log still had the drive.
+
+**The timeline**
+
+| Time | What |
+|---|---|
+| 20:15:37 | Android Auto connected (wireless) |
+| 20:15:40 | The collector started |
+| 20:21:41 | The app said a 27-character sentence: "Sorry, I didn't catch that." or "I can't use the microphone." |
+| 20:22:03 | "That AI model isn't available." (30 characters) |
+| 20:22:20 | The same again |
+| 20:22:51 | Android Auto disconnected |
+
+Mobile data was up and validated the whole time.
+
+**Chat: the cause**
+- Groq shut down the app's default Groq model, `llama-3.3-70b-versatile`,
+  on 2026-08-16. Groq's reply ("decommissioned") is `MODEL_UNAVAILABLE`,
+  said as "That AI model isn't available."
+- A backup always runs on its default model, so Groq in the chain failed
+  every time.
+- Fixed in `f675f0f` and `b42186c`.
+- **Not yet confirmed:** which service you have set up. A Gemini overload
+  (503) is said with the same words. The Ask AI transcript names the service
+  and says either "model … is not available" or "overloaded". It is still
+  in the app until the app is closed.
+
+**Android Auto: not a code problem**
+- Android offers the app's car service to Android Auto: enabled, exported,
+  no permission needed, category CHARGING.
+- While connected, Android Auto never bound it.
+- The app was installed from Files, not the Play Store. Android Auto hides
+  such apps unless **Unknown sources** is on in its developer settings
+  (README, Android Auto).
+- No code changed for it. Turning that setting on is now the first step of
+  the device tests.
+
+**Left open**
+- The 27-character recognition failure. The log cannot say which of the two
+  sentences it was. Device tests A1 and G4 cover it.
