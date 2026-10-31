@@ -81,6 +81,14 @@ data class AiSettings(
     val disabled: Set<String> = emptySet(),    // turned off: never asked, kept configured
     val sttOffline: Boolean = false,           // recognise on the phone only, where it can
     val ttsVoice: String = "",                 // a TextToSpeech voice name; "" the engine's own
+    /** May recognition fall back to the online service when on-the-phone fails? Your consent. */
+    val sttOnlineFallback: Boolean = false,
+    val memory: Boolean = true,                // follow-up questions know what came before
+    val style: String = "auto",                // auto (brief while driving) | brief | normal | detailed
+    val speechRate: Float = 1.0f,
+    val language: String = "en-GB",            // en-GB | en-US: recognition and speech
+    val limits: UsageLimits = UsageLimits(),
+    val prices: Map<String, Price> = emptyMap(),   // yours, per million tokens; never assumed
 ) {
     val preset: AiPreset get() = AiPresets.byId(provider)
     val effectiveModel: String
@@ -111,6 +119,15 @@ object AiPrefs {
                 .filter { id -> AiPresets.ALL.any { it.id == id } }.toSet(),
             sttOffline = p.getBoolean("stt_offline", false),
             ttsVoice = p.getString("tts_voice", "") ?: "",
+            sttOnlineFallback = p.getBoolean("stt_online_fallback", false),
+            memory = p.getBoolean("memory", true),
+            style = (p.getString("style", "auto") ?: "auto").takeIf { it in STYLES } ?: "auto",
+            speechRate = p.getFloat("speech_rate", 1.0f).coerceIn(0.6f, 1.6f),
+            language = (p.getString("language", "en-GB") ?: "en-GB").takeIf { it in LANGUAGES }
+                ?: "en-GB",
+            limits = UsageLimits(p.getInt("limit_requests", 0).coerceAtLeast(0),
+                p.getFloat("limit_spend", 0f).toDouble().coerceAtLeast(0.0)),
+            prices = decodePrices(p.getString("prices", "") ?: ""),
         )
     }
 
@@ -137,8 +154,39 @@ object AiPrefs {
             .putString("disabled", s.disabled.joinToString(","))
             .putBoolean("stt_offline", s.sttOffline)
             .putString("tts_voice", s.ttsVoice.trim())
+            .putBoolean("stt_online_fallback", s.sttOnlineFallback)
+            .putBoolean("memory", s.memory)
+            .putString("style", s.style.takeIf { it in STYLES } ?: "auto")
+            .putFloat("speech_rate", s.speechRate.coerceIn(0.6f, 1.6f))
+            .putString("language", s.language.takeIf { it in LANGUAGES } ?: "en-GB")
+            .putInt("limit_requests", s.limits.requestsPerDay.coerceAtLeast(0))
+            .putFloat("limit_spend", s.limits.spendPerDay.toFloat().coerceAtLeast(0f))
+            .putString("prices", encodePrices(s.prices))
             .apply()
+        // A changed key or setting is a fresh start for the services' health.
+        AiPresets.ALL.forEach { ProviderHealth.breaker.reset(it.id) }
     }
+
+    val STYLES = listOf("auto", "brief", "normal", "detailed")
+    val LANGUAGES = listOf("en-GB", "en-US")
+
+    fun encodePrices(prices: Map<String, Price>): String = org.json.JSONObject().apply {
+        prices.forEach { (id, pr) ->
+            put(id, org.json.JSONObject().put("in", pr.inPerMillion).put("out", pr.outPerMillion))
+        }
+    }.toString()
+
+    fun decodePrices(text: String): Map<String, Price> = runCatching {
+        val o = org.json.JSONObject(text)
+        o.keys().asSequence().mapNotNull { id ->
+            val pr = o.optJSONObject(id) ?: return@mapNotNull null
+            val i = pr.optDouble("in", -1.0)
+            val out = pr.optDouble("out", -1.0)
+            if (i < 0 || out < 0) null else id to Price(i, out)
+        }.toMap()
+    }.getOrDefault(emptyMap())
+
+
 
     /** The API key for [provider], decrypted; "" when none is stored. */
     fun key(context: Context, provider: String): String =
@@ -150,6 +198,7 @@ object AiPrefs {
         if (key.isBlank()) edit.remove("key_$provider")
         else edit.putString("key_$provider", KeyVault.encrypt(key.trim()))
         edit.apply()
+        ProviderHealth.breaker.reset(provider)
     }
 }
 

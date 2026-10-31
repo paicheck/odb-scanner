@@ -35,6 +35,10 @@ object Assistant {
     private var signature = ""
     private var turns = 0
     private var lastUse = 0L
+    /** The conversation so far, as plain words, kept apart from any one service. */
+    private val words = mutableListOf<Pair<String, String>>()
+    private var conversationTrip = ""
+    private var warnedDay = ""
 
     private val _transcript = MutableStateFlow<List<Line>>(emptyList())
     val transcript: StateFlow<List<Line>> = _transcript
@@ -63,17 +67,26 @@ object Assistant {
      * in the conversation, and CancellationException goes on up (it is never
      * turned into an answer).
      */
-    suspend fun answer(context: Context, text: String): Reply = lock.withLock {
+    suspend fun answer(context: Context, text: String, driving: Boolean = false): Reply = lock.withLock {
         val app = context.applicationContext
         add(Line(true, text))
         _busy.value = true
         val reply = try {
-            val s = sessionFor(app)
+            val s = sessionFor(app, driving || drivingNow())
             val said = withTimeout(TURN_TIMEOUT_MS) { s.ask(text, AssistantTools(app)) }
             turns++
+            words += text to said
             (s as? FallbackChatSession)?.let {
                 _active.value = it.activeLabel + if (it.onBackup) " (backup)" else ""
-            } ?: run { _active.value = AiPrefs.load(app).preset.label }
+            }
+            // Near a limit you set: said on the screen, once a day.
+            val st = AiPrefs.load(app)
+            UsageLedger.book.warning(st.limits, st.prices)?.let { w ->
+                if (warnedDay != UsageLedger.book.today()) {
+                    warnedDay = UsageLedger.book.today()
+                    add(Line(false, "($w)"))
+                }
+            }
             Reply(said, said)
         } catch (e: TimeoutCancellationException) {
             session = null
@@ -103,40 +116,66 @@ object Assistant {
 
     private fun failed(e: AiError) = Reply(e.spoken, e.line, e)
 
-    /** Start the next question in a new conversation. */
+    /** Start the next question in a new conversation (New chat). */
     fun newConversation() {
         session = null
+        words.clear()
+        turns = 0
     }
+
+    /** On a trip, or navigating: the driver is (probably) driving. */
+    private fun drivingNow(): Boolean = com.odbscanner.route.Navigator.active ||
+        com.odbscanner.route.TripMonitor.state.value != null
 
     private fun add(line: Line) {
         _transcript.value = (_transcript.value + line).takeLast(SHOWN)
     }
 
-    private fun sessionFor(context: Context): ChatSession {
+    /**
+     * The session for the next question. A conversation is the words said so
+     * far ([words]); it ends -- and the next question starts afresh -- after
+     * IDLE_MS of quiet, MAX_TURNS questions, a new journey (another trip
+     * id), New chat, or every question when memory is off. Within it, a new
+     * session (settings or the answer style changed, or the last one failed)
+     * is seeded with the words, so follow-up questions still know what came
+     * before. Each service's own history stays append-only.
+     */
+    private fun sessionFor(context: Context, driving: Boolean): ChatSession {
         val s = AiPrefs.load(context)
         val chain = s.chain.ifEmpty {
             throw AiException(AiError(AiErrorCategory.NOT_CONFIGURED, "Assistant",
                 "Every AI service is turned off: turn one on in AI & Voice Setup"))
         }
         val keys = chain.map { AiPrefs.key(context, it) }
+        val style = effectiveStyle(s.style, driving)
+        val trip = com.odbscanner.route.TripMonitor.state.value?.route?.tripId ?: ""
         val sig = listOf(s.provider, s.effectiveModel, s.effectiveBaseUrl, s.effort,
-            chain.joinToString(","), keys.hashCode()).joinToString("|")
+            chain.joinToString(","), keys.hashCode(), style).joinToString("|")
         val now = System.currentTimeMillis()
+        val sameConversation = s.memory && turns < MAX_TURNS && now - lastUse < IDLE_MS &&
+            trip == conversationTrip
+        if (!sameConversation) {
+            words.clear()
+            turns = 0
+            conversationTrip = trip
+        }
         val current = session
-        if (current != null && sig == signature && turns < MAX_TURNS && now - lastUse < IDLE_MS) {
-            return current
-        }
-        val fresh: ChatSession = if (chain.size == 1) {
-            build(s, chain[0], keys[0])
-        } else {
-            FallbackChatSession(chain.mapIndexed { i, id ->
-                AiPresets.byId(id).label to { build(s, id, keys[i]) }
-            }) { name -> name in AssistantTools.CHANGES_STATE }
-        }
+        if (current != null && sig == signature && sameConversation) return current
+        UsageLedger.attach(context)
+        val fresh = FallbackChatSession(
+            chain.mapIndexed { i, id -> AiPresets.byId(id).label to { build(s, id, keys[i], style) } },
+            changesState = { name -> name in AssistantTools.CHANGES_STATE },
+            ids = chain, health = ProviderHealth.breaker, history = words.toList(),
+            limit = { id, label -> UsageLedger.book.check(id, label, s.limits, s.prices) })
         session = fresh
         signature = sig
-        turns = 0
         return fresh
+    }
+
+    /** brief / normal / detailed: "auto" is brief while driving, else normal. */
+    fun effectiveStyle(style: String, driving: Boolean): String = when (style) {
+        "brief", "normal", "detailed" -> style
+        else -> if (driving) "brief" else "normal"
     }
 
     /**
@@ -144,7 +183,7 @@ object Assistant {
      * backup with its own defaults (its default model; Claude at low effort,
      * for a quick spoken answer).
      */
-    private fun build(s: AiSettings, provider: String, key: String): ChatSession {
+    private fun build(s: AiSettings, provider: String, key: String, style: String): ChatSession {
         val chosen = provider == s.provider
         val preset = AiPresets.byId(provider)
         fun missing(what: String) = AiException(AiError(AiErrorCategory.NOT_CONFIGURED,
@@ -155,14 +194,15 @@ object Assistant {
         }
         return if (preset.protocol == "anthropic") {
             ClaudeChatSession(key, model, if (chosen) s.effort else "low",
-                AssistantTools.SYSTEM_PROMPT, AssistantTools.SPECS,
-                baseUrl = if (chosen) s.baseUrl else "")
+                AssistantTools.prompt(style), AssistantTools.SPECS,
+                baseUrl = if (chosen) s.baseUrl else "", usageId = provider, usage = UsageLedger)
         } else {
             val base = (if (chosen) s.effectiveBaseUrl else preset.baseUrl.trimEnd('/')).ifBlank {
                 throw missing("Set the service address")
             }
-            OpenAiChatSession(base, key, model, AssistantTools.SYSTEM_PROMPT, AssistantTools.SPECS,
-                reasoningEffort = preset.reasoningEffort, provider = preset.label)
+            OpenAiChatSession(base, key, model, AssistantTools.prompt(style), AssistantTools.SPECS,
+                reasoningEffort = preset.reasoningEffort, provider = preset.label,
+                usageId = provider, usage = UsageLedger)
         }
     }
 }

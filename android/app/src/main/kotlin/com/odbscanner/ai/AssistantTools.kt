@@ -615,6 +615,15 @@ class AssistantTools(private val context: Context) : ToolRunner {
             .put("properties", JSONObject().apply { props.forEach { (k, v) -> put(k, v) } })
             .put("required", JSONArray(required)))
 
+        /** The system prompt with the answer style: brief, normal or detailed. */
+        fun prompt(style: String): String = SYSTEM_PROMPT + "\n\n" + when (style) {
+            "brief" -> "Style: brief. The driver is driving: one or two short sentences, the " +
+                "answer first. Offer detail only if asked."
+            "detailed" -> "Style: detailed. The driver asked for detail: up to eight spoken " +
+                "sentences, still plain words, no lists; explain how the app worked it out."
+            else -> "Style: normal: one to three short sentences."
+        }
+
         val SYSTEM_PROMPT = """
             You are the voice assistant in the driver's electric car, a Volkswagen ID.3, inside
             the ODB Scanner app on their phone. With the tools you can read the car's stored

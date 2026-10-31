@@ -1,6 +1,7 @@
 package com.odbscanner.ai
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONException
@@ -12,9 +13,10 @@ import java.net.URL
  * An assistant request failed. [error] says how, in one of the twelve
  * categories (AiErrors), safe to show; the message is its sentence.
  */
-class AiException(message: String, cause: Throwable? = null, val error: AiError? = null) :
-    Exception(message, cause) {
-    constructor(error: AiError, cause: Throwable? = null) : this(error.message, cause, error)
+class AiException(message: String, cause: Throwable? = null, val error: AiError? = null,
+                  val retryAfterMs: Long? = null) : Exception(message, cause) {
+    constructor(error: AiError, cause: Throwable? = null, retryAfterMs: Long? = null) :
+        this(error.message, cause, error, retryAfterMs)
 
     val category: AiErrorCategory get() = error?.category ?: AiErrorCategory.UNKNOWN_ERROR
 }
@@ -39,6 +41,19 @@ fun interface ToolRunner {
 interface ChatSession {
     val model: String
     suspend fun ask(text: String, tools: ToolRunner): String
+
+    /**
+     * Start this session with the conversation so far, as plain words
+     * (question, answer) -- a backup taking over, or a session rebuilt in
+     * the middle of a conversation, then knows what "there" means. Called
+     * once, before the first ask.
+     */
+    fun seed(turns: List<Pair<String, String>>) {}
+}
+
+/** Where each request's token use goes (UsageLedger); null counts are "not reported". */
+fun interface UsageSink {
+    fun record(provider: String, inputTokens: Int?, outputTokens: Int?)
 }
 
 const val MAX_TOOL_ROUNDS = 6
@@ -72,6 +87,9 @@ class OpenAiChatSession(
     /** Who this is, in errors ("Groq"); the host when not given. */
     private val provider: String = "",
     private val transport: HttpTransport = UrlTransport,
+    /** The preset id usage is counted under; "" counts nothing. */
+    private val usageId: String = "",
+    private val usage: UsageSink? = null,
 ) : ChatSession {
     private val messages = JSONArray().put(JSONObject().put("role", "system").put("content", system))
     private val host = runCatching { URL(baseUrl).host }.getOrDefault(baseUrl)
@@ -102,6 +120,13 @@ class OpenAiChatSession(
         }
     }
 
+    override fun seed(turns: List<Pair<String, String>>) {
+        turns.forEach { (q, a) ->
+            messages.put(JSONObject().put("role", "user").put("content", q))
+            messages.put(JSONObject().put("role", "assistant").put("content", a))
+        }
+    }
+
     private fun invalid(message: String) =
         AiException(AiError(AiErrorCategory.INVALID_RESPONSE, label, message))
 
@@ -119,7 +144,12 @@ class OpenAiChatSession(
         }
         val text = post("$baseUrl/chat/completions", body.toString(), timeoutMs)
         return try {
-            JSONObject(text)
+            JSONObject(text).also { o ->
+                if (usageId.isNotBlank()) o.optJSONObject("usage").let { u ->
+                    usage?.record(usageId, u?.optInt("prompt_tokens")?.takeIf { u.has("prompt_tokens") },
+                        u?.optInt("completion_tokens")?.takeIf { u.has("completion_tokens") })
+                }
+            }
         } catch (e: JSONException) {
             throw AiException(AiErrors.fromException(label, host, e), e)
         }
@@ -138,9 +168,25 @@ class OpenAiChatSession(
         /**
          * One request through [transport]: the body of a 2xx reply, else an
          * AiException in its category, the key taken out of any message.
+         * Tried again only as RetryPolicy allows (a request that cannot have
+         * been processed, once, after the wait the service asks for).
          */
         suspend fun call(transport: HttpTransport, label: String, host: String, key: String,
                          model: String, req: HttpRequest): String {
+            var attempt = 1
+            while (true) {
+                try {
+                    return once(transport, label, host, key, model, req)
+                } catch (e: AiException) {
+                    val wait = RetryPolicy.delayFor(e.error, attempt, e.retryAfterMs) ?: throw e
+                    delay(wait)                 // cancellable: a stopped turn is never retried
+                    attempt++
+                }
+            }
+        }
+
+        private suspend fun once(transport: HttpTransport, label: String, host: String,
+                                 key: String, model: String, req: HttpRequest): String {
             val reply = try {
                 transport.send(req)
             } catch (e: HttpFailure) {
@@ -151,7 +197,7 @@ class OpenAiChatSession(
             }
             if (reply.status >= 400) {
                 throw AiException(AiErrors.fromHttp(label, reply.status, reply.body, model,
-                    listOf(key)))
+                    listOf(key)), retryAfterMs = RetryPolicy.retryAfterMs(reply.headers))
             }
             return reply.body
         }

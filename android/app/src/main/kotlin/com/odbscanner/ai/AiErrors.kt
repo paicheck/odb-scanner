@@ -162,7 +162,7 @@ object AiErrors {
             is org.json.JSONException -> AiError(AiErrorCategory.INVALID_RESPONSE, provider,
                 "$provider sent a reply that could not be read", why)
             is IOException -> AiError(AiErrorCategory.NETWORK_ERROR, provider,
-                "Could not reach $host", why)
+                "Could not reach $host", why, reason = if (sent) "after_send" else "")
             else -> AiError(AiErrorCategory.UNKNOWN_ERROR, provider,
                 "$provider failed (${e.javaClass.simpleName})", why)
         }

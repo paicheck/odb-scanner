@@ -52,6 +52,11 @@ object Speaker {
     private val waiters = mutableMapOf<String, (AiError?) -> Unit>()
     private val startedAt = mutableMapOf<String, Long>()
     private var seq = 0
+    private var customVoice = false             // a chosen voice is in use
+    private val replayed = mutableSetOf<String>()
+    private val _note = MutableStateFlow<String?>(null)
+    /** Shown, not said: the chosen voice failed and the phone's own is speaking. */
+    val note: StateFlow<String?> = _note
 
     private val attributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
@@ -67,7 +72,7 @@ object Speaker {
             main.post {
                 ready = status == TextToSpeech.SUCCESS
                 if (ready) {
-                    created.language = Locale.UK
+                    created.language = locale(app)
                     created.setAudioAttributes(attributes)
                     applyVoice(app, created)
                     queue.playing?.let { speakNow(app, it) }
@@ -99,15 +104,29 @@ object Speaker {
         return created
     }
 
+    private fun locale(context: Context): Locale =
+        if (AiPrefs.load(context).language == "en-US") Locale.US else Locale.UK
+
     private fun applyVoice(context: Context, engine: TextToSpeech) {
         val name = AiPrefs.load(context).ttsVoice
         if (name.isBlank()) return
         runCatching { engine.voices?.firstOrNull { it.name == name } }.getOrNull()
-            ?.let { engine.voice = it }
+            ?.let { engine.voice = it; customVoice = true }
     }
 
     private fun finished(context: Context, id: String?, error: AiError?) {
         main.post {
+            // The chosen voice failed for want of a connection or its data:
+            // say it again, once, in the phone's own voice, and show why.
+            if (error != null && id != null && customVoice && id !in replayed &&
+                SpeechFallback.voiceShouldFallBack(error)) {
+                replayed += id
+                customVoice = false
+                tts?.language = locale(context)
+                _note.value = "The chosen voice could not speak (${error.category}): using " +
+                    "the phone's own voice"
+                queue.playing?.takeIf { it.id == id }?.let { speakNow(context, it); return@post }
+            }
             id?.let { waiters.remove(it)?.invoke(error); startedAt.remove(it) }
             run(context, queue.done(id), null)
             if (queue.idle) Focus.release(context)
@@ -125,6 +144,7 @@ object Speaker {
 
     private fun speakNow(context: Context, u: Utterance) {
         Focus.duck(context)
+        tts?.setSpeechRate(AiPrefs.load(context).speechRate)
         tts?.speak(u.text, TextToSpeech.QUEUE_FLUSH, Bundle(), u.id)
     }
 
@@ -230,7 +250,8 @@ private object Focus {
 /** What listening gave: the words, or why there were none. */
 sealed class ListenResult {
     abstract val ms: Long
-    data class Heard(val text: String, override val ms: Long) : ListenResult()
+    data class Heard(val text: String, override val ms: Long, val note: String? = null) :
+        ListenResult()
     data class Failed(val error: AiError, override val ms: Long) : ListenResult()
 }
 
@@ -245,8 +266,31 @@ object Listener {
     suspend fun listenOnce(context: Context, timeoutMs: Long = 15_000L): String? =
         (listen(context, timeoutMs, AiPrefs.load(context).sttOffline) as? ListenResult.Heard)?.text
 
+    /**
+     * Listen as the settings say, and fall back once where it helps: online
+     * recognition that could not connect is tried again on the phone (more
+     * private, so always allowed); on-the-phone that lacks the language goes
+     * online only with your consent (SpeechFallback). [again] is said before
+     * listening the second time -- the words were lost with the first.
+     */
+    suspend fun hear(context: Context, s: AiSettings, timeoutMs: Long, again: suspend () -> Unit,
+                     onEndOfSpeech: () -> Unit = {}): ListenResult {
+        val first = listen(context, timeoutMs, s.sttOffline, s.language, onEndOfSpeech)
+        val err = (first as? ListenResult.Failed)?.error ?: return first
+        val local = Diagnostics.recogniser(context).second == true
+        val offline = SpeechFallback.recogniserRetry(err, s.sttOffline, local, s.sttOnlineFallback)
+            ?: return first
+        again()
+        return when (val second = listen(context, timeoutMs, offline, s.language, onEndOfSpeech)) {
+            is ListenResult.Heard -> second.copy(note = if (offline)
+                "Recognised on the phone: the online recogniser could not be reached"
+            else "Recognised online: the phone's own recogniser could not")
+            is ListenResult.Failed -> second
+        }
+    }
+
     suspend fun listen(context: Context, timeoutMs: Long = 15_000L, offline: Boolean = false,
-                       onEndOfSpeech: () -> Unit = {}): ListenResult =
+                       language: String = "en-GB", onEndOfSpeech: () -> Unit = {}): ListenResult =
         withContext(Dispatchers.Main) {
             val begun = SystemClock.elapsedRealtime()
             fun took() = SystemClock.elapsedRealtime() - begun
@@ -292,7 +336,7 @@ object Listener {
                     sr.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                             RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-GB")
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
                         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                         if (offline) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                     })
@@ -433,7 +477,8 @@ object VoiceAssistant {
             Speaker.sayAndWait(context, question, SpeechOwner.ASSISTANT, turn)
             if (!isCurrentTurn(turn)) return null
             beep()
-            val r = Listener.listen(context, listenMs, AiPrefs.load(context).sttOffline) {
+            val s = AiPrefs.load(context)
+            val r = Listener.listen(context, listenMs, s.sttOffline, s.language) {
                 fire(VoiceEvent.EndOfSpeech(turn))
             }
             if (fire(VoiceEvent.Heard(turn))) fire(VoiceEvent.Answered(turn, speak = false))
@@ -475,9 +520,10 @@ object VoiceAssistant {
         try {
             Speaker.stopAssistant()
             beep()
-            val r = Listener.listen(context, LISTEN_MS, AiPrefs.load(context).sttOffline) {
-                fire(VoiceEvent.EndOfSpeech(turn))
-            }
+            val r = Listener.hear(context, AiPrefs.load(context), LISTEN_MS, again = {
+                Speaker.sayAndWait(context, "Say that again.", SpeechOwner.ASSISTANT, turn)
+                beep()
+            }) { fire(VoiceEvent.EndOfSpeech(turn)) }
             when (r) {
                 is ListenResult.Failed -> fail(context, turn, r.error, speak = true)
                 is ListenResult.Heard -> if (fire(VoiceEvent.Heard(turn))) {
@@ -495,7 +541,8 @@ object VoiceAssistant {
     }
 
     private suspend fun answerTurn(context: Context, turn: Int, text: String, speak: Boolean) {
-        val reply = Assistant.answer(context, text)
+        val reply = Assistant.answer(context, text,
+            driving = _status.value.source == VoiceSource.CAR)
         reply.error?.let { return fail(context, turn, it, speak) }
         if (!fire(VoiceEvent.Answered(turn, speak)) || !speak) return
         val err = Speaker.sayAndWait(context, reply.spoken, SpeechOwner.ASSISTANT, turn)

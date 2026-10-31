@@ -124,7 +124,7 @@ class CancelTest {
                     backupAsked.set(true); return "backup"
                 }
             } },
-        )) { false }
+        ), changesState = { false })
         val turn = async { chain.ask("q", ToolRunner { "" }) }
         delay(50)
         turn.cancel()
@@ -145,7 +145,7 @@ class CancelTest {
                 override val model = "b"
                 override suspend fun ask(text: String, tools: ToolRunner) = "from the backup"
             } },
-        )) { false }
+        ), changesState = { false })
         assertEquals("from the backup", withTimeout(5_000) { chain.ask("q", ToolRunner { "" }) })
         assertTrue(chain.onBackup)
         assertEquals("Backup", chain.activeLabel)

@@ -46,6 +46,8 @@ class ClaudeChatSession(
     private val system: String,
     tools: List<ToolSpec>,
     baseUrl: String = "",
+    private val usageId: String = "",
+    private val usage: UsageSink? = null,
 ) : ChatSession {
     private val key = apiKey
     private val client: AnthropicClient = AnthropicOkHttpClient.builder()
@@ -56,6 +58,13 @@ class ClaudeChatSession(
         .build()
     private val betaTools = tools.map(::betaTool)
     private val history = mutableListOf<BetaMessageParam>()
+
+    override fun seed(turns: List<Pair<String, String>>) {
+        turns.forEach { (q, a) ->
+            history.add(BetaMessageParam.ofUser(q))
+            history.add(BetaMessageParam.ofAssistant(a))
+        }
+    }
 
     override suspend fun ask(text: String, tools: ToolRunner): String = withContext(Dispatchers.IO) {
         val mark = history.size
@@ -117,7 +126,11 @@ class ClaudeChatSession(
             .fallbacks(BetaFallbacksParam.ofDefault())
             .apply { betaTools.forEach { addTool(it) } }
             .build()
-        return guarded(model, key) { client.beta().messages().create(params) }
+        return guarded(model, key) { client.beta().messages().create(params) }.also { m ->
+            if (usageId.isNotBlank()) runCatching {
+                usage?.record(usageId, m.usage().inputTokens().toInt(), m.usage().outputTokens().toInt())
+            }
+        }
     }
 
     companion object {
@@ -169,13 +182,31 @@ class ClaudeChatSession(
             else -> AiErrors.fromException(LABEL, HOST, e)
         }
 
-        /** [work] (a blocking SDK call) cancellable, its failures classified. */
-        suspend fun <T> guarded(model: String, key: String, work: () -> T): T = try {
-            Cancellable.blocking(work = work)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            throw AiException(classify(e, model, key), e)
+        /**
+         * [work] (a blocking SDK call) cancellable, its failures classified,
+         * tried again only as RetryPolicy allows (the SDK's own retries are
+         * off), after the wait the service asks for.
+         */
+        suspend fun <T> guarded(model: String, key: String, work: () -> T): T {
+            var attempt = 1
+            while (true) {
+                try {
+                    return Cancellable.blocking(work = work)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    val err = classify(e, model, key)
+                    val after = (e as? AnthropicServiceException)?.let {
+                        runCatching { RetryPolicy.retryAfterMs(it.headers().names()
+                            .associate { n -> n.lowercase() to it.headers().values(n).joinToString(",") })
+                        }.getOrNull()
+                    }
+                    val wait = RetryPolicy.delayFor(err, attempt, after)
+                        ?: throw AiException(err, e, after)
+                    kotlinx.coroutines.delay(wait)
+                    attempt++
+                }
+            }
         }
 
         private fun client(apiKey: String, baseUrl: String, timeoutS: Long) =

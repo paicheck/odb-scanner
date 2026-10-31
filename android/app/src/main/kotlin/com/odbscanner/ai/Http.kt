@@ -45,7 +45,8 @@ data class HttpRequest(
     val readTimeoutMs: Int = 60_000,
 )
 
-data class HttpResponse(val status: Int, val body: String, val ms: Long)
+data class HttpResponse(val status: Int, val body: String, val ms: Long,
+                        val headers: Map<String, String> = emptyMap())   // names in lower case
 
 /**
  * A request that failed before a reply: [sent] says whether it had gone out
@@ -84,7 +85,10 @@ object UrlTransport : HttpTransport {
                 val code = conn.responseCode
                 val text = (if (code < 400) conn.inputStream else conn.errorStream)
                     ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-                HttpResponse(code, text, (System.nanoTime() - start) / 1_000_000)
+                val headers = conn.headerFields.orEmpty().mapNotNull { (k, v) ->
+                    k?.lowercase()?.let { it to v.joinToString(",") }
+                }.toMap()
+                HttpResponse(code, text, (System.nanoTime() - start) / 1_000_000, headers)
             } catch (e: IOException) {
                 throw HttpFailure(sent, e)
             } finally {

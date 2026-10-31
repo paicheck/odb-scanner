@@ -203,7 +203,8 @@ object Diagnostics {
     /** Listen to one short sentence: what was recognised, how long it took. */
     suspend fun stt(context: Context, offline: Boolean): TestResult {
         val label = AiErrors.RECOGNISER
-        return when (val r = Listener.listen(context, VoiceAssistant.LISTEN_MS, offline)) {
+        val lang = AiPrefs.load(context).language
+        return when (val r = Listener.listen(context, VoiceAssistant.LISTEN_MS, offline, lang)) {
             is ListenResult.Heard -> TestResult(label, TestKind.STT, true, now(), r.ms,
                 "Heard “${r.text}” in ${r.ms} ms")
             is ListenResult.Failed -> TestResult(label, TestKind.STT, false, now(), r.ms,
@@ -235,7 +236,8 @@ object Diagnostics {
         val (available, _) = withContext(Dispatchers.Main) { recogniser(context) }
         if (!available) return stop("microphone", AiError(AiErrorCategory.UNSUPPORTED_CAPABILITY,
             AiErrors.RECOGNISER, "This phone has no speech recognition"))
-        val heard = when (val r = Listener.listen(context, VoiceAssistant.LISTEN_MS, settings.sttOffline)) {
+        val heard = when (val r = Listener.listen(context, VoiceAssistant.LISTEN_MS,
+            settings.sttOffline, settings.language)) {
             is ListenResult.Failed -> {
                 stages["recognition"] = r.ms
                 return stop(if (r.error.reason == "microphone") "microphone" else "recognition",
