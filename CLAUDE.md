@@ -219,3 +219,10 @@ measured on a 2.6M-row month of synthetic readings:
   The `ai-voice` debug APK the owner tests is `~/odb-scanner-tested/
   odb-scanner-ai-voice-debug-7a53162.apk` (tag `tested-ai-voice-7a53162`).
   Handover: `review_output/ai_assistant_handover.md`.
+- AI assistant release candidate, 2026-10-31 (branch `ai-assistant-rc` on
+  `main` `9fc7a2f`; not pushed, not installed): 17 defects fixed with tests
+  (breaker trials, a stuck speech engine, history settings, offline answers
+  without a position or with old readings, Retry). Release APK
+  `~/odb-scanner-tested/odb-scanner-0.2.0-release-rc-9cab53b2.apk`, built
+  with `-PodbBuildDir=$HOME/odb-scanner-build-rc` so the tested 20261031e
+  (`7f94cf57`) stays. Pixel 7 plan: `review_output/ai_assistant_device_tests.md`.

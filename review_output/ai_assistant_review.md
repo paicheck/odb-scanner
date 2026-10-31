@@ -187,4 +187,113 @@ answers it.
 
 ## 5. Results
 
-See `ai_assistant_handover.md` (verification, what needs the phone).
+See `ai_assistant_handover.md` (verification, what needs the phone). For
+the release candidate's validation, see §6–9 below.
+
+## 6. Release-candidate validation — build state
+
+Done on 2026-10-31, after the assistant had been merged into `main` and
+pushed (`9fc7a2f`; CI green on every job). The aim was a release candidate
+to test, not new features: each review area was read, and only clear
+defects were fixed, each with a regression test.
+
+- **Branch:** `ai-assistant-rc`, from `main` at `9fc7a2f`. Not pushed.
+- **Kept as they were:**
+  - `navigation` (`eb646d3`);
+  - `ai-voice` (`7a53162`, tag `tested-ai-voice-7a53162`);
+  - `ai-assistant` (`f3fc46e`).
+- **The APK under test:** 20261031e (`7f94cf57…`), as delivered to the
+  Pixel. It is untouched in `~/odb-scanner-build/app/outputs/apk/release/`
+  and in `~/odb-scanner-tested/`.
+- **How a candidate is built without touching it:** `-PodbBuildDir=<dir>`
+  (commit `d11567e`). It moves the whole Gradle output, so tests, lint and
+  the release build of this candidate all ran in `~/odb-scanner-build-rc`.
+  Nothing was written to `~/odb-scanner-build`.
+
+## 7. Defects found and fixed
+
+| Area | Defect | Fix | Commit |
+|---|---|---|---|
+| Fallback | A trial request that was stopped, or held back by your daily limit, kept the service's one trial reserved. The service was never tried again until the app restarted. | `CircuitBreaker.release`: the trial is let go without counting a success or a failure. | `9fb4efd` |
+| Fallback | The breaker was asked about every service before the first was tried. Each ask reserves a trial, so a trial could be reserved for a service never reached. | Each service is asked just before it is tried. | `9fb4efd` |
+| Fallback | When every service left needed attention (a refused key, a spent quota), the soonest was asked anyway, and refused again. | Nothing is sent, and the reason is said. Only resting services get the trial. | `9fb4efd` |
+| Fallback | Saving any setting (speech speed, history) reset every service's health, so a refused key was asked again at once. | Health resets only for a service now asked with another model, address or effort, or turned back on. A new key still resets its own service. | `9fb4efd` |
+| Voice | An engine that never reported finishing an utterance (it died, or lost its audio route) held the speech queue for ever. Nothing after it was said, navigation guidance included. | Each utterance has a limit (`SpeechQueue.limitMs`, the speech test's own wait). Past it the utterance is dropped and a fresh engine says the rest. | `6af6487` |
+| Voice | Utterance ids came from a plain counter used on two threads. Two utterances could share an id, so one's "done" would end the other. | The counter is atomic. | `6af6487` |
+| Android Auto | Repeat said the answer as the app's own speech, which Stop and Interrupt leave alone, so a long repeat talked over the next question. | Repeat is the assistant's speech; Stop and Speak silence it. | `6af6487` |
+| History | "Keep for: off", and turning off the questions' words, applied only to new records. What was already stored stayed, on the phone and on screen. | Both apply to what is stored when the history is next read or added to. "Off" deletes the file. | `943c304` |
+| History | A failed turn was recorded with the model, and the backup flag, of the answer before it. | Who answered is taken as the answer comes back. A failure is the failing service's, with no model. | `943c304` |
+| History | A stopped turn was credited to whoever had answered the turn before. | It has no service unless one had answered, and it says where it was stopped (recognition, AI or speech). | `943c304` |
+| Offline | Without the phone's position, the trip tool gave each stop's distance from the start as "from_here". The assistant, and the phone's own answer, said "about 18 miles away" for a stop perhaps already passed. | It is "from_start", with "position": "unknown". The phone's sentence says it doesn't know where you are. | `35fbc66` |
+| Offline | "How far is left?" without a position answered with the whole trip's length. | The answer says it is the whole trip. | `35fbc66` |
+| Offline | A battery or range reading over an hour old was said as now ("The battery is at…"). | It is said as old: "The last battery reading, 3 h ago, was…". The arrival projection says how old its reading is. | `35fbc66` |
+| Offline | A question the phone cannot answer by itself got only the failure ("There's no connection."). | It also says what the phone can answer without an AI service. | `35fbc66` |
+| Usage | After a restart, Setup showed no usage for today until a question had been asked. | Setup loads the stored usage itself. | `1be9fb7` |
+| Retry | Retry showed only while the error did, which is 6 s: too short for a driver. | Retry stays until the next turn starts, on the phone and on the car. | `48b9a0f` |
+| Retry | After a recognition failure, Retry asked the previous turn's question. | A voice turn starts with nothing to retry until its words are heard. | `48b9a0f` |
+
+## 8. Checked and found sound
+
+**Speaking as the answer arrives**
+- **Order:** sentences are queued on the main thread in the order they
+  arrive, and the rest of the answer after them, so they cannot overtake
+  each other.
+- **First sentence:** spoken once it is 24 characters or more.
+- **Stopping:** Stop or a barge-in aborts the request (the socket is
+  closed) and drops the turn's speech. A stopped turn's late words are
+  refused twice over: by the voice state machine (turn and state) and by
+  the speech queue (turn).
+- **An interrupted answer** cannot resume, and an old answer cannot play
+  over a newer one. Each question waits for the one before it to end
+  (the assistant's lock).
+- **Audio focus** is let go whenever the queue empties, after a Stop too.
+
+**Backups and limits**
+- **The conversation** carries to a backup (seeded).
+- **Retries:** only what cannot have been processed, once. A key, quota or
+  permission problem is never retried. A read timeout is never retried, so
+  no question is asked twice.
+- **No backup is asked** after a service has acted or spoken.
+- **A failed turn** leaves the conversation as it was, so Retry does not
+  send the question twice.
+- **Limits** are checked before each service is asked.
+
+**Without internet**
+- **What Setup's "Without internet" lists** matches what the phone answers
+  by itself.
+- **Plan figures** are said as planned, never as measured.
+
+**History**
+- **What a record holds:** times, outcome, category, stage, service and
+  model. It holds no audio, no answer, no key, no position and no error
+  detail. The question's words are kept only if you turned that on (off by
+  default).
+
+**Android Auto**
+- **Stop** shows while anything runs. Stopping the assistant drops only its
+  own speech, so guidance carries on, and an urgent cue still cuts in.
+
+**Not changed, noted for the device tests**
+- **No key at all:** without any key the car screen asks for one, so the
+  phone-only answers are not offered in the car. Once a key is set, they are
+  offered when the service cannot be reached.
+- **Guidance while listening:** navigation guidance is not held back while
+  the assistant listens. A turn instruction spoken into the microphone could
+  be heard as part of the question.
+
+## 9. Results
+
+- **Phone unit tests:** 259, 0 failures. 13 are new; `main` had 246. They
+  ran against simulated services with a fake clock.
+- **Each commit on its own:** built and passed the AI tests in a temporary
+  worktree with its own build directory.
+- **`lintVitalRelease`:** passes.
+- **Release APK:** built into `~/odb-scanner-build-rc`. A copy is
+  `~/odb-scanner-tested/odb-scanner-0.2.0-release-rc-9cab53b2.apk`
+  (sha256 `9cab53b2…8e1270`).
+  - Certificate SHA-256 `d6967d0e…37feee`, the usual key.
+  - Not debuggable.
+  - Version 0.2.0 (200), as 20261031e, so it installs as an update.
+  - Not installed.
+- **No PC code changed.**
+- **The device test plan:** `ai_assistant_device_tests.md`.
