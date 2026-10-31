@@ -180,5 +180,9 @@ measured on a 2.6M-row month of synthetic readings:
   owner's decision. `tests/test_vin_stays_out.py` stops it spreading.
 - Phones: HONOR X8a (the car phone) and a Pixel 7 (Android beta), signed with
   the Windows PC's debug key, now `~/.android/debug.keystore` here.
-- `tests/test_trips.py::test_trip_log_totals_and_what_the_cold_costs` failed
-  once and could not be reproduced; watch for it.
+- Overnight 2026-10-31 (branch `overnight-2026-10-31`, on `charger-preferences`
+  on `ai-fallback`; none pushed): consumption model + backtest, forecast wind,
+  arrival ranges, digital twin (`/api/twin`), en-route levels, checked AI
+  citations, overview health card, phone parity for preferences/wind/ranges.
+  What to decide and run: `review_output/overnight_handover.md`. The
+  intermittent `test_trips` failure was the test's own clock (fixed).

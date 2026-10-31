@@ -100,7 +100,9 @@ the assumption for a home network. Further boundaries:
   With the optional `routing.mapbox_token` it also sends the start and
   destination to Mapbox, to plan in today's traffic and offer up to two other
   ways there (heavy traffic is drawn on the map); `routing.avoid` (motorways,
-  tolls, ferries) sets the form's roads to avoid.
+  tolls, ferries) sets the form's roads to avoid. With `routing.weather` (on by
+  default) it also asks Open-Meteo for the forecast at points along the route,
+  rounded to 0.1° (about 11 km) before they are sent; `false` stops that.
 * **Cloud AI (opt-in):** with `ai.provider` set to a cloud service (Claude,
   OpenAI, Gemini, Mistral, Groq, OpenRouter, DeepSeek, xAI or any
   OpenAI-compatible endpoint) the AI Analysis page sends your question and the
@@ -441,6 +443,24 @@ odometer counts whole kilometres, so drives under 5 km get no efficiency of
 their own. The route planner measures its consumption figure from the same
 drives (the last 90 days), so the two always agree. `/api/trips?days=30`
 returns the same as JSON.
+
+### What the planner knows about this car
+
+* **Its own consumption model** (`analysis/consumption_model.py`): how the
+  car's use changes with outside temperature, speed and heating, learned from
+  the same drives -- used only once it has earned it. Each recent drive is
+  predicted from the drives before it (`analysis/consumption_backtest.py`);
+  the Route page uses the model only when it beat the flat rate by 5 % over at
+  least 10 such drives, and says why either way.
+  `python tools/backtest_consumption.py --db PATH` runs that check read-only.
+* **The weather:** each stretch's forecast wind costs or saves drag energy;
+  the temperature counts only through the car's own model.
+* **How sure it is:** every stop and the arrival carry a likely range -- the
+  10th to 90th percentile of how far the car's recent drives were from their
+  predictions, or an assumed 10 % when there are too few, labelled as such.
+* **The car's state:** `/api/twin?as_of=2026-10-31T08:00:00Z` gives each value
+  as observed, inferred or unknown, with its age, as it stood at that moment
+  (nothing recorded later is read); the overview shows what the car is doing.
 
 ### Database growth
 

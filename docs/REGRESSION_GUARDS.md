@@ -23,6 +23,9 @@ These guards close that gap. They fall into two kinds:
 | Whole-cycle, per-module | `tests/test_meb_transport_regression.py`, `tools/smoke_test.py` | A physical MEB module silently returning only NULLs, and any forbidden form reaching the wire during a full collector cycle. |
 | Android wire contract | `android/app/src/test/kotlin/com/odbscanner/transport/Elm327ProtocolTest.kt` | The Kotlin transport — and therefore the phone — reintroducing a form the Python transport already fixed. |
 | Order independence | `tests/conftest.py` (`_restore_experiment_arms`), CI `pytest-randomly` | A test passing or failing because of the order tests ran in, which can hide a real failure. |
+| No network in tests | `tests/conftest.py` (`_no_network`) | A test reaching Open-Meteo, a routing provider or an AI service by accident: any real HTTP request through `requests` outside loopback fails as offline. |
+| Decoder containment | `tests/test_decoder_fuzz.py` | A short, empty or garbage response raising out of a decoder into the collector, or decoding to NaN/infinity. |
+| Shared route vectors | `tests/data/route_vectors.json`, `tools/export_route_vectors.py`, `android/.../PlannerTest.kt` | The phone and the dashboard planning differently -- stops, charger choice, wind energy and arrival ranges are compared case by case. |
 
 ## Changing the wire form is a deliberate act
 
