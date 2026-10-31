@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from analysis.consumption_model import DriveSample, estimate
+from analysis.consumption_backtest import backtest
+from analysis.consumption_model import FEATURE_LABELS, DriveSample, estimate
 from analysis.trips import PAIR_WITHIN_S, _Lookup, measured_rate, split_drives
 from database.repository import IMPORTED_PREFIX
 
@@ -53,49 +54,74 @@ def measured_consumption(odometer, energy) -> tuple[float | None, float]:
     if km < MIN_MEASURED_KM or rate is None:
         return None, km
     return rate, km
-def measured_consumption_model(repo, vid: int, days: float = CONSUMPTION_DAYS):
-    """A personalised consumption model from this car's own drives, or None.
+# The backtest predicts each recent drive from the CONSUMPTION_DAYS before it.
+MODEL_HISTORY_DAYS = 2 * CONSUMPTION_DAYS
+_checks: dict[tuple, dict] = {}
 
-    Uses the same drives as the trip log (analysis/trips.py). Returns a dict
-    of coefficients (serialisable) rather than the dataclass, so it can travel
-    through the web context and config without import cycles.
-    """
-    since_dt = datetime.now(timezone.utc) - timedelta(days=days)
-    since = since_dt.isoformat(timespec="seconds")
+
+def drive_samples(repo, vid: int, days: float) -> list[DriveSample]:
+    """This car's drives of the last `days` -- the trip log's drives
+    (analysis/trips.py) -- with their times, average speed and outside
+    temperature, as consumption-model samples."""
+    since_s = (datetime.now(timezone.utc) - timedelta(days=days)).timestamp()
     lead_days = days + PAIR_WITHIN_S / 86400.0
     drives = [d for d in split_drives(
         _series(repo, vid, "odometer_km", lead_days),
         _series(repo, vid, "hv_energy_content", lead_days))
-        if d.end_ts >= since]
+        if d.end_s >= since_s]
     speed_lookup = _Lookup(_series(repo, vid, "speed_kmh", lead_days))
     outside_lookup = _Lookup(_series(repo, vid, "outside_temp", lead_days))
     samples = []
     for d in drives:
-        if d.distance_km < 5 or d.energy_kwh is None:
+        if d.energy_kwh is None or d.distance_km <= 0:
             continue
         speeds = speed_lookup.between(d.start_s, d.end_s)
         temps = outside_lookup.between(d.start_s, d.end_s) or [
             v for v in (outside_lookup.nearest(d.start_s),) if v is not None]
-        avg_speed = (sum(speeds) / len(speeds)) if speeds else None
-        temp = (sum(temps) / len(temps)) if temps else None
         samples.append(DriveSample(
             distance_km=d.distance_km, energy_kwh=d.energy_kwh,
-            temp_c=temp, avg_speed_kmh=avg_speed))
-    model = estimate(samples)
-    if model is None:
-        return None
-    return {
-        "base_kwh_per_km": model.base_kwh_per_km,
-        "temp_coeff": model.temp_coeff,
-        "speed_coeff": model.speed_coeff,
-        "elev_coeff": model.elev_coeff,
-        "hvac_coeff": model.hvac_coeff,
-        "residual_std": model.residual_std,
-        "sample_km": model.sample_km,
-        "n_drives": model.n_drives,
-        "features_used": list(model.features_used),
-    }
+            temp_c=(sum(temps) / len(temps)) if temps else None,
+            avg_speed_kmh=(sum(speeds) / len(speeds)) if speeds else None,
+            start_s=d.start_s, end_s=d.end_s))
+    return samples
 
+
+def consumption_check(repo, vid: int) -> dict:
+    """This car's own consumption model, if it has earned its place.
+
+    {"model": ConsumptionModel or None, "backtest": analysis.consumption_backtest
+    result, "basis": one sentence}. The model is returned only when, predicting
+    each recent drive from the drives before it, it beat the flat rate
+    (analysis/consumption_backtest.py) and it uses at least one condition --
+    a model of no conditions is the flat rate again. Kept per vehicle until a
+    new odometer reading arrives or the day changes."""
+    last = repo.conn.execute(
+        "SELECT MAX(ts) FROM measurements WHERE vehicle_id=? AND key='odometer_km'",
+        (vid,)).fetchone()[0]
+    key = (repo.path, vid, last, datetime.now(timezone.utc).date().isoformat())
+    if key in _checks:
+        return _checks[key]
+    samples = drive_samples(repo, vid, MODEL_HISTORY_DAYS)
+    result = backtest(samples, window_days=CONSUMPTION_DAYS)
+    model = None
+    if result["verdict"] == "model":
+        cutoff = datetime.now(timezone.utc).timestamp() - CONSUMPTION_DAYS * 86400
+        model = estimate([s for s in samples if s.end_s >= cutoff])
+        if model is not None and not model.features_used:
+            model = None
+            result = dict(result, verdict="flat", reason=(
+                "the latest drives support no condition beyond the flat rate"))
+    if model is not None:
+        used = ", ".join(FEATURE_LABELS[f] for f in model.features_used)
+        basis = (f"this car's own model ({used}, from {model.n_drives} drives) plans "
+                 f"trips: {result['reason']}")
+    else:
+        basis = f"flat rate kept: {result['reason']}"
+    out = {"model": model, "backtest": result, "basis": basis}
+    if len(_checks) > 16:
+        _checks.clear()
+    _checks[key] = out
+    return out
 
 
 def car_energy(repo, vid: int, cfg) -> dict:
@@ -120,6 +146,7 @@ def car_energy(repo, vid: int, cfg) -> dict:
         start_pct, now_ts, now_basis = 80.0, None, "no reading; assumed"
 
     configured = cfg.get("routing.consumption_kwh_per_100km")
+    model, model_basis = None, "a figure set in config is used as it is"
     if configured:
         cons, cons_basis = float(configured) / 100.0, "set in config"
     else:
@@ -136,11 +163,15 @@ def car_energy(repo, vid: int, cfg) -> dict:
                 f"last {CONSUMPTION_DAYS} days (needs {MIN_MEASURED_KM:.0f} km "
                 f"to measure)")
 
-    model = measured_consumption_model(repo, vid)
+    if not configured:
+        check = consumption_check(repo, vid)
+        model, model_basis = check["model"], check["basis"]
     return {
         "usable_kwh": round(usable_kwh, 2), "usable_basis": usable_basis,
         "start_pct": round(start_pct, 1), "start_ts": now_ts, "start_basis": now_basis,
         "consumption_kwh_per_100km": round(cons * 100.0, 1),
         "consumption_basis": cons_basis,
-        "consumption_model": model,
+        # A dict, so the figures can travel through the page context.
+        "consumption_model": model.as_dict() if model else None,
+        "consumption_model_basis": model_basis,
     }

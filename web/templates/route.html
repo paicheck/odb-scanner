@@ -67,7 +67,9 @@
   <p class="chart-note">From this car: start {{ car.start_pct }} % ({{ car.start_basis }}{% if car.start_ts %},
     <span class="age{% if car.start_ts | stale %} age-stale{% endif %}" title="{{ car.start_ts | fmtts }}">{{ car.start_ts | age }}</span>{% endif %});
     battery {{ car.usable_kwh }} kWh ({{ car.usable_basis }}); consumption {{ car.consumption_kwh_per_100km }} kWh/100 km
-    ({{ car.consumption_basis }}). Change any of them above for this trip.</p>
+    ({{ car.consumption_basis }}). Change any of them above for this trip.
+    {% if car.consumption_model_basis %}Consumption model: {{ car.consumption_model_basis }}{% if car.consumption_model %}
+    (used unless you change the figure above){% endif %}.{% endif %}</p>
   {% endif %}
 </form>
 

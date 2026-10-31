@@ -44,6 +44,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from analysis.consumption_model import FEATURE_LABELS, ConsumptionModel
+
 G = 9.81
 EARTH_RADIUS_KM = 6371.0088
 
@@ -82,7 +84,13 @@ class CarModel:
     drivetrain_eff: float = 0.90      # battery -> wheels when climbing
     regen_eff: float = 0.60           # share of descent energy recovered
     charge_curve: tuple[tuple[float, float], ...] = ID3_58_CURVE
-    consumption_model: object = None   # optional personalised model (duck-typed)
+    # Optional: this car's own model (analysis/consumption_model.py), or its
+    # as_dict(); anything with that predict() will do.
+    consumption_model: object = None
+
+    def __post_init__(self):
+        if isinstance(self.consumption_model, dict):
+            self.consumption_model = ConsumptionModel.from_dict(self.consumption_model)
 
 
 @dataclass
@@ -185,18 +193,9 @@ def _model_rate(car: CarModel, temp_c, avg_speed_kmh, hvac_on) -> float:
     with the gradient would count every hill twice. Errors are not swallowed:
     a model that cannot predict must not quietly plan on another figure.
     """
-    m = getattr(car, "consumption_model", None)
+    m = car.consumption_model
     if m is None:
         return car.consumption_kwh_per_km
-    if isinstance(m, dict):
-        x = float(m.get("base_kwh_per_km", car.consumption_kwh_per_km))
-        if temp_c is not None:
-            x += float(m.get("temp_coeff", 0.0)) * temp_c
-        if avg_speed_kmh is not None:
-            x += float(m.get("speed_coeff", 0.0)) * avg_speed_kmh
-        if hvac_on is not None and m.get("hvac_coeff"):
-            x += float(m.get("hvac_coeff", 0.0)) if hvac_on else 0.0
-        return max(0.05, x)
     return float(m.predict(temp_c, avg_speed_kmh, None, hvac_on)[0])
 
 
@@ -354,6 +353,7 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
     reserve = cap * settings.reserve_pct / 100.0
     tv = settings.time_value()
 
+    conditions = (temp_c, avg_speed_kmh, hvac_on)
     seg = [0.0] * n
     net = [0.0] * n                   # net energy used from the start to point k
     for i in range(1, n):
@@ -443,7 +443,7 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
     if final is not None:
         path = _path(best, final[2], final[3])
         return _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct,
-                         car, settings, None)
+                         car, settings, None, conditions)
 
     # Unreachable: follow the plan that gets furthest, and say where it fails.
     far = (-1.0, big, 0, -1)          # (km reached, cost, node, level)
@@ -457,7 +457,7 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
             far = (km, cost, j, li)
     path = _path(best, far[2], far[3])
     return _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct,
-                     car, settings, reserve)
+                     car, settings, reserve, conditions)
 
 
 def _reach(j, node_idx, cands, net, budget, n):
@@ -508,7 +508,7 @@ def _path(best, j, li):
 
 
 def _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct, car,
-              settings, fail_reserve):
+              settings, fail_reserve, conditions=(None, None, None)):
     """Drive the chosen stops point by point (regeneration capped at a full
     battery): the profile, each stop's real arrival, time and cost. With
     `fail_reserve`, keep driving after the last stop until the charge falls
@@ -570,7 +570,7 @@ def _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct, car,
         arrival_pct=None if fail_reserve is not None else pct(energy),
         stops=stops, profile=_profile(profile, cum, cap),
         unreachable_at_km=unreachable_at, charge_s=charge_total, cost=money_total,
-        mode=settings.mode, assumptions=assumptions(car, settings))
+        mode=settings.mode, assumptions=assumptions(car, settings, *conditions))
 
 
 def _profile(points: list[tuple[int, float]], cum, cap) -> list[list[float]]:
@@ -593,7 +593,36 @@ def _thin(profile: list[list[float]], limit: int = 400) -> list[list[float]]:
     return [profile[k] for k in sorted(keep)]
 
 
-def assumptions(car: CarModel, settings: PlanSettings) -> list[str]:
+def _consumption_assumption(car: CarModel, temp_c, avg_speed_kmh, hvac_on) -> str:
+    m = car.consumption_model
+    if m is None:
+        return (f"Consumption {car.consumption_kwh_per_km * 100:.1f} kWh/100 km on the "
+                "flat; speed, temperature, wind and heating are inside this one figure.")
+    ranges = getattr(m, "ranges", {})
+    used = getattr(m, "features_used", ())
+    given = []
+    for f, label, value, unit in (("temp", "outside", temp_c, "°C"),
+                                  ("speed", "average speed", avg_speed_kmh, "km/h")):
+        if value is None or f not in used:
+            continue
+        text = f"{label} {value:.0f} {unit}"
+        lo, hi = ranges.get(f, (value, value))
+        if not lo <= value <= hi:
+            text += (f" (counted as {min(hi, max(lo, value)):.0f}: it has been driven "
+                     f"only at {lo:.0f} to {hi:.0f} {unit})")
+        given.append(text)
+    if hvac_on is not None and "hvac" in used:
+        given.append("heating/air con " + ("on" if hvac_on else "off"))
+    rate = _model_rate(car, temp_c, avg_speed_kmh, hvac_on)
+    names = ", ".join(FEATURE_LABELS.get(f, f) for f in used) or "no conditions"
+    return (f"Consumption {rate * 100:.1f} kWh/100 km on the flat from this car's own "
+            f"model (learned from {getattr(m, 'n_drives', 0)} drives; uses {names})"
+            + (f" for {', '.join(given)}" if given else "")
+            + "; conditions not known count as the car's usual ones.")
+
+
+def assumptions(car: CarModel, settings: PlanSettings, temp_c=None,
+                avg_speed_kmh=None, hvac_on=None) -> list[str]:
     mode = {
         "fastest": "Fastest: stops chosen for the least time charging and "
                    "stopping; price only breaks ties.",
@@ -605,8 +634,7 @@ def assumptions(car: CarModel, settings: PlanSettings) -> list[str]:
           f"£{settings.time_value_per_hour:.0f}/hour.")
     return [
         f"Usable battery {car.usable_kwh:.1f} kWh.",
-        f"Consumption {car.consumption_kwh_per_km * 100:.1f} kWh/100 km on the "
-        "flat; speed, temperature, wind and heating are inside this one figure.",
+        _consumption_assumption(car, temp_c, avg_speed_kmh, hvac_on),
         f"Hills: {car.mass_kg:.0f} kg, {car.regen_eff * 100:.0f} % of descent "
         "energy recovered.",
         f"Arrive with at least {settings.reserve_pct:.0f} %; charge to at most "

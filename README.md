@@ -417,6 +417,7 @@ the scheme.
 | `python tools/import_carscanner.py "export.csv"` | Import a Car Scanner CSV as evidence labelled `imported` (`--dry-run` previews) |
 | `python tools/build_observations_db.py` | Build the normalised SQL analysis copy `data/observations.db` (`--force` rebuilds; see [docs/OBSERVATIONS_DB.md](docs/OBSERVATIONS_DB.md)) |
 | `python main.py seed` | Load the example 30-day dataset into its own database (`seed.db_path`) |
+| `python tools/backtest_consumption.py --db PATH` | Read-only: does this car's own consumption model predict its drives better than the flat rate? The check the Route page makes before using it (`--drives` lists each) |
 | `python tools/purge_synthetic_data.py` | Report (then remove) simulator/demo rows that got into the car's database (`--apply`) |
 | `python main.py guard-test` | Verify the read-only UDS guard |
 | `python main.py doctor` | **Work out why the adapter is not connecting** |
