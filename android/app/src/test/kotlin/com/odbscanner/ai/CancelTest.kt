@@ -33,9 +33,14 @@ class CancelTest {
         val finished = CountDownLatch(1)
         val job = async(Dispatchers.Default) {
             Cancellable.blocking(abort = { aborted.set(true); release.countDown() }) {
-                release.await(10, TimeUnit.SECONDS)
-                finished.countDown()
-                "late answer"
+                // Released by the abort, or interrupted by the cancel: either
+                // way the work ends, and its answer goes nowhere.
+                try {
+                    release.await(10, TimeUnit.SECONDS)
+                    "late answer"
+                } finally {
+                    finished.countDown()
+                }
             }
         }
         delay(50)
