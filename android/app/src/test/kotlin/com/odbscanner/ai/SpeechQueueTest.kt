@@ -92,4 +92,17 @@ class SpeechQueueTest {
         assertEquals(listOf("a1", "n1"), dropped(out))
         assertTrue(q.idle)
     }
+
+    @Test
+    fun anEngineThatNeverFinishesIsGivenUpOnAndGuidanceStillPlays() {
+        q.add(a("a1"))
+        q.add(app("n1"))
+        val out = q.overdue("a1")
+        assertEquals(listOf("a1"), dropped(out))
+        assertEquals(listOf("n1"), said(out))
+        assertEquals(emptyList<SpeechAction>(), q.overdue("a1"))      // once only
+        assertEquals(emptyList<SpeechAction>(), q.done("a1"))        // and its late "done" too
+        assertEquals("n1", q.playing?.id)
+        assertEquals(SpeechQueue.LIMIT_MS + 100 * 120L, SpeechQueue.limitMs("x".repeat(100)))
+    }
 }

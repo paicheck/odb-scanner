@@ -19,7 +19,6 @@ import androidx.car.app.model.Template
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.odbscanner.ai.Assistant
-import com.odbscanner.ai.Speaker
 import com.odbscanner.ai.VoiceAssistant
 import com.odbscanner.ai.VoiceSource
 import com.odbscanner.ai.VoiceState
@@ -190,7 +189,7 @@ class AssistantScreen(carContext: CarContext) : Screen(carContext) {
                 .setOnClickListener { VoiceAssistant.retry(carContext) }.build())
         } else if (last != null) {
             actions.addAction(Action.Builder().setTitle("Repeat")
-                .setOnClickListener { Speaker.say(carContext, last) }.build())
+                .setOnClickListener { VoiceAssistant.repeat(carContext, last) }.build())
         }
         return ListTemplate.Builder().setSingleList(list).setTitle("Assistant")
             .setHeaderAction(Action.BACK).setActionStrip(actions.build()).build()

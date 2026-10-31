@@ -67,6 +67,16 @@ class SpeechQueue(private val isCurrent: (Int) -> Boolean) {
         return next()
     }
 
+    /**
+     * The engine never said it had finished [id] (in [limitMs]) -- it died,
+     * or lost its audio route. [id] is dropped and what waits behind it
+     * plays: without this the queue would wait on it for ever, and the
+     * navigation guidance behind it too.
+     */
+    fun overdue(id: String): List<SpeechAction> =
+        if (playing?.id != id) emptyList()
+        else listOf(SpeechAction.Dropped(listOf(id))) + done(id)
+
     fun stopAssistant(): List<SpeechAction> {
         val dropped = queue.filter { it.owner == SpeechOwner.ASSISTANT }.map { it.id }
         queue.removeAll { it.owner == SpeechOwner.ASSISTANT }
@@ -105,5 +115,12 @@ class SpeechQueue(private val isCurrent: (Int) -> Boolean) {
                 SpeechAction.Play(u))
         }
         return if (stale.isNotEmpty()) listOf(SpeechAction.Dropped(stale)) else emptyList()
+    }
+
+    companion object {
+        const val LIMIT_MS = 60_000L
+
+        /** How long [text] may take to say before the engine is given up on. */
+        fun limitMs(text: String): Long = LIMIT_MS + text.length * 120L
     }
 }

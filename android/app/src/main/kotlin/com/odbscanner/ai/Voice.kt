@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.coroutineContext
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
@@ -51,7 +52,8 @@ object Speaker {
     private val queue = SpeechQueue { turn -> VoiceAssistant.isCurrentTurn(turn) }
     private val waiters = mutableMapOf<String, (AiError?) -> Unit>()
     private val startedAt = mutableMapOf<String, Long>()
-    private var seq = 0
+    private val seq = AtomicInteger()            // utterances are made on any thread
+    private var given = 0                        // handed to the engine (main thread)
     private var customVoice = false             // a chosen voice is in use
     private val replayed = mutableSetOf<String>()
     private val _note = MutableStateFlow<String?>(null)
@@ -146,6 +148,23 @@ object Speaker {
         Focus.duck(context)
         tts?.setSpeechRate(AiPrefs.load(context).speechRate)
         tts?.speak(u.text, TextToSpeech.QUEUE_FLUSH, Bundle(), u.id)
+        val mine = ++given
+        main.postDelayed({ if (given == mine) overdue(context, u) }, SpeechQueue.limitMs(u.text))
+    }
+
+    /** The engine never finished [u] (SpeechQueue.overdue): a fresh one says the rest. */
+    private fun overdue(context: Context, u: Utterance) {
+        val actions = queue.overdue(u.id)
+        if (actions.isEmpty()) return
+        val dead = tts
+        tts = null
+        ready = false
+        runCatching { dead?.stop(); dead?.shutdown() }
+        startedAt.remove(u.id)
+        waiters.remove(u.id)?.invoke(AiError(AiErrorCategory.TIMEOUT, AiErrors.SPEECH_OUT,
+            "The phone's speech engine stopped responding"))
+        run(context, actions, null)
+        if (!queue.idle) engine(context)
     }
 
     private fun submit(context: Context, u: Utterance, done: (AiError?) -> Unit) {
@@ -155,7 +174,7 @@ object Speaker {
     }
 
     private fun utterance(text: String, owner: SpeechOwner, turn: Int, urgent: Boolean) =
-        Utterance("u${seq++}", text, owner, turn, urgent)
+        Utterance("u${seq.getAndIncrement()}", text, owner, turn, urgent)
 
     /**
      * Say [text]; returns at once. [interrupt]: cut off whatever is being said
@@ -184,7 +203,7 @@ object Speaker {
         val begun = SystemClock.elapsedRealtime()
         val u = utterance(text, owner, turn, false)
         var started: Long? = null
-        val err = withTimeoutOrNull(SPEECH_LIMIT_MS + text.length * 120L) {
+        val err = withTimeoutOrNull(SpeechQueue.limitMs(text)) {
             suspendCancellableCoroutine<AiError?> { cont ->
                 main.post {
                     submit(context, u) { e ->
@@ -231,7 +250,7 @@ object Speaker {
         return (e.defaultEngine ?: "unknown") to names
     }
 
-    const val SPEECH_LIMIT_MS = 60_000L
+    const val SPEECH_LIMIT_MS = SpeechQueue.LIMIT_MS
 }
 
 /** Audio focus while speaking: music ducks, then comes back. */
@@ -489,7 +508,10 @@ object VoiceAssistant {
     /** End whatever the assistant is doing, at once. */
     fun stop() {
         val before = synchronized(lock) { machine.status }
-        if (!before.active) return
+        if (!before.active) {
+            Speaker.stopAssistant()               // a Repeat still being said
+            return
+        }
         if (!fire(VoiceEvent.Stop)) return
         job?.cancel()
         Speaker.stopAssistant()
@@ -498,6 +520,14 @@ object VoiceAssistant {
             delay(INTERRUPTED_MS)
             fire(VoiceEvent.Settle(turn))
         }
+    }
+
+    /**
+     * Say the last answer again (Repeat) as the assistant's speech, so Stop,
+     * Speak and a new question silence it like the answer itself.
+     */
+    fun repeat(context: Context, text: String) {
+        Speaker.say(context, text, owner = SpeechOwner.ASSISTANT, turn = _status.value.turn)
     }
 
     /** The driver speaks over the assistant: stop it and listen to them. */
