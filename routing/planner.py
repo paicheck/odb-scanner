@@ -42,12 +42,17 @@ descent from 100 % reads correctly.
 from __future__ import annotations
 
 import math
+from bisect import bisect_right
 from dataclasses import dataclass, field
 
 from analysis.consumption_model import FEATURE_LABELS, ConsumptionModel
 
 G = 9.81
 EARTH_RADIUS_KM = 6371.0088
+AIR_DENSITY = 1.225                   # kg/m³ at 15 °C, sea level
+# A forecast's wind is at 10 m; at a car's height, in open country, it is about
+# this share of that (the wind profile's power law, exponent ~0.15).
+WIND_AT_ROAD = 0.7
 
 # ID.3 Pro 58 kWh DC charging power by state of charge: (SoC %, max kW).
 # Approximate published curve for the 120 kW-capable 58 kWh pack; flat to
@@ -82,6 +87,7 @@ class CarModel:
     consumption_kwh_per_km: float     # flat-road consumption
     mass_kg: float = 1950.0           # car + occupants + load
     drivetrain_eff: float = 0.90      # battery -> wheels when climbing
+    drag_area_m2: float = 0.63        # Cd x frontal area: ID.3 0.267 x 2.36 m²
     regen_eff: float = 0.60           # share of descent energy recovered
     charge_curve: tuple[tuple[float, float], ...] = ID3_58_CURVE
     # Optional: this car's own model (analysis/consumption_model.py), or its
@@ -154,6 +160,7 @@ class Plan:
     cost: float = 0.0                 # money for all stops
     mode: str = "balanced"
     assumptions: list[str] = field(default_factory=list)
+    weather: dict | None = None       # wind kWh and temperatures, when forecast
 
     def as_dict(self) -> dict:
         return {
@@ -166,7 +173,7 @@ class Plan:
             "unreachable_at_km": None if self.unreachable_at_km is None
             else round(self.unreachable_at_km, 1),
             "cost": round(self.cost, 2), "mode": self.mode,
-            "assumptions": self.assumptions,
+            "assumptions": self.assumptions, "weather": self.weather,
         }
 
 
@@ -197,6 +204,51 @@ def _model_rate(car: CarModel, temp_c, avg_speed_kmh, hvac_on) -> float:
     if m is None:
         return car.consumption_kwh_per_km
     return float(m.predict(temp_c, avg_speed_kmh, None, hvac_on)[0])
+
+
+@dataclass
+class Conditions:
+    """The weather from `km` along the route until the next sample: as
+    forecast for when the car passes there (routing/weather.py)."""
+    km: float
+    temp_c: float | None = None
+    wind_kmh: float | None = None       # at 10 m
+    wind_from_deg: float | None = None  # where it blows from, clockwise from north
+
+
+def bearing_deg(a: tuple, b: tuple) -> float:
+    """Initial compass bearing from point a to point b."""
+    p1, p2 = math.radians(a[0]), math.radians(b[0])
+    dl = math.radians(b[1] - a[1])
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return math.degrees(math.atan2(y, x)) % 360.0
+
+
+def headwind_kmh(c: Conditions, bearing: float) -> float:
+    """The forecast wind's component against the direction of travel
+    (negative: from behind), at 10 m."""
+    if c.wind_kmh is None or c.wind_from_deg is None:
+        return 0.0
+    return c.wind_kmh * math.cos(math.radians(c.wind_from_deg - bearing))
+
+
+def wind_kwh(dist_km: float, speed_kmh: float | None, headwind: float,
+             temp_c: float | None, car: CarModel) -> float:
+    """The energy a wind adds over a stretch (negative: saves) against calm air.
+
+    Aerodynamic drag goes with the square of the speed through the air, so a
+    headwind costs more than the same tailwind saves. Cold air is denser.
+    The car's own consumption figure was measured in whatever wind there was;
+    averaged over directions that is close to calm (only the small squared
+    term remains), so this is counted on top of it."""
+    if not headwind or not speed_kmh:
+        return 0.0
+    v = speed_kmh / 3.6
+    va = v + headwind * WIND_AT_ROAD / 3.6
+    rho = AIR_DENSITY if temp_c is None else 101325.0 / (287.05 * (temp_c + 273.15))
+    force = 0.5 * rho * car.drag_area_m2 * (abs(va) * va - v * v)       # N
+    return force * dist_km * 1000.0 / 3.6e6 / car.drivetrain_eff
 
 
 def segment_kwh(dist_km: float, dh_m: float, car: CarModel,
@@ -338,12 +390,15 @@ def _alternatives(cand, cands, cum) -> list[dict]:
 def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
               car: CarModel, settings: PlanSettings,
               chargers: list[Charger],
-              temp_c=None, avg_speed_kmh=None, hvac_on=None) -> Plan:
+              temp_c=None, avg_speed_kmh=None, hvac_on=None,
+              weather: list[Conditions] | None = None) -> Plan:
     """Plan a trip along `points` [(lat, lon, elevation_m or None), ...].
 
     `drive_s` is the routing provider's driving time for the whole route;
     `chargers` are the chargers near it (any order; slow or distant ones are
-    dropped here).
+    dropped here). `weather`, sorted by km, gives each stretch its forecast:
+    the wind through wind_kwh, the temperature through the car's own model
+    only (a flat figure has no temperature to adjust) -- in place of temp_c.
     """
     if len(points) < 2:
         raise ValueError("a route needs at least two points")
@@ -353,16 +408,33 @@ def plan_trip(points: list[tuple], drive_s: float, start_pct: float,
     reserve = cap * settings.reserve_pct / 100.0
     tv = settings.time_value()
 
-    conditions = (temp_c, avg_speed_kmh, hvac_on)
+    weather = sorted(weather or [], key=lambda c: c.km)
+    marks = [c.km for c in weather]
+    # Drag needs a speed: the one given, else the route's average.
+    aero_kmh = avg_speed_kmh or (cum[-1] / (drive_s / 3600.0) if drive_s > 0 else None)
+    wind_total, temps = 0.0, []
     seg = [0.0] * n
     net = [0.0] * n                   # net energy used from the start to point k
     for i in range(1, n):
         a, b = points[i - 1], points[i]
         dh = (b[2] - a[2]) if (a[2] is not None and b[2] is not None) else 0.0
-        seg[i] = segment_kwh(cum[i] - cum[i - 1], dh, car,
-                             temp_c=temp_c, avg_speed_kmh=avg_speed_kmh,
+        dist = cum[i] - cum[i - 1]
+        here = weather[max(0, bisect_right(marks, cum[i - 1]) - 1)] if weather else None
+        t = here.temp_c if here is not None and here.temp_c is not None else temp_c
+        seg[i] = segment_kwh(dist, dh, car, temp_c=t, avg_speed_kmh=avg_speed_kmh,
                              hvac_on=hvac_on)
+        if here is not None:
+            w = wind_kwh(dist, aero_kmh, headwind_kmh(here, bearing_deg(a, b)), t, car)
+            seg[i] += w
+            wind_total += w
+            if t is not None:
+                temps.append(t)
         net[i] = net[i - 1] + seg[i]
+    span = (min(temps), max(temps)) if temps else temp_c
+    summary = {"wind_kwh": round(wind_total, 2), "samples": len(weather),
+               "temp_min": round(min(temps), 1) if temps else None,
+               "temp_max": round(max(temps), 1) if temps else None} if weather else None
+    conditions = (span, avg_speed_kmh, hvac_on, summary)
 
     levels = leave_levels(settings)
     level_kwh = [cap * x / 100.0 for x in levels]
@@ -508,7 +580,7 @@ def _path(best, j, li):
 
 
 def _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct, car,
-              settings, fail_reserve, conditions=(None, None, None)):
+              settings, fail_reserve, conditions=(None, None, None, None)):
     """Drive the chosen stops point by point (regeneration capped at a full
     battery): the profile, each stop's real arrival, time and cost. With
     `fail_reserve`, keep driving after the last stop until the charge falls
@@ -570,7 +642,8 @@ def _simulate(points, cum, seg, cands, path, levels, drive_s, start_pct, car,
         arrival_pct=None if fail_reserve is not None else pct(energy),
         stops=stops, profile=_profile(profile, cum, cap),
         unreachable_at_km=unreachable_at, charge_s=charge_total, cost=money_total,
-        mode=settings.mode, assumptions=assumptions(car, settings, *conditions))
+        mode=settings.mode, assumptions=assumptions(car, settings, *conditions),
+        weather=conditions[3])
 
 
 def _profile(points: list[tuple[int, float]], cum, cap) -> list[list[float]]:
@@ -593,36 +666,62 @@ def _thin(profile: list[list[float]], limit: int = 400) -> list[list[float]]:
     return [profile[k] for k in sorted(keep)]
 
 
-def _consumption_assumption(car: CarModel, temp_c, avg_speed_kmh, hvac_on) -> str:
+def _consumption_assumption(car: CarModel, temp, avg_speed_kmh, hvac_on,
+                            windy: bool = False) -> str:
+    """`temp` is one temperature or the (lowest, highest) forecast along the way."""
+    lo_t, hi_t = temp if isinstance(temp, tuple) else (temp, temp)
     m = car.consumption_model
     if m is None:
+        inside = ("speed, temperature and heating are inside this one figure; the "
+                  "wind is counted on top" if windy else
+                  "speed, temperature, wind and heating are inside this one figure")
         return (f"Consumption {car.consumption_kwh_per_km * 100:.1f} kWh/100 km on the "
-                "flat; speed, temperature, wind and heating are inside this one figure.")
+                f"flat; {inside}.")
     ranges = getattr(m, "ranges", {})
     used = getattr(m, "features_used", ())
     given = []
-    for f, label, value, unit in (("temp", "outside", temp_c, "°C"),
-                                  ("speed", "average speed", avg_speed_kmh, "km/h")):
-        if value is None or f not in used:
+    for f, label, lo, hi, unit in (("temp", "outside", lo_t, hi_t, "°C"),
+                                   ("speed", "average speed", avg_speed_kmh,
+                                    avg_speed_kmh, "km/h")):
+        if lo is None or f not in used:
             continue
-        text = f"{label} {value:.0f} {unit}"
-        lo, hi = ranges.get(f, (value, value))
-        if not lo <= value <= hi:
-            text += (f" (counted as {min(hi, max(lo, value)):.0f}: it has been driven "
-                     f"only at {lo:.0f} to {hi:.0f} {unit})")
+        text = f"{label} {lo:.0f} {unit}" if round(lo) == round(hi) else \
+            f"{label} {lo:.0f} to {hi:.0f} {unit}"
+        r_lo, r_hi = ranges.get(f, (lo, hi))
+        if lo < r_lo or hi > r_hi:
+            text += (f" (counted within the {r_lo:.0f} to {r_hi:.0f} {unit} it has "
+                     "been driven at)")
         given.append(text)
     if hvac_on is not None and "hvac" in used:
         given.append("heating/air con " + ("on" if hvac_on else "off"))
-    rate = _model_rate(car, temp_c, avg_speed_kmh, hvac_on)
+    rates = sorted({round(_model_rate(car, t, avg_speed_kmh, hvac_on) * 100, 1)
+                    for t in (lo_t, hi_t)})
+    figure = f"{rates[0]:.1f}" + (f" to {rates[-1]:.1f}" if len(rates) > 1 else "")
     names = ", ".join(FEATURE_LABELS.get(f, f) for f in used) or "no conditions"
-    return (f"Consumption {rate * 100:.1f} kWh/100 km on the flat from this car's own "
+    return (f"Consumption {figure} kWh/100 km on the flat from this car's own "
             f"model (learned from {getattr(m, 'n_drives', 0)} drives; uses {names})"
             + (f" for {', '.join(given)}" if given else "")
             + "; conditions not known count as the car's usual ones.")
 
 
+def _weather_assumption(car: CarModel, summary: dict) -> str:
+    wind = summary["wind_kwh"]
+    effect = (f"the wind costs about {wind:.1f} kWh over the trip" if wind > 0.05 else
+              f"the wind saves about {-wind:.1f} kWh over the trip" if wind < -0.05 else
+              "the wind makes no real difference")
+    uses_temp = "temp" in getattr(car.consumption_model, "features_used", ())
+    return (f"Weather: the forecast for when you pass each of {summary['samples']} "
+            f"points; {effect} (drag area {car.drag_area_m2:.2f} m², wind at the "
+            f"car's height {WIND_AT_ROAD * 100:.0f} % of the 10 m forecast; a "
+            "headwind costs more than the same tailwind saves). Temperature changes "
+            "consumption only through this car's own model"
+            + ("." if uses_temp else ", which does not use it, so it is not "
+               "counted.") + " Rain and snow are not counted.")
+
+
 def assumptions(car: CarModel, settings: PlanSettings, temp_c=None,
-                avg_speed_kmh=None, hvac_on=None) -> list[str]:
+                avg_speed_kmh=None, hvac_on=None, weather: dict | None = None
+                ) -> list[str]:
     mode = {
         "fastest": "Fastest: stops chosen for the least time charging and "
                    "stopping; price only breaks ties.",
@@ -634,7 +733,7 @@ def assumptions(car: CarModel, settings: PlanSettings, temp_c=None,
           f"£{settings.time_value_per_hour:.0f}/hour.")
     return [
         f"Usable battery {car.usable_kwh:.1f} kWh.",
-        _consumption_assumption(car, temp_c, avg_speed_kmh, hvac_on),
+        _consumption_assumption(car, temp_c, avg_speed_kmh, hvac_on, bool(weather)),
         f"Hills: {car.mass_kg:.0f} kg, {car.regen_eff * 100:.0f} % of descent "
         "energy recovered.",
         f"Arrive with at least {settings.reserve_pct:.0f} %; charge to at most "
@@ -650,7 +749,8 @@ def assumptions(car: CarModel, settings: PlanSettings, temp_c=None,
         f"added divided by {settings.charging_eff:.2f} (charging losses).",
         "Charging time follows the ID.3 58 kWh DC curve, capped by the "
         "charger's rated power; real sessions are often slower.",
-    ] + _choice_assumptions(settings)
+    ] + ([_weather_assumption(car, weather)] if weather else []) \
+        + _choice_assumptions(settings)
 
 
 def _choice_assumptions(settings: PlanSettings) -> list[str]:

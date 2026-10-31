@@ -125,7 +125,7 @@ def register(app, ctx) -> None:
     @app.get("/route", response_class=HTMLResponse)
     def route_page(request: Request):
         from analysis.position import positions
-        from routing import prices, providers
+        from routing import prices, providers, weather
         from routing.car import DEFAULT_CONSUMPTION, DEFAULT_USABLE_KWH, car_energy
         from routing.planner import MODES, CarModel, PlanSettings, plan_trip
 
@@ -175,6 +175,7 @@ def register(app, ctx) -> None:
         context = dict(car=car, fix=fix, form=form, plan=None, error=None,
                        origin=None, destination=None, alternatives=[],
                        avoid_names=providers.AVOID, ways=[], traffic_note=None,
+                       weather_note=None,
                        traffic_lines=[], live_traffic=bool(token),
                        way_query=urlencode([(k, v) for k, v in p.multi_items()
                                             if k != "way"]),
@@ -259,8 +260,13 @@ def register(app, ctx) -> None:
             for c in chargers:
                 c.price_per_kwh, c.fee, c.price_source = prices.price_for(
                     c.operator, c.usage_cost, own, default_price)
+            forecast = None
+            if cfg.get("routing.weather", True):
+                forecast, context["weather_note"] = weather.along_route(
+                    route.points, route.duration_s)
             plan = plan_trip(route.points, route.duration_s, form["start_pct"],
-                             model, settings, chargers, avg_speed_kmh=speed)
+                             model, settings, chargers, avg_speed_kmh=speed,
+                             weather=forecast)
             step = max(1, -(-len(route.points) // ROUTE_LINE_MAX))
             line = [[pt[0], pt[1]] for pt in route.points[::step]]
             if line[-1] != list(route.points[-1][:2]):

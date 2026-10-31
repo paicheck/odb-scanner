@@ -97,7 +97,7 @@ def test_the_route_page_plans_with_the_model_it_earned(cold_car, services):  # n
     body = _client(cold_car, KEYS).get("/route", params={"to": "Leeds"}).text
     text = _assumptions(body)
     assert "from this car's own model" in text
-    assert "average speed 96 km/h (counted as" in text    # 400 km in 15,000 s
+    assert "average speed 96 km/h (counted within" in text    # 400 km in 15,000 s
     assert "Consumption model: this car's own model" in html.unescape(body)
 
 

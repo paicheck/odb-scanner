@@ -67,3 +67,23 @@ def _restore_experiment_arms():
         for arm, actual, interpret in snapshot:
             arm.actual = actual
             arm.interpret = interpret
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    """No test reaches the network. A request that gets as far as a real HTTP
+    call through `requests` fails as if offline, unless it is to a server the
+    test started on loopback; tests stub the calls they mean to make
+    (requests.get/post, or a provider's methods), which never reach this. The
+    Route page's weather lookup, for one, then finds no forecast instead of
+    asking Open-Meteo."""
+    from urllib.parse import urlsplit
+
+    import requests
+    real = requests.sessions.Session.request
+
+    def offline(self, method, url, *args, **kwargs):
+        if urlsplit(str(url)).hostname in ("127.0.0.1", "localhost", "::1"):
+            return real(self, method, url, *args, **kwargs)
+        raise requests.ConnectionError(f"tests do not reach the network: {method} {url}")
+    monkeypatch.setattr(requests.sessions.Session, "request", offline)

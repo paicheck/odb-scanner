@@ -270,6 +270,11 @@ routing:
   # Flat-road consumption, kWh/100 km. Empty: measured from this car's own
   # driving once 50 km is recorded, else 17 (ID.3, mixed driving, mild weather).
   consumption_kwh_per_100km:
+  # The forecast along the route from Open-Meteo (free, no key): the wind is
+  # counted, and the temperature through this car's own consumption model once
+  # it has earned that. Sends points along the route rounded to 0.1° (~11 km).
+  # false: no weather request; the plan assumes the car's usual conditions.
+  weather: true
 
 analysis:
   trend_window_days: 30     # battery trend + overview/chart window
