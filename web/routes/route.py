@@ -163,6 +163,23 @@ def _traffic_lines(points, runs) -> list[dict]:
     return out
 
 
+def _fix_age(ts) -> str:
+    """" (5 h ago)" for a recorded position more than half an hour old: the
+    car may not be there now, so the plan says what it starts from."""
+    try:
+        then = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return ""
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    s = (datetime.now(timezone.utc) - then).total_seconds()
+    if s < 1800:
+        return ""
+    if s < 2 * 86400:
+        return f" ({s / 3600:.0f} h ago)"
+    return f" ({s / 86400:.0f} days ago)"
+
+
 def _physics_range(model, car, form, forecast, speed):
     """The arrival range of this car's physics model (routing/uncertainty.py)
     for this route: its forecast temperature and how far that may be off,
@@ -276,8 +293,8 @@ def register(app, ctx) -> None:
                     raise providers.RoutingError(f"No place found for “{form['frm']}”.")
                 origin = starts[0]
             elif fix:
-                origin = providers.Place("Car's last recorded position",
-                                         fix["lat"], fix["lon"])
+                label = "Car's last recorded position" + _fix_age(fix.get("ts"))
+                origin = providers.Place(label, fix["lat"], fix["lon"])
             else:
                 raise providers.RoutingError(
                     "No GPS position recorded for the car yet: enter a start point.")

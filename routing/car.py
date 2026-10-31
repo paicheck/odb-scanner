@@ -159,6 +159,29 @@ def consumption_check(repo, vid: int) -> dict:
     return out
 
 
+# The display SoC and energy content over the BMS maximum are not the same
+# scale (the display keeps a buffer), but they move together: further apart
+# than this, read at about the same time, and one of them is wrong.
+START_DISAGREE_PCT = 8.0
+START_PAIR_S = 30 * 60
+
+
+def _start_check(energy_pct: float, energy_ts: str, soc) -> str | None:
+    """A plain warning when the displayed charge read near the energy
+    reading disagrees with it by more than START_DISAGREE_PCT."""
+    from analysis.trips import _t
+    if not soc:
+        return None
+    a, b = _t(energy_ts), _t(soc[0])
+    if a is None or b is None or abs(a - b) > START_PAIR_S:
+        return None
+    if abs(soc[1] - energy_pct) <= START_DISAGREE_PCT:
+        return None
+    return (f"The battery's energy reading gives {energy_pct:.0f} % but the displayed "
+            f"charge read then was {soc[1]:.0f} %: one of them is off, so check the "
+            "start charge before relying on the plan.")
+
+
 def charge_curve(repo, vid: int, cfg) -> tuple[tuple, str, list | None]:
     """(curve, basis, measured points or None): routing.charge_curve if set
     ([[soc %, kW], ...]), else this car's measured DC curve, else the
@@ -190,10 +213,12 @@ def car_energy(repo, vid: int, cfg) -> dict:
         usable_kwh = DEFAULT_USABLE_KWH
         usable_basis = "ID.3 58 kWh nominal (no BMS reading)"
 
+    start_check = None
     if content:
         now_kwh, now_ts, now_basis = content[1] / 1000.0, content[0], \
             "energy content (hv_energy_content)"
         start_pct = min(100.0, max(0.0, now_kwh / usable_kwh * 100.0))
+        start_check = _start_check(start_pct, content[0], soc)
     elif soc:
         start_pct, now_ts, now_basis = soc[1], soc[0], "display SoC"
     else:
@@ -226,6 +251,8 @@ def car_energy(repo, vid: int, cfg) -> dict:
     return {
         "usable_kwh": round(usable_kwh, 2), "usable_basis": usable_basis,
         "start_pct": round(start_pct, 1), "start_ts": now_ts, "start_basis": now_basis,
+        # When the displayed charge read at about the same time disagrees.
+        "start_check": start_check,
         "consumption_kwh_per_100km": round(cons * 100.0, 1),
         "consumption_basis": cons_basis,
         # A dict, so the figures can travel through the page context.

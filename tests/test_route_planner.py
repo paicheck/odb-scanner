@@ -625,3 +625,15 @@ def test_a_model_that_cannot_predict_is_an_error_not_a_fallback():
                    consumption_model=Broken())
     with pytest.raises(ValueError):
         segment_kwh(1.0, 0.0, car)
+
+
+
+def test_an_old_car_position_says_how_old_it_is():
+    from datetime import datetime, timedelta, timezone
+
+    from web.routes.route import _fix_age
+    now = datetime.now(timezone.utc)
+    assert _fix_age((now - timedelta(minutes=10)).isoformat()) == ""
+    assert _fix_age((now - timedelta(hours=5)).isoformat()) == " (5 h ago)"
+    assert _fix_age((now - timedelta(days=4)).isoformat()) == " (4 days ago)"
+    assert _fix_age(None) == ""

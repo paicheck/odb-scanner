@@ -95,3 +95,20 @@ def test_a_curve_in_config_wins_and_none_means_the_published_one(tmp_path):
     vid = empty.ensure_vehicle("WVWZZZE1ZMS000001")
     assert charge_curve(empty, vid, Config({})) == (ID3_58_CURVE, "", None)
     empty.close()
+
+
+def test_a_start_charge_the_display_disagrees_with_is_flagged(tmp_path):
+    from test_consumption_in_route import _put
+    repo = Repository(str(tmp_path / "s.db"))
+    vid = repo.ensure_vehicle("WVWZZZE1ZMS000001")
+    now = datetime.now(timezone.utc)
+    _put(repo, vid, "hv_energy_max", now - timedelta(minutes=5), 56000.0)
+    _put(repo, vid, "hv_energy_content", now - timedelta(minutes=5), 28000.0)   # 50 %
+    _put(repo, vid, "soc_normal", now - timedelta(minutes=6), 51.0)
+    repo.conn.commit()
+    assert car_energy(repo, vid, Config({}))["start_check"] is None
+    _put(repo, vid, "soc_normal", now - timedelta(minutes=4), 70.0)
+    repo.conn.commit()
+    got = car_energy(repo, vid, Config({}))["start_check"]
+    assert got and "gives 50 %" in got and "was 70 %" in got
+    repo.close()

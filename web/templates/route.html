@@ -70,6 +70,7 @@
     ({{ car.consumption_basis }}). Change any of them above for this trip.
     {% if car.consumption_model_basis %}Consumption model: {{ car.consumption_model_basis }}{% if car.consumption_model %}
     (used unless you change the figure above){% endif %}.{% endif %}</p>
+  {% if car.start_check %}<p class="chart-note warn">{{ car.start_check }}</p>{% endif %}
   {% endif %}
 </form>
 
