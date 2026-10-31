@@ -64,6 +64,66 @@ reason. The outside-temperature decoder is not yet verified on this car.</p>
 </table>
 {% endif %}
 
+{% if profile and profile.drives %}
+<h3 class="section-h">What this car has shown</h3>
+<p class="note">From {{ profile.drives }} drives ({{ profile.km | fmtnum(0) }} km) over the last
+  year or so. Measured figures come straight from the drives; inferred ones are what the
+  consumption model makes of them, with their uncertainty; nothing here is a published figure.</p>
+
+<h4>Measured</h4>
+<table>
+<tr><th>Average speed</th><th>Drives</th><th>Distance</th><th>Used</th></tr>
+{% for b in profile.measured.by_speed %}
+<tr><td>{{ b.band }}</td><td>{{ b.drives }}</td><td>{{ b.km | fmtnum(0) }} km</td>
+  <td>{% if b.enough %}{{ b.kwh_per_100km | fmtnum(1) }} kWh/100 km{% else %}<span class="note">too few to say</span>{% endif %}</td></tr>
+{% endfor %}
+<tr><th>Outside temperature</th><th></th><th></th><th></th></tr>
+{% for b in profile.measured.by_temperature %}
+<tr><td>{{ b.band }}</td><td>{{ b.drives }}</td><td>{{ b.km | fmtnum(0) }} km</td>
+  <td>{% if b.enough %}{{ b.kwh_per_100km | fmtnum(1) }} kWh/100 km{% else %}<span class="note">too few to say</span>{% endif %}</td></tr>
+{% endfor %}
+</table>
+{% if profile.cold_costs is defined %}<p class="note">Below 5 °C this car has used
+  {{ profile.cold_costs | fmtnum(1) }} kWh/100 km more than above 15 °C (measured; the drives
+  differ in more than the temperature).</p>{% endif %}
+{% if profile.charging %}<p class="note">DC charging, measured where sessions showed the car's own
+  limit: {% for p in profile.charging %}{{ p.kw | fmtnum(0) }} kW at {{ p.soc | int }} %
+  (published {{ p.published_kw | int }}, {{ p.sessions }} sessions{% if p.temp_c is not none %}, pack
+  {{ p.temp_c | fmtnum(0) }} °C{% endif %}){% if not loop.last %}; {% endif %}{% endfor %}.</p>{% endif %}
+
+{% if profile.inferred %}
+<h4>Inferred by the model{% if not profile.inferred_used %} (not used for planning){% endif %}</h4>
+<table>
+<tr><th>What</th><th>Estimate</th><th>Range at that rate</th><th></th></tr>
+{% for i in profile.inferred %}
+<tr><td>{{ i.what }}</td><td>{{ i.value }} ± {{ i.sd }} {{ i.unit }}</td>
+  <td>{% if i.range_km is defined %}{{ i.range_km }} km{% endif %}</td>
+  <td class="note">{% if i.held %}held at zero: the drives put it below nothing, which no car does{% elif i.mostly_assumed %}mostly assumed: the drives have not pinned this down yet{% endif %}</td></tr>
+{% endfor %}
+</table>
+<p class="note">{{ profile.model_basis }}. ± is the model's own uncertainty about this car, not
+  how much one journey varies.</p>
+{% endif %}
+
+{% if profile.predictions.drives %}
+<h4>Predicted before, measured after</h4>
+<p class="note">The last {{ profile.predictions.drives }} drives, each predicted ({{ profile.predictions.method }})
+  only from the drives before it: off by {{ profile.predictions.arrival_mae_pct }} % of the battery on
+  average at arrival, {{ profile.predictions.arrival_worst_pct }} % at worst{% if profile.predictions.bias_kwh_per_100km is not none %};
+  bias {{ '%+.1f' | format(profile.predictions.bias_kwh_per_100km) }} kWh/100 km (positive: it expected more){% endif %}.</p>
+<table>
+<tr><th>Ended</th><th>Distance</th><th>Outside</th><th>Predicted</th><th>Used</th><th>At arrival</th></tr>
+{% for r in profile.predictions.rows %}
+<tr><td>{{ r.ended | fmtts }}</td><td>{{ r.km | fmtnum(0) }} km</td>
+  <td>{% if r.temp_c is not none %}{{ r.temp_c | fmtnum(0) }} °C{% else %}—{% endif %}</td>
+  <td>{{ r.predicted_kwh | fmtnum(2) }} kWh</td><td>{{ r.actual_kwh | fmtnum(2) }} kWh</td>
+  <td>{{ '%+.1f' | format(r.arrival_error_pct) }} %</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+{% for n in profile.not_measured %}<p class="note">{{ n }}</p>{% endfor %}
+{% endif %}
+
 <p class="note">How drives are found: from this car's own odometer readings
 (never imported or simulated ones), cut wherever the recording is silent for
 over {{ gap_min }} minutes (a drive or a charge may have gone unseen), the

@@ -152,7 +152,7 @@ def consumption_check(repo, vid: int) -> dict:
     # How far off its predictions were, for the figure the Route page will use.
     spread = None if used_name == "physics" else error_spread(result, model=used_name)
     out = {"model": model, "backtest": result, "basis": basis, "spread": spread,
-           "range": rng}
+           "range": rng, "samples": samples}
     if len(_checks) > 16:
         _checks.clear()
     _checks[key] = out
