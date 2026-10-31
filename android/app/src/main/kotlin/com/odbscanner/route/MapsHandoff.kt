@@ -47,12 +47,20 @@ object MapsHandoff {
         return words.any { it in YES }
     }
 
+    /**
+     * The trip for Google Maps from [from] (the car's position now, so
+     * Google Maps navigates rather than previews; else the trip's start):
+     * each charging stop, then the destination, keeping off the roads the
+     * trip keeps off.
+     */
+    fun link(r: TripResult, from: Pair<Double, Double>? = null): GoogleMaps.Handoff =
+        GoogleMaps.tripLink(from ?: (r.origin.lat to r.origin.lon),
+            r.plan.stops.map { it.charger.lat to it.charger.lon },
+            r.destination.lat to r.destination.lon, r.avoid)
+
     /** The whole trip for Google Maps: each charging stop, then the destination. */
     fun intent(r: TripResult): Intent {
-        val url = Uri.parse(googleMapsTripUrl(
-            r.origin.lat to r.origin.lon,
-            r.plan.stops.map { it.charger.lat to it.charger.lon },
-            r.destination.lat to r.destination.lon))
+        val url = Uri.parse(link(r).url)
         return Intent(Intent.ACTION_VIEW, url).setPackage(MAPS_PACKAGE)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }

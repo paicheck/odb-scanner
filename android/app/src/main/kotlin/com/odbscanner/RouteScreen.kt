@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.odbscanner.route.ActiveTrip
 import com.odbscanner.route.CarEnergy
-import com.odbscanner.route.MAX_LINK_STOPS
+import com.odbscanner.route.GoogleMaps
 import com.odbscanner.route.MODES
 import com.odbscanner.route.NavRoute
 import com.odbscanner.route.NavText
@@ -371,8 +371,8 @@ private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit
                     startTrip(context, r)
                 }) { Text("Open in Google Maps instead") }
             }
-            if (p.stops.size > MAX_LINK_STOPS) {
-                Text("Google Maps takes $MAX_LINK_STOPS stops from a link; add the rest there.",
+            if (p.stops.size > GoogleMaps.MAX_WAYPOINTS) {
+                Text(MapsHandoff.link(r).note,
                     style = MaterialTheme.typography.bodySmall)
             }
         }

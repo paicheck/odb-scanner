@@ -141,23 +141,3 @@ object MapMath {
             .map { it.lat to it.lon }
     }
 }
-
-/**
- * Google Maps directions for the whole trip: from [origin], each charger a
- * stop, then the destination. The origin must be given: without it the Maps
- * app takes the first stop as the destination and drops the rest. Google
- * Maps takes at most 9 stops from a link.
- */
-fun googleMapsTripUrl(origin: Pair<Double, Double>, stops: List<Pair<Double, Double>>,
-                      destination: Pair<Double, Double>): String {
-    fun ll(p: Pair<Double, Double>) = String.format(Locale.ROOT, "%.6f,%.6f", p.first, p.second)
-    val url = StringBuilder("https://www.google.com/maps/dir/?api=1&travelmode=driving")
-        .append("&origin=").append(ll(origin))
-        .append("&destination=").append(ll(destination))
-    if (stops.isNotEmpty()) {
-        url.append("&waypoints=").append(stops.take(MAX_LINK_STOPS).joinToString("%7C") { ll(it) })
-    }
-    return url.toString()
-}
-
-const val MAX_LINK_STOPS = 9

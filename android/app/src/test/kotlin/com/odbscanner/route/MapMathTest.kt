@@ -48,18 +48,6 @@ class MapMathTest {
         assertEquals(1233.0, thin.last().first, 0.0)
     }
 
-    @Test
-    fun googleTripLinkHasStopsThenDestination() {
-        val url = googleMapsTripUrl(51.75 to -1.26, listOf(52.1 to -1.5, 54.0 to -2.75),
-            55.95 to -3.19)
-        assertEquals("https://www.google.com/maps/dir/?api=1&travelmode=driving" +
-            "&origin=51.750000,-1.260000&destination=55.950000,-3.190000" +
-            "&waypoints=52.100000,-1.500000%7C54.000000,-2.750000", url)
-        assertTrue(!googleMapsTripUrl(0.0 to 0.0, emptyList(), 1.0 to 2.0).contains("waypoints"))
-        val many = googleMapsTripUrl(0.0 to 0.0, (1..12).map { it.toDouble() to 0.0 }, 0.0 to 0.0)
-        assertEquals(MAX_LINK_STOPS, many.substringAfter("waypoints=").split("%7C").size)
-    }
-
     // -- the camera a driver pinches and drags -----------------------------------
 
     private val trip = listOf(51.75 to -1.26, 53.48 to -2.24, 55.95 to -3.19)   // Oxford → Edinburgh
