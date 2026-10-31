@@ -338,7 +338,9 @@ def register(app, ctx) -> None:
             model = CarModel(
                 usable_kwh=car["usable_kwh"] if car else DEFAULT_USABLE_KWH,
                 consumption_kwh_per_km=form["consumption"] / 100.0,
-                consumption_model=mine or None)
+                consumption_model=mine or None,
+                **({"charge_curve": tuple(tuple(p) for p in car["charge_curve"]),
+                    "charge_curve_basis": car["charge_curve_basis"]} if car else {}))
             speed = (route.distance_km / (route.duration_s / 3600.0)
                      if route.duration_s > 0 else None)
             chargers = ocm.along(route.points, settings.search_radius_km)

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from analysis.charge_curve import measured_curve_for
 from analysis.consumption_backtest import PHYSICS_WINDOW_DAYS, backtest, error_spread
 from analysis.consumption_model import FEATURE_LABELS, DriveSample, estimate
 from analysis.energy_model import fit as fit_physics
@@ -158,6 +159,25 @@ def consumption_check(repo, vid: int) -> dict:
     return out
 
 
+def charge_curve(repo, vid: int, cfg) -> tuple[tuple, str, list | None]:
+    """(curve, basis, measured points or None): routing.charge_curve if set
+    ([[soc %, kW], ...]), else this car's measured DC curve, else the
+    published ID.3 58 kWh one."""
+    from routing.planner import ID3_58_CURVE
+    raw = cfg.get("routing.charge_curve")
+    if raw:
+        try:
+            curve = tuple(sorted((float(s), float(kw)) for s, kw in raw))
+            if len(curve) >= 2:
+                return curve, "the charging curve set in config", None
+        except (TypeError, ValueError):
+            pass
+    got = measured_curve_for(repo, vid, ID3_58_CURVE)
+    if got:
+        return tuple(tuple(p) for p in got["curve"]), got["basis"], got["points"]
+    return ID3_58_CURVE, "", None
+
+
 def car_energy(repo, vid: int, cfg) -> dict:
     usable = _latest(repo, vid, "hv_energy_max")
     content = _latest(repo, vid, "hv_energy_content")
@@ -198,6 +218,7 @@ def car_energy(repo, vid: int, cfg) -> dict:
                 f"last {CONSUMPTION_DAYS} days (needs {MIN_MEASURED_KM:.0f} km "
                 f"to measure)")
 
+    curve, curve_basis, curve_points = charge_curve(repo, vid, cfg)
     if not configured:
         check = consumption_check(repo, vid)
         model, model_basis, spread = check["model"], check["basis"], check["spread"]
@@ -216,4 +237,8 @@ def car_energy(repo, vid: int, cfg) -> dict:
         # The physics model's own ranges: how much wider than its spread they
         # must be (learned on the backtest's drives), and on how many drives.
         "consumption_range": rng,
+        # The DC curve stops are timed on: config's, this car's own where its
+        # sessions show it (analysis/charge_curve.py), else the published one.
+        "charge_curve": [list(p) for p in curve], "charge_curve_basis": curve_basis,
+        "charge_curve_points": curve_points,
     }

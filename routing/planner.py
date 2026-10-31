@@ -95,6 +95,8 @@ class CarModel:
     drag_area_m2: float = 0.63        # Cd x frontal area: ID.3 0.267 x 2.36 m²
     regen_eff: float = 0.60           # share of descent energy recovered
     charge_curve: tuple[tuple[float, float], ...] = ID3_58_CURVE
+    # Where charge_curve came from, for the assumptions (blank: the published one).
+    charge_curve_basis: str = ""
     # Optional: this car's own model (analysis/consumption_model.py or the
     # physics one, analysis/energy_model.py), or its as_dict(); anything with
     # that predict() will do.
@@ -846,8 +848,10 @@ def assumptions(car: CarModel, settings: PlanSettings, temp_c=None,
         "Charge Map (community-entered; can be out of date), else "
         f"£{settings.default_price_per_kwh:.2f}/kWh. Billed energy is the energy "
         f"added divided by {settings.charging_eff:.2f} (charging losses).",
-        "Charging time follows the ID.3 58 kWh DC curve, capped by the "
-        "charger's rated power; real sessions are often slower.",
+        (f"Charging time follows {car.charge_curve_basis}, capped by the charger's "
+         "rated power." if car.charge_curve_basis else
+         "Charging time follows the ID.3 58 kWh DC curve, capped by the "
+         "charger's rated power; real sessions are often slower."),
     ] + ([_weather_assumption(car, weather)] if weather else []) \
         + _choice_assumptions(settings)
 
