@@ -59,8 +59,8 @@ cases;
 ## Decisions for you
 
 1. **Push / merge.** Suggested order: `ai-fallback`, then `charger-preferences`,
-   then this branch (each builds on the one before). Or review the 35
-   commits over `main` as one PR.
+   then this branch (each builds on the one before). Or review everything over `main`
+   as one PR (`git log --oneline main..overnight-2026-10-31`).
 2. **Weather is on by default** (`routing.weather: true`, and on the phone).
    It sends points along the route, rounded to 0.1°, to Open-Meteo; the route
    already goes to OpenRouteService and Open Charge Map. Turn it off in
