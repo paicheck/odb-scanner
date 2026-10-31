@@ -83,7 +83,9 @@
   <div class="card"><h3>Arrival charge</h3>
     <div class="big">{% if pl.arrival_pct is not none %}{{ pl.arrival_pct }} %{% else %}—{% endif %}</div>
     {% if pl.arrival_band %}<div class="note{% if pl.arrival_band.below_reserve %} warn{% endif %}"
-      title="{{ pl.arrival_band.basis }}">likely {{ pl.arrival_band.low_pct }}–{{ pl.arrival_band.high_pct }} %{% if pl.arrival_band.below_reserve %}: could arrive below your {{ form.reserve | round | int }} % reserve{% endif %}</div>{% endif %}
+      title="{{ pl.arrival_band.basis }}">likely {{ pl.arrival_band.low_pct }}–{{ pl.arrival_band.high_pct }} %{% if pl.arrival_band.below_reserve %}: could arrive below your {{ form.reserve | round | int }} % reserve{% endif %}</div>
+    {% if pl.arrival_band.confidence %}<div class="note{% if pl.arrival_band.confidence == 'low' %} warn{% endif %}">confidence: {{ pl.arrival_band.confidence }}
+      ({{ pl.arrival_band.drives }} drives){% for c in pl.arrival_band.checks %}<br>{{ c }}{% endfor %}</div>{% endif %}{% endif %}
     <div class="note">{% if pl.status == 'direct' %}no charging needed
       {% elif pl.status == 'with_stops' %}after {{ pl.stops | length }} charging stop{{ 's' if pl.stops | length != 1 }}
       {% else %}not reachable with the chargers found{% endif %}</div></div>

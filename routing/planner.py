@@ -567,7 +567,26 @@ def _add_bands(plan: Plan, car: CarModel, settings: PlanSettings,
     than planned over the leg that leads there. A whole leg carries the spread
     of one drive; a long leg evens out some of it, so the range is on the wide
     side. Stops were chosen for the planned figure; this says how much room
-    that leaves."""
+    that leaves.
+
+    `err` may instead be a range of the car's own physics model
+    (routing/uncertainty.py ModelRange, PC only): anything with
+    band(pct, leg_km, first) -> (low, high), basis, summary() and
+    assumption()."""
+    if err is not None and hasattr(err, "band"):
+        prev = 0.0
+        for i, s in enumerate(plan.stops):
+            s["arrive_low_pct"], s["arrive_high_pct"] = err.band(
+                s["arrive_pct"], s["km"] - prev, i == 0)
+            s["arrive_low_below_reserve"] = s["arrive_low_pct"] < settings.reserve_pct
+            prev = s["km"]
+        if plan.arrival_pct is not None:
+            lo, hi = err.band(plan.arrival_pct, plan.distance_km - prev, not plan.stops)
+            plan.arrival_band = {"low_pct": lo, "high_pct": hi, "basis": err.basis,
+                                 "below_reserve": lo < settings.reserve_pct,
+                                 **err.summary()}
+        plan.assumptions.append(err.assumption())
+        return plan
     if err is None:
         err = RateError(-ASSUMED_RATE_ERROR * rate, ASSUMED_RATE_ERROR * rate,
                         f"assumed: consumption within {ASSUMED_RATE_ERROR * 100:.0f} % "

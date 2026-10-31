@@ -101,7 +101,8 @@ def consumption_check(repo, vid: int) -> dict:
 
     {"model": a ConsumptionModel or PhysicsModel or None, "backtest":
     analysis.consumption_backtest result, "basis": one sentence, "spread":
-    the RateError quantiles of the predictions of whichever is used}. A model is
+    the RateError quantiles for a linear model or the flat rate, "range": the
+    physics model's calibration for its own arrival ranges}. A model is
     returned only when, predicting each recent drive from the drives before
     it, it beat the flat rate (analysis/consumption_backtest.py); a linear
     model also has to use at least one condition -- one of no conditions is
@@ -141,9 +142,16 @@ def consumption_check(repo, vid: int) -> dict:
     else:
         basis = f"flat rate kept: {result['reason']}"
     used_name = result["verdict"] if model is not None else "flat"
+    phys = (result.get("evaluation") or {}).get("candidates", {}).get("physics") or {}
+    rng = None
+    if used_name == "physics":
+        rng = {"calibration": phys.get("calibration") or 1.0,
+               "drives": phys.get("calibration_drives") or 0,
+               "coverage": phys.get("coverage")}
     # How far off its predictions were, for the figure the Route page will use.
-    spread = error_spread(result, model=used_name)
-    out = {"model": model, "backtest": result, "basis": basis, "spread": spread}
+    spread = None if used_name == "physics" else error_spread(result, model=used_name)
+    out = {"model": model, "backtest": result, "basis": basis, "spread": spread,
+           "range": rng}
     if len(_checks) > 16:
         _checks.clear()
     _checks[key] = out
@@ -173,7 +181,7 @@ def car_energy(repo, vid: int, cfg) -> dict:
 
     configured = cfg.get("routing.consumption_kwh_per_100km")
     model, model_basis = None, "a figure set in config is used as it is"
-    spread = None
+    spread = rng = None
     if configured:
         cons, cons_basis = float(configured) / 100.0, "set in config"
     else:
@@ -193,6 +201,7 @@ def car_energy(repo, vid: int, cfg) -> dict:
     if not configured:
         check = consumption_check(repo, vid)
         model, model_basis, spread = check["model"], check["basis"], check["spread"]
+        rng = check["range"]
     return {
         "usable_kwh": round(usable_kwh, 2), "usable_basis": usable_basis,
         "start_pct": round(start_pct, 1), "start_ts": now_ts, "start_basis": now_basis,
@@ -204,4 +213,7 @@ def car_energy(repo, vid: int, cfg) -> dict:
         # kWh/km more (negative: less) than predicted on its recent drives,
         # 10th to 90th percentile: the Route page's arrival range.
         "consumption_spread": spread,
+        # The physics model's own ranges: how much wider than its spread they
+        # must be (learned on the backtest's drives), and on how many drives.
+        "consumption_range": rng,
     }

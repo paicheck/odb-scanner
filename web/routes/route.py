@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 from fastapi import Request
@@ -113,6 +114,35 @@ def _traffic_lines(points, runs) -> list[dict]:
         if len(line) >= 2:
             out.append({"level": level, "line": line})
     return out
+
+
+def _physics_range(model, car, form, forecast, speed):
+    """The arrival range of this car's physics model (routing/uncertainty.py)
+    for this route: its forecast temperature and how far that may be off,
+    the forecast wind's own error, and the age of the battery reading
+    planned from (unless the driver typed the start charge)."""
+    from analysis.energy_model import FORECAST_WIND_SHARE
+    from routing.uncertainty import FORECAST_TEMP_SD, ModelRange
+    temps = [c.temp_c for c in forecast or [] if c.temp_c is not None]
+    windy = any(c.wind_kmh is not None for c in forecast or [])
+    rng = car.get("consumption_range") or {}
+    age = None
+    own_start = abs(form["start_pct"] - car["start_pct"]) <= 0.05
+    if own_start and car.get("start_ts"):
+        try:
+            then = datetime.fromisoformat(str(car["start_ts"]).replace("Z", "+00:00"))
+            if then.tzinfo is None:
+                then = then.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - then).total_seconds() / 3600.0
+        except ValueError:
+            age = None
+    return ModelRange(model.consumption_model, model.usable_kwh,
+                      calibration=float(rng.get("calibration") or 1.0),
+                      calibration_drives=int(rng.get("drives") or 0),
+                      temp_c=sum(temps) / len(temps) if temps else None,
+                      speed_kmh=speed, temp_sd=FORECAST_TEMP_SD if temps else 0.0,
+                      wind_share=FORECAST_WIND_SHARE if windy else 1.0,
+                      start_age_h=age if own_start else None)
 
 
 def register(app, ctx) -> None:
@@ -269,6 +299,9 @@ def register(app, ctx) -> None:
             if cfg.get("routing.weather", True):
                 forecast, context["weather_note"] = weather.along_route(
                     route.points, route.duration_s)
+            if model.consumption_model is not None and \
+                    getattr(model.consumption_model, "kind", "") == "physics":
+                rate_error = _physics_range(model, car, form, forecast, speed)
             plan = plan_trip(route.points, route.duration_s, form["start_pct"],
                              model, settings, chargers, avg_speed_kmh=speed,
                              weather=forecast, rate_error=rate_error)

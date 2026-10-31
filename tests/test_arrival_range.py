@@ -72,7 +72,10 @@ def test_the_route_page_shows_the_measured_range(cold_car, services):  # noqa: F
     page = _client(cold_car, KEYS).get("/route", params={"to": "Leeds"})
     body = html.unescape(page.text)
     assert "likely " in body
-    assert "Arrival ranges: measured: how this car's last 60 drives differed" in body
+    # The car's physics model plans these trips, so the range is its own.
+    assert ("Arrival ranges: an 80 % range for each leg from this car's physics "
+            "model") in body
+    assert "confidence: " in body
 
 
 def test_a_typed_figure_gets_the_assumed_range(cold_car, services):  # noqa: F811
