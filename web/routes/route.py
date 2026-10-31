@@ -175,7 +175,7 @@ def register(app, ctx) -> None:
         context = dict(car=car, fix=fix, form=form, plan=None, error=None,
                        origin=None, destination=None, alternatives=[],
                        avoid_names=providers.AVOID, ways=[], traffic_note=None,
-                       weather_note=None,
+                       weather_note=None, maps_link=None,
                        traffic_lines=[], live_traffic=bool(token),
                        way_query=urlencode([(k, v) for k, v in p.multi_items()
                                             if k != "way"]),
@@ -278,7 +278,13 @@ def register(app, ctx) -> None:
                 line.append(list(route.points[-1][:2]))
             planned = plan.as_dict()
             _add_pick_links(p, planned, form["avoid_ids"], form["use_ids"])
-            context.update(plan=planned, route_line=line)
+            # The same link the phone builds (routing/handoff.py): opened on the
+            # phone at the start it navigates; elsewhere Google Maps previews.
+            from routing.handoff import trip_link
+            maps = trip_link((origin.lat, origin.lon),
+                             [(s["lat"], s["lon"]) for s in planned["stops"]],
+                             (dest.lat, dest.lon), {a: True for a in form["avoid"]})
+            context.update(plan=planned, route_line=line, maps_link=maps)
         except providers.RoutingError as exc:
             context["error"] = str(exc)
         except Exception as exc:              # a planner bug must not 500

@@ -178,6 +178,13 @@
   {% endfor %}
 </table>
 {% if pl.last_leg %}<p class="chart-note">Then {{ pl.last_leg.km | round | int }} km to the destination, using {{ pl.last_leg.kwh }} kWh.</p>{% endif %}
+{% if maps_link and pl.status != 'unreachable' %}
+<p class="chart-note"><a href="{{ maps_link.url }}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a>
+  — the charging stops in order, then the destination, keeping off the roads chosen above.
+  Opened on the phone at the start it navigates; Google Maps cannot be updated afterwards, only
+  given the trip again (the phone app does that when its plan changes).
+  {% if maps_link.partial %}<br>{{ maps_link.note }}{% endif %}</p>
+{% endif %}
 {% if form.avoid_ids or form.use_ids %}
 <p class="chart-note">Your picks for this trip: {{ form.use_ids | length }} charger(s) chosen,
   {{ form.avoid_ids | length }} avoided. <a href="{{ form.clear_picks_url }}">Clear them</a></p>

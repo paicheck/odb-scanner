@@ -5,6 +5,7 @@ import sys
 from urllib.parse import parse_qs, urlsplit
 
 from routing.handoff import MAX_URL, next_stop_intent, trip_link
+from test_route_planner import db, services  # noqa: F401
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 A, B = (51.752, -1.2577), (53.8008, -1.5491)
@@ -67,3 +68,15 @@ def test_the_shared_vectors_are_current():
     with open(path, encoding="utf-8") as f:
         assert f.read() == render(build()), (
             "handoff_vectors.json is stale: python tools/export_handoff_vectors.py")
+
+
+def test_the_route_page_offers_the_same_link(services, db):  # noqa: F811
+    import html as _html
+    from test_route_planner import KEYS, _client
+    body = _html.unescape(_client(db, dict(KEYS, avoid=["tolls"])).get(
+        "/route", params={"to": "Leeds"}).text)
+    link = body.split('<a href="https://www.google.com/maps/dir/')[1].split('"')[0]
+    q = parse_qs(urlsplit("https://www.google.com/maps/dir/" + link).query)
+    assert q["dir_action"] == ["navigate"] and q["avoid"] == ["tolls"]
+    assert len(q["waypoints"][0].split("|")) >= 1           # the planned stops
+    assert "cannot be updated afterwards" in body
