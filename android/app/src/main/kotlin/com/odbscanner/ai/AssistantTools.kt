@@ -4,15 +4,18 @@ import android.content.Context
 import com.odbscanner.db.AppDatabase
 import com.odbscanner.db.MeasurementEntity
 import com.odbscanner.route.ActiveTrip
-import com.odbscanner.route.NavSpeech
 import com.odbscanner.route.MapsHandoff
+import com.odbscanner.route.NavSpeech
 import com.odbscanner.route.Navigator
 import com.odbscanner.route.PhoneLocation
+import com.odbscanner.route.Picks
 import com.odbscanner.route.Prices
 import com.odbscanner.route.Replan
 import com.odbscanner.route.RoutePrefs
+import com.odbscanner.route.RouteRevisions
 import com.odbscanner.route.RouteServices
 import com.odbscanner.route.RoutingException
+import com.odbscanner.route.Stop
 import com.odbscanner.route.TripMonitor
 import com.odbscanner.route.TripPlanner
 import com.odbscanner.route.TripResult
@@ -54,6 +57,13 @@ class AssistantTools(private val context: Context) : ToolRunner {
             "get_readings" -> readings(call.args.optString("filter"))
             "get_history" -> history(call.args.optString("key"),
                 call.args.optInt("count", 60).coerceIn(2, 500))
+            "get_route_changes" -> routeChanges()
+            "answer_suggestion" -> answerSuggestion(call.args.optBoolean("switch"))
+            "avoid_stop" -> avoidStop(call.args.optInt("stop", 1), call.args.optBoolean("confirm"))
+            "use_alternative" -> useAlternative(call.args.optInt("stop", 1),
+                call.args.optInt("alternative", 1), call.args.optBoolean("confirm"))
+            "avoid_network" -> avoidNetwork(call.args.optString("network"),
+                call.args.optBoolean("confirm"))
             else -> err("unknown tool ${call.name}")
         }
     } catch (e: RoutingException) {
@@ -154,7 +164,18 @@ class AssistantTools(private val context: Context) : ToolRunner {
                     .put("charging_min", s.chargeMin).put("power_kw", s.charger.powerKw)
                     .put("cost_gbp", s.cost).put("price_per_kwh_gbp", s.pricePerKwh)
                     .put("price_source", s.priceSource)
-                    .put("road_there", roadNear(r, s.km)))
+                    .put("road_there", roadNear(r, s.km))
+                    .put("stop", p.stops.indexOf(s) + 1)
+                    .put("arrive_likely_range_pct", if (s.arriveLowPct != null && s.arriveHighPct != null)
+                        JSONArray().put(s.arriveLowPct).put(s.arriveHighPct) else JSONObject.NULL)
+                    .put("alternatives", JSONArray().apply {
+                        s.alternatives.take(3).forEachIndexed { k, a ->
+                            put(JSONObject().put("alternative", k + 1).put("charger", a.charger.name)
+                                .put("operator", a.charger.operator).put("power_kw", a.charger.powerKw)
+                                .put("from_stop", dist(a.km - s.km))
+                                .put("price_per_kwh_gbp", round2(a.pricePerKwh)))
+                        }
+                    }))
             }
         })
         return out
@@ -172,6 +193,103 @@ class AssistantTools(private val context: Context) : ToolRunner {
         val (km, off) = where(t.result)
         return summary(t.result, km).put("watch_status", t.note).put("replans", t.replans)
             .apply { off?.let { if (it > Replan.OFF_ROUTE_KM) put("off_route", dist(it)) } }
+    }
+
+    // -- the route's revisions and the driver's changes -------------------------------
+
+    /** What changed and why: the plan's revisions, a waiting suggestion, Google Maps. */
+    private fun routeChanges(): JSONObject {
+        val t = TripMonitor.state.value ?: return err("no trip is active")
+        val r = t.route
+        val out = JSONObject().put("revision", r.revision)
+            .put("history", JSONArray().apply {
+                r.history.takeLast(5).forEach { v ->
+                    put(JSONObject().put("revision", v.number).put("why", v.reason)
+                        .put("minutes_ago", (System.currentTimeMillis() - v.atMs) / 60_000)
+                        .put("charging_stops", JSONArray(v.waypoints.filter { it.isStop }.map { it.name }))
+                        .put("arrival_charge_pct", v.arrivalPct?.let { round1(it) } ?: JSONObject.NULL))
+                }
+            })
+        r.proposal?.let { p ->
+            out.put("suggestion_waiting", JSONObject().put("change", p.change).put("why", p.reason)
+                .put("urgent", p.urgent)
+                .put("next", "ask the driver; answer_suggestion with their answer"))
+        }
+        if (r.sync.provider == RouteRevisions.GOOGLE_MAPS) {
+            out.put("google_maps", when {
+                !r.needsHandoff -> "has the current plan (revision ${r.sync.sentRevision})"
+                r.sync.sentRevision == null -> "not given the trip yet"
+                else -> "has an older plan (revision ${r.sync.sentRevision}); it cannot be " +
+                    "updated from here, only handed the trip again (start_navigation)"
+            })
+        }
+        if (!r.picks.isEmpty) {
+            out.put("drivers_choices", JSONObject().put("chargers_avoided", r.picks.avoidChargers.size)
+                .put("chargers_chosen", r.picks.useChargers.size)
+                .put("networks_avoided", JSONArray(r.picks.avoidNetworks.toList())))
+        }
+        return out
+    }
+
+    /** The driver's answer to a waiting suggestion: switch to it, or keep their plan. */
+    private suspend fun answerSuggestion(switch: Boolean): JSONObject {
+        val t = TripMonitor.state.value ?: return err("no trip is active")
+        if (t.route.proposal == null) return err("no suggestion is waiting")
+        return JSONObject().put("ok", if (switch) TripMonitor.accept(context, byVoice = true)
+        else TripMonitor.decline())
+    }
+
+    /**
+     * A change to the route needs the driver's yes: the first call says what
+     * would change and must be put to the driver; only the same call again,
+     * with confirm=true and within CONFIRM_MS, does it.
+     */
+    private suspend fun confirmed(key: String, confirm: Boolean, what: String,
+                                  act: suspend () -> JSONObject): JSONObject {
+        if (gate.pass(key, confirm, System.currentTimeMillis())) return act()
+        return JSONObject().put("needs_confirmation", "$what Ask the driver; only if they say " +
+            "yes, call again with confirm=true.")
+    }
+
+    private fun stopOf(t: ActiveTrip, n: Int): Stop? = t.result.plan.stops.getOrNull(n - 1)
+
+    private suspend fun replanned(t: ActiveTrip, picks: Picks, why: String): JSONObject {
+        val after = TripMonitor.changePicks(context, picks, why) ?: return err("no trip is active")
+        val (km, _) = where(after.result)
+        return summary(after.result, km).put("revision", after.route.revision).put("why", why)
+            .put("google_maps", if (after.route.needsHandoff) "needs the new plan: offer " +
+                "start_navigation" else "up to date or not used")
+    }
+
+    private suspend fun avoidStop(n: Int, confirm: Boolean): JSONObject {
+        val t = TripMonitor.state.value ?: return err("no trip is active")
+        val s = stopOf(t, n) ?: return err("there is no charging stop $n")
+        if (s.charger.id.isBlank()) return err("that charger has no id to avoid it by")
+        return confirmed("avoid_stop:${s.charger.id}", confirm,
+            "This re-plans without ${s.charger.name} for the rest of the trip.") {
+            replanned(t, t.route.picks.avoid(s.charger.id), "you asked to avoid ${s.charger.name}")
+        }
+    }
+
+    private suspend fun useAlternative(n: Int, k: Int, confirm: Boolean): JSONObject {
+        val t = TripMonitor.state.value ?: return err("no trip is active")
+        val s = stopOf(t, n) ?: return err("there is no charging stop $n")
+        val a = s.alternatives.getOrNull(k - 1) ?: return err("stop $n has no alternative $k")
+        if (a.charger.id.isBlank()) return err("that charger has no id to choose it by")
+        return confirmed("use:${s.charger.id}>${a.charger.id}", confirm,
+            "This charges at ${a.charger.name} instead of ${s.charger.name}.") {
+            replanned(t, t.route.picks.insteadOf(s.charger.id, a.charger.id),
+                "you chose ${a.charger.name} instead of ${s.charger.name}")
+        }
+    }
+
+    private suspend fun avoidNetwork(name: String, confirm: Boolean): JSONObject {
+        val t = TripMonitor.state.value ?: return err("no trip is active")
+        if (name.isBlank()) return err("say which network")
+        return confirmed("network:${name.trim().lowercase()}", confirm,
+            "This re-plans the rest of the trip without any ${name.trim()} charger.") {
+            replanned(t, t.route.picks.avoidNetwork(name), "you asked to avoid ${name.trim()}")
+        }
     }
 
     private suspend fun directions(count: Int): JSONObject {
@@ -392,7 +510,14 @@ class AssistantTools(private val context: Context) : ToolRunner {
          * one is not handed to a backup AI when it fails (FallbackChatSession):
          * the backup could plan or start navigation a second time.
          */
-        val CHANGES_STATE = setOf("plan_trip", "replan_trip", "start_navigation", "reroute")
+        val CHANGES_STATE = setOf("plan_trip", "replan_trip", "start_navigation", "reroute",
+            "answer_suggestion", "avoid_stop", "use_alternative", "avoid_network")
+
+        /** How long a "this would change…" waits for the driver's yes. */
+        const val CONFIRM_MS = 120_000L
+
+        /** The one change put to the driver at a time. */
+        private val gate = ConfirmGate(CONFIRM_MS)
 
         /** The tools as the AI sees them: names, what they do, JSON-schema arguments. */
         val SPECS: List<ToolSpec> = listOf(
@@ -429,6 +554,30 @@ class AssistantTools(private val context: Context) : ToolRunner {
                 "hand trips to Google Maps, send the current plan (after a re-plan too) to Google " +
                 "Maps. Only when the driver asks to navigate, for directions, or to update or " +
                 "send the route to Google Maps."),
+            spec("get_route_changes", "What has changed with the route and why: the plan's " +
+                "latest revisions (reason, charging stops, arrival charge), a suggested plan " +
+                "waiting for the driver, whether Google Maps has the current plan, and the " +
+                "driver's charger choices."),
+            spec("answer_suggestion", "Only with the driver's own answer to a suggested plan " +
+                "(see get_route_changes): switch=true to take it (and hand it to Google Maps if " +
+                "trips go there), false to keep their plan.",
+                "switch" to JSONObject().put("type", "boolean"), required = listOf("switch")),
+            spec("avoid_stop", "Re-plan without a planned charging stop, for the rest of the " +
+                "trip. First call without confirm: it says what would change -- tell the driver " +
+                "and call again with confirm=true only if they say yes.",
+                "stop" to JSONObject().put("type", "integer").put("description",
+                    "The stop's number in get_trip (1 = next)"),
+                "confirm" to JSONObject().put("type", "boolean"), required = listOf("stop")),
+            spec("use_alternative", "Charge at one of a stop's alternatives (get_trip lists " +
+                "them) instead. Same confirm rule as avoid_stop.",
+                "stop" to JSONObject().put("type", "integer"),
+                "alternative" to JSONObject().put("type", "integer"),
+                "confirm" to JSONObject().put("type", "boolean"),
+                required = listOf("stop", "alternative")),
+            spec("avoid_network", "Re-plan the rest of the trip without any charger of a " +
+                "network (by name, e.g. 'Shell Recharge'). Same confirm rule as avoid_stop.",
+                "network" to JSONObject().put("type", "string"),
+                "confirm" to JSONObject().put("type", "boolean"), required = listOf("network")),
             spec("get_navigation", "While navigating: the next turn (distance, instruction, " +
                 "road, exit, which lanes), the one after, time and distance left, arrival " +
                 "including charging, what traffic adds, and heavy traffic ahead."),
@@ -484,5 +633,26 @@ class AssistantTools(private val context: Context) : ToolRunner {
             - Never ask the driver to read or type anything.
             - If a tool says the data is not there, say so in a few words.
         """.trimIndent()
+    }
+}
+
+/**
+ * A change the assistant wants to make waits for the driver's yes: a call
+ * without confirm puts it to them; only the same change with confirm, within
+ * [windowMs], goes through. A confirm for anything else -- or with nothing
+ * asked -- does not. Pure, so it is unit-tested.
+ */
+class ConfirmGate(private val windowMs: Long) {
+    private var waiting: Pair<String, Long>? = null
+
+    @Synchronized
+    fun pass(key: String, confirm: Boolean, nowMs: Long): Boolean {
+        val w = waiting
+        if (confirm && w != null && w.first == key && nowMs - w.second in 0..windowMs) {
+            waiting = null
+            return true
+        }
+        waiting = key to nowMs
+        return false
     }
 }

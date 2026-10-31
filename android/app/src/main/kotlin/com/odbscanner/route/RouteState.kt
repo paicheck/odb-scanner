@@ -54,16 +54,24 @@ data class ProviderSync(
     val message: String = "",
 )
 
-/** The driver's charger choices for the trip, by Open Charge Map id. */
+/**
+ * The driver's charger choices for this trip: chargers by Open Charge Map id,
+ * and networks to keep off on top of the ones in Route settings.
+ */
 data class Picks(val avoidChargers: Set<String> = emptySet(),
-                 val useChargers: Set<String> = emptySet()) {
+                 val useChargers: Set<String> = emptySet(),
+                 val avoidNetworks: Set<String> = emptySet()) {
     /** Never this charger (and no longer "use" it). */
-    fun avoid(id: String) = Picks(avoidChargers + id, useChargers - id)
+    fun avoid(id: String) = copy(avoidChargers = avoidChargers + id, useChargers = useChargers - id)
 
     /** [altId] in place of the stop at [stopId]: use the one, keep off the other. */
-    fun insteadOf(stopId: String, altId: String) = Picks(
-        avoidChargers - altId + listOfNotNull(stopId.takeIf { it.isNotBlank() }),
-        useChargers - stopId + altId)
+    fun insteadOf(stopId: String, altId: String) = copy(
+        avoidChargers = avoidChargers - altId + listOfNotNull(stopId.takeIf { it.isNotBlank() }),
+        useChargers = useChargers - stopId + altId)
+
+    fun avoidNetwork(name: String) = copy(avoidNetworks = avoidNetworks + name.trim())
+
+    val isEmpty: Boolean get() = avoidChargers.isEmpty() && useChargers.isEmpty() && avoidNetworks.isEmpty()
 }
 
 /** A re-plan waiting for the driver: worked out against revision [basedOn]. */
@@ -246,6 +254,7 @@ object RouteRevisions {
             .put("status", s.sync.status.name).put("message", s.sync.message))
         .put("avoid", JSONArray(s.picks.avoidChargers.toList()))
         .put("use", JSONArray(s.picks.useChargers.toList()))
+        .put("avoid_networks", JSONArray(s.picks.avoidNetworks.toList()))
         .put("declined", JSONArray(s.declined.toList()))
 
     fun fromJson(o: JSONObject): RouteState {
@@ -273,7 +282,8 @@ object RouteRevisions {
                 y.optString("message"))
         }
         return RouteState(o.getString("trip_id"), o.getInt("revision"), history, sync,
-            Picks(strings(o.optJSONArray("avoid")).toSet(), strings(o.optJSONArray("use")).toSet()),
+            Picks(strings(o.optJSONArray("avoid")).toSet(), strings(o.optJSONArray("use")).toSet(),
+                strings(o.optJSONArray("avoid_networks")).toSet()),
             null, strings(o.optJSONArray("declined")).toSet())
     }
 }

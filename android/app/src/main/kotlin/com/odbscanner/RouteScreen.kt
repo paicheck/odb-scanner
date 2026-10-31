@@ -489,10 +489,12 @@ private fun TripResultView(r: TripResult, busy: Boolean, onChoose: (Int) -> Unit
                 }
             }
         }
-        if (picks.avoidChargers.isNotEmpty() || picks.useChargers.isNotEmpty()) {
+        if (!picks.isEmpty) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Your charger choices: avoiding ${picks.avoidChargers.size}, " +
-                    "using ${picks.useChargers.size}", style = MaterialTheme.typography.bodySmall,
+                    "using ${picks.useChargers.size}" + (if (picks.avoidNetworks.isEmpty()) ""
+                    else "; never " + picks.avoidNetworks.joinToString(", ")),
+                    style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f))
                 TextButton(enabled = !busy, onClick = {
                     onPicks(Picks(), "you cleared your charger choices")

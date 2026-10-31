@@ -271,7 +271,7 @@ object TripPlanner {
             mode = mode?.takeIf { it in MODES } ?: s.mode,
             timeValuePerHour = s.timeValuePerHour, defaultPricePerKwh = s.defaultPricePerKwh,
             preferNetworks = Planner.names(s.preferNetworks),
-            avoidNetworks = Planner.names(s.avoidNetworks),
+            avoidNetworks = (Planner.names(s.avoidNetworks) + picks.avoidNetworks).distinct(),
             publicOnly = s.publicOnly,
             avoidChargers = picks.avoidChargers,
             useChargers = picks.useChargers,
